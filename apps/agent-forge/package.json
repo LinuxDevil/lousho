@@ -1,6 +1,6 @@
 {
   "name": "@linuxdevil/studio",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-alpha.1",
   "description": "Lousho Studio: build, test and watch every agent across your projects. A local web app for @linuxdevil/lousho.",
   "type": "module",
   "bin": {

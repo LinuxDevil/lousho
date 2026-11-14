@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-alpha.119] - 2026-11-14
+
 ## [1.0.0-alpha.118] - 2026-11-14
 
 - **Breaking:** the package is renamed from `lousho` to `@linuxdevil/lousho`. Update imports from `'lousho'` / `'lousho/…'` to `'@linuxdevil/lousho'` / `'@linuxdevil/lousho/…'` and dependencies from `"lousho"` to `"@linuxdevil/lousho"`. The `lousho` binary name is unchanged, so `npx @linuxdevil/lousho …` and `lousho …` commands keep working.
