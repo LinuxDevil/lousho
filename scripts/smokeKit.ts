@@ -142,7 +142,7 @@ export function checkModuleLoads(rep: Reporter, project: string, pkgDir: string)
 }
 
 export function checkBin(rep: Reporter, project: string): void {
-  const installed = path.join(project, 'node_modules', '.bin', IS_WIN ? 'lousho.cmd' : '@linuxdevil/lousho');
+  const installed = path.join(project, 'node_modules', '.bin', IS_WIN ? 'lousho.cmd' : 'lousho');
   if (!fs.existsSync(installed)) return rep.fail(`node_modules/.bin/lousho was not created (${installed})`);
   const help = run('npx', ['--no-install', '@linuxdevil/lousho', '--help'], project);
   if (help.status !== 0 || !/lousho init/.test(help.stdout + help.stderr)) rep.fail(`npx lousho --help failed: ${help.stdout}${help.stderr}`);

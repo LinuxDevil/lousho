@@ -4,7 +4,7 @@
  *
  * The lookup is Node's own algorithm done by hand: the SDK's `exports`
  * map does not expose `./package.json`, so `require.resolve(
- * '@lousho/build-ai-agent/package.json')` throws ERR_PACKAGE_PATH_NOT_EXPORTED
+ * '@linuxdevil/lousho/package.json')` throws ERR_PACKAGE_PATH_NOT_EXPORTED
  * on every supported version. Walking `node_modules` upwards from the
  * workspace root (nearest hit wins) matches what `import` would resolve.
  *
@@ -19,8 +19,8 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { join, parse } from 'node:path';
 
-/** Package names the SDK answers to: the scoped future name, then today's `lousho`. */
-const SDK_PACKAGE_NAMES = ['@linuxdevil/lousho', '@linuxdevil/lousho'] as const;
+/** Package names the SDK answers to: the scoped name, then the legacy `lousho`. */
+const SDK_PACKAGE_NAMES = ['@linuxdevil/lousho', 'lousho'] as const;
 
 /** The project's own SDK install, as the bridge spawns it. */
 export interface WorkspaceSdk {

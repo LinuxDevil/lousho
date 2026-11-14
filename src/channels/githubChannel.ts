@@ -290,7 +290,7 @@ export function githubChannel(options: GitHubChannelOptions): Channel<GitHubComm
           authorization: `Bearer ${token}`,
           accept: 'application/vnd.github+json',
           'x-github-api-version': '2022-11-28',
-          'user-agent': '@linuxdevil/lousho',
+          'user-agent': 'lousho',
           'content-type': 'application/json',
         },
         body: JSON.stringify({ body }),

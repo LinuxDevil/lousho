@@ -53,23 +53,23 @@ describe('findWorkspaceSdk', () => {
     });
   });
 
-  it('finds lousho (the name the package ships under today) the same way', () => {
-    installSdk(path.join(dir, 'node_modules'), '@linuxdevil/lousho');
+  it('finds lousho (the legacy name) the same way', () => {
+    installSdk(path.join(dir, 'node_modules'), 'lousho');
     expect(findWorkspaceSdk(dir)?.source).toBe('node_modules');
   });
 
   it('walks up to a parent folder node_modules (nearest hit wins)', () => {
-    installSdk(path.join(dir, 'node_modules'), '@linuxdevil/lousho', { built: true });
+    installSdk(path.join(dir, 'node_modules'), 'lousho', { built: true });
     const nested = path.join(dir, 'a', 'b');
     fs.mkdirSync(nested, { recursive: true });
     // A nearer install shadows the parent's.
-    installSdk(path.join(dir, 'a', 'node_modules'), '@linuxdevil/lousho');
+    installSdk(path.join(dir, 'a', 'node_modules'), 'lousho');
     const sdk = findWorkspaceSdk(nested);
-    expect(sdk?.packageDir).toBe(fs.realpathSync(path.join(dir, 'a', 'node_modules', '@linuxdevil/lousho')));
+    expect(sdk?.packageDir).toBe(fs.realpathSync(path.join(dir, 'a', 'node_modules', 'lousho')));
   });
 
   it('prefers the scoped name over lousho at the same level', () => {
-    installSdk(path.join(dir, 'node_modules'), '@linuxdevil/lousho');
+    installSdk(path.join(dir, 'node_modules'), 'lousho');
     installSdk(path.join(dir, 'node_modules'), '@linuxdevil/lousho');
     const sdk = findWorkspaceSdk(dir);
     expect(sdk?.packageDir).toContain(`${path.sep}@linuxdevil${path.sep}lousho`);
@@ -87,7 +87,7 @@ describe('findWorkspaceSdk', () => {
   });
 
   it('returns undefined when bin/lousho.js is missing', () => {
-    installSdk(path.join(dir, 'node_modules'), '@linuxdevil/lousho', { bin: false });
+    installSdk(path.join(dir, 'node_modules'), 'lousho', { bin: false });
     expect(findWorkspaceSdk(dir)).toBeUndefined();
   });
 
