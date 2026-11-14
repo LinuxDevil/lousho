@@ -15188,9 +15188,10 @@ In a cycle, `quotedChecks` follows the approval mode and `cacheDir` is
 block in `improve.json` (`proposers`, `mode`, `select`, and `parallel` for
 `parallelEditors`), which `healOnce()`, `watchAgent()` and `lousho improve`
 pass to `improveAgent()`. A watcher re-reads them each tick when it has
-`reloadSettings`, as `lousho improve --watch` does. The flags `--proposers
-<1-4>` and `--mode agg|seq` win over the file, `--select` turns the selector
-on and `--no-parallel-editors` turns parallel off. `lousho improve status`
+`reloadSettings`, as `lousho improve --watch` does. The flags
+`--proposers <1-4>` and `--mode agg|seq` win over the file, `--select` turns
+the selector on and `--no-parallel-editors` turns parallel off. `lousho improve
+status`
 shows the values in the file, with the defaults filled in. The defaults are unchanged: one proposer of each kind,
 in parallel, with no selector.
 
