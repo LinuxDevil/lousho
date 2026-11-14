@@ -16,6 +16,8 @@ const dry = process.argv.includes('--dry-run');
 const targets = [
   { dir: '.', name: `${SCOPE}/lousho` },
   { dir: 'packages/create-lousho', name: `${SCOPE}/create-lousho` },
+  // Studio last: its SDK range (^<version>) must already be mirrored above.
+  { dir: 'apps/agent-forge', name: `${SCOPE}/studio` },
 ];
 const run = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'inherit'], shell: process.platform === 'win32' }).toString().trim();
 
