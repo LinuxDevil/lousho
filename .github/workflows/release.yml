@@ -66,6 +66,7 @@ jobs:
           npm version prerelease --preid=alpha --no-git-tag-version
           node scripts/sync-version.mjs
           npm version prerelease --preid=alpha --no-git-tag-version -w create-lousho
+          npm version prerelease --preid=alpha --no-git-tag-version -w @linuxdevil/studio
           npm install --package-lock-only --ignore-scripts
           VERSION=$(node -p "require('./package.json').version")
           sed -i "s/^## \[Unreleased\]/&\n\n## [$VERSION] - $(date -u +%F)/" CHANGELOG.md
@@ -75,6 +76,7 @@ jobs:
       # llms.txt / llms-full.txt ship in the package; regenerate so they match this build.
       - run: npm run docs:llms
       - run: npm run build -w create-lousho
+      - run: npm run build:studio
       - name: Push version bump
         # The husky pre-commit hook re-runs the full static suite (and fails on
         # drift merged by others); the release commit only carries generated files.
@@ -97,6 +99,12 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish create-lousho
         run: npm publish -w create-lousho --access public --tag latest
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Studio's SDK dep is pinned to ^<root version> by its prepack script, so
+      # it must publish after lousho for the range to resolve on npm.
+      - name: Publish @linuxdevil/studio
+        run: npm publish -w @linuxdevil/studio --access public --tag latest
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Mirror to GitHub Packages
