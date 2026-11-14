@@ -5,13 +5,13 @@
  * Proves that what `npm pack` produces installs and works, in a fresh project
  * that has never seen this checkout:
  *
- *   1. builds the SDK, `create-lousho` and Agent Forge (the
- *      `build:studio` step `prepublishOnly` also runs, so the packed tarball is
- *      the one that is really published; skip with --skip-build),
+ *   1. builds the SDK and `create-lousho` (the `prepublishOnly` build, so the
+ *      packed tarball is the one that is really published; skip with
+ *      --skip-build),
  *   2. `npm pack`s both into a temp dir and checks the SDK tarball (no `.env`,
- *      tests, fixtures or secret-looking strings; the files `lousho build` and
- *      `lousho studio` need are present; entry count and unpacked size under
- *      the thresholds below),
+ *      tests, fixtures or secret-looking strings; the files `lousho build`
+ *      needs are present - Studio left the tarball in W13b; entry count and
+ *      unpacked size under the thresholds below),
  *   3. `npm publish <tarball> --dry-run` for both packages (nothing is
  *      published; a tarball argument also skips the prepublishOnly build),
  *   4. installs the tarballs plus the required peers from the REGISTRY into a
@@ -31,9 +31,8 @@
  */
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
-import { IS_WIN, SDK_NAME, checkBin, checkModuleLoads, createReporter, listExports, mustRun as mustRunIn, run } from './smokeKit';
+import { checkTarballContents, cleanSmokeDir, IS_WIN, packTarball, reportSmoke, SDK_NAME, checkBin, checkModuleLoads, dryRunPublish, listExports, run, smokeDirs, smokeSetup, type PackEntry, type TarballLimits } from './smokeKit';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 
@@ -79,10 +78,16 @@ const REPO_ROOT = path.resolve(__dirname, '..');
  * 2026-11-12); unpacked budget raised to 26 MiB (~8% headroom).
  * CI measured 7,401,846 bytes packed on main after R07 chain triggers and
  * R08b channel triggers landed (2026-11-14); packed budget raised to 8 MiB.
+ * Studio left the SDK tarball (2026-11-13, W13b): measured 1016 entries /
+ * 15,289,389 bytes unpacked / 4,393,121 bytes packed; budgets ~10% headroom.
+ * The entry count still sits under the existing 1040 budget (new subpath
+ * entries offset Studio's removal), so MAX_ENTRIES stays put.
+ * Re-measured after the main sync (trigger host + studio removal):
+ * 1246 entries / 17.9 MiB unpacked / 5.1 MiB packed; budgets ~10% headroom.
  */
-const MAX_ENTRIES = 1300;
-const MAX_UNPACKED_BYTES = 26 * 1024 * 1024;
-const MAX_PACKED_BYTES = 8 * 1024 * 1024;
+const MAX_ENTRIES = 1370;
+const MAX_UNPACKED_BYTES = 20 * 1024 * 1024;
+const MAX_PACKED_BYTES = 6 * 1024 * 1024;
 
 const DEFAULT_PEERS = 'ai@7 zod@4 @ai-sdk/openai@4 react@19 vue@3 @opentelemetry/api@1';
 const FORBIDDEN_PATHS = [
@@ -95,7 +100,8 @@ const FORBIDDEN_PATHS = [
   /__snapshots__\//,
   /__cassettes__\//,
   /(^|\/)node_modules\//,
-  /^apps\/agent-forge\/dist-server\/.*\.map$/,
+  // Nothing under apps/ ships: Studio is the separate @linuxdevil/studio package (W13b).
+  /^apps\//,
   /^dist\/.*\.map$/,
   // bin/lousho.js loads only the ESM CLI build (dist/cli/*.mjs); the CJS one is not shipped.
   /^dist\/cli\/[^/]+\.js(\.map)?$/,
@@ -105,9 +111,7 @@ const FORBIDDEN_PATHS = [
 /**
  * Files the published package must contain: `lousho build` bundles
  * `src/deploy/runtime.worker.ts`, `src/deploy/shims/node.worker.ts` and
- * `src/index.ts` from the installed package root (see `src/deploy/bundle.ts`),
- * and `lousho studio` serves `apps/agent-forge/dist` and runs
- * `apps/agent-forge/dist-server/index.cjs`.
+ * `src/index.ts` from the installed package root (see `src/deploy/bundle.ts`).
  */
 const REQUIRED_PATHS = [
   'src/index.ts',
@@ -115,42 +119,21 @@ const REQUIRED_PATHS = [
   'src/deploy/runtime.worker.ts',
   'src/deploy/shims/node.worker.ts',
   'templates/support-triage/spec.yaml',
-  'apps/agent-forge/dist-server/index.cjs',
-  'apps/agent-forge/dist/index.html',
 ];
 const SECRET_PATTERNS = [/sk-[A-Za-z0-9]{32,}/, /AKIA[0-9A-Z]{16}/, /ghp_[A-Za-z0-9]{30,}/, /-----BEGIN [A-Z ]*PRIVATE KEY-----/, /_authToken\s*=/];
 
-const args = new Set(process.argv.slice(2));
-const rep = createReporter('pack-smoke');
-const { log, fail, failures } = rep;
-const mustRun = (label: string, cmd: string, argv: string[], cwd: string, env?: NodeJS.ProcessEnv) => mustRunIn(rep, label, cmd, argv, cwd, env);
+const { args, rep, log, fail, mustRun } = smokeSetup('pack-smoke');
 
-interface PackEntry {
-  filename: string;
-  entryCount: number;
-  size: number;
-  unpackedSize: number;
-  files: { path: string }[];
-}
-
-function pack(label: string, cwd: string, dest: string): { entry: PackEntry; tarball: string } {
-  const res = mustRun(`npm pack ${label}`, 'npm', ['pack', '--json', '--pack-destination', dest], cwd);
-  const entry = (JSON.parse(res.stdout) as PackEntry[])[0];
-  return { entry, tarball: path.join(dest, entry.filename) };
-}
+const TARBALL_LIMITS: TarballLimits = {
+  maxEntries: MAX_ENTRIES,
+  maxUnpackedBytes: MAX_UNPACKED_BYTES,
+  maxPackedBytes: MAX_PACKED_BYTES,
+  requiredPaths: REQUIRED_PATHS,
+  forbiddenPatterns: FORBIDDEN_PATHS,
+};
 
 function checkTarball(entry: PackEntry, tarball: string): void {
-  log(`tarball ${entry.filename}: ${entry.entryCount} entries, ${(entry.unpackedSize / 1048576).toFixed(1)} MB unpacked, ${(entry.size / 1048576).toFixed(1)} MB packed`);
-  if (entry.entryCount > MAX_ENTRIES) fail(`tarball has ${entry.entryCount} entries (max ${MAX_ENTRIES})`);
-  if (entry.unpackedSize > MAX_UNPACKED_BYTES) fail(`tarball unpacked size ${entry.unpackedSize} exceeds ${MAX_UNPACKED_BYTES}`);
-  if (entry.size > MAX_PACKED_BYTES) fail(`tarball packed size ${entry.size} exceeds ${MAX_PACKED_BYTES}`);
-  const packed = new Set(entry.files.map((f) => f.path));
-  for (const p of REQUIRED_PATHS) {
-    if (!packed.has(p)) fail(`tarball is missing required file ${p}`);
-  }
-  for (const f of entry.files) {
-    if (FORBIDDEN_PATHS.some((re) => re.test(f.path))) fail(`tarball contains forbidden file ${f.path}`);
-  }
+  checkTarballContents(rep, entry, TARBALL_LIMITS);
   const extracted = fs.mkdtempSync(path.join(path.dirname(tarball), 'unpack-'));
   // Relative tarball path: GNU tar (Git Bash) reads "C:" in an absolute Windows path as a remote host.
   const tar = run('tar', ['-xzf', path.relative(extracted, tarball)], extracted);
@@ -159,21 +142,6 @@ function checkTarball(entry: PackEntry, tarball: string): void {
     if (!/\.(js|mjs|cjs|ts|mts|json|map|md|txt|yaml|yml)$/.test(f.path) && !f.path.startsWith('bin/')) continue;
     const text = fs.readFileSync(path.join(extracted, 'package', f.path), 'utf8');
     for (const re of SECRET_PATTERNS) if (re.test(text)) fail(`${f.path} matches secret pattern ${re}`);
-  }
-}
-
-function dryRunPublish(label: string, tarball: string, cwd: string): void {
-  // `--tag next`: the versions are prereleases and npm 11 refuses a prerelease without an explicit tag.
-  const res = run('npm', ['publish', tarball, '--dry-run', '--tag', 'next', '--access', 'public'], cwd);
-  const out = res.stdout + res.stderr;
-  // After a release the version in the repo is the one on npm until the next bump. The dry run
-  // then fails only on that; the tarball itself was accepted, which is what this step checks.
-  if (/cannot publish over the previously published versions/i.test(out)) {
-    log(`npm publish --dry-run ${label}: ok (this version is already on npm; bump it before the next release)`);
-  } else if (res.status !== 0 || /npm (error|ERR!)/.test(out)) {
-    fail(`npm publish --dry-run ${label} failed:\n${out}`);
-  } else {
-    log(`npm publish --dry-run ${label}: ok`);
   }
 }
 
@@ -313,21 +281,15 @@ function main(): void {
   if (!args.has('--skip-build')) {
     mustRun('npm run build', 'npm', ['run', 'build'], REPO_ROOT);
     mustRun('npm run build (create-lousho)', 'npm', ['run', 'build', '--workspace=packages/create-lousho'], REPO_ROOT);
-    // prepublishOnly also builds Agent Forge; without it the tarball is ~5 MB smaller than the published one.
-    mustRun('npm run build:studio', 'npm', ['run', 'build:studio'], REPO_ROOT);
   }
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-pack-smoke-'));
+  const { base, packDir, project } = smokeDirs('lousho-pack-smoke');
   log(`temp dir ${base}`);
-  const packDir = path.join(base, 'tarballs');
-  const project = path.join(base, 'project');
-  fs.mkdirSync(packDir);
-  fs.mkdirSync(project);
   try {
-    const sdk = pack('(sdk)', REPO_ROOT, packDir);
-    const creator = pack('(create-lousho)', path.join(REPO_ROOT, 'packages', 'create-lousho'), packDir);
+    const sdk = packTarball(rep, '(sdk)', REPO_ROOT, packDir);
+    const creator = packTarball(rep, '(create-lousho)', path.join(REPO_ROOT, 'packages', 'create-lousho'), packDir);
     checkTarball(sdk.entry, sdk.tarball);
-    dryRunPublish('(sdk)', sdk.tarball, base);
-    dryRunPublish('(create-lousho)', creator.tarball, base);
+    dryRunPublish(rep, '(sdk)', sdk.tarball, base);
+    dryRunPublish(rep, '(create-lousho)', creator.tarball, base);
 
     const peers = (process.env.PACK_SMOKE_PEERS ?? DEFAULT_PEERS).split(/\s+/).filter(Boolean);
     const fileUrl = (p: string) => `file:${p.replace(/\\/g, '/')}`;
@@ -358,14 +320,9 @@ function main(): void {
       else log('create-lousho --help: ok');
     }
   } finally {
-    if (args.has('--keep')) log(`kept ${base}`);
-    else fs.rmSync(base, { recursive: true, force: true });
+    cleanSmokeDir(rep, base, args.has('--keep'));
   }
-  if (failures.length) {
-    console.error(`\n[pack-smoke] ${failures.length} failure(s):\n- ${failures.join('\n- ')}`);
-    process.exit(1);
-  }
-  log('all checks passed');
+  reportSmoke(rep);
 }
 
 main();

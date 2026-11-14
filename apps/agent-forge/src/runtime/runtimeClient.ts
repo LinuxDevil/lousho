@@ -6,7 +6,7 @@
  * so the two can evolve together without every component knowing the HTTP
  * details.
  */
-import type { AgentSpecV2 } from 'lousho';
+import type { AgentSpecV2 } from '@linuxdevil/lousho';
 import type {
   AddWorkspaceRequest,
   AgentListItem,
@@ -55,6 +55,7 @@ import type {
   ProviderKeyStatus,
   PortabilityAnalysis,
   Requirement,
+  EjectResult,
   RunComparisonPayload,
   RunHistoryPayload,
   SecretStatus,
@@ -1061,6 +1062,18 @@ class RuntimeClient implements AgentApi {
     return this.request<PortabilityAnalysis>('/agents/import/portability', {
       method: 'POST',
       body: JSON.stringify({ text }),
+    });
+  }
+
+  /**
+   * `POST /agents/:id/eject` (A08b): writes the agent-directory form to
+   * `agents/<id>/` in this workspace. `overwrite` resends after the 409
+   * "already exists" answer; the `EjectResult` lists what was written.
+   */
+  async ejectAgent(agentId: string, overwrite = false): Promise<EjectResult> {
+    return this.request<EjectResult>(`/agents/${encodeURIComponent(agentId)}/eject`, {
+      method: 'POST',
+      body: JSON.stringify({ overwrite }),
     });
   }
 

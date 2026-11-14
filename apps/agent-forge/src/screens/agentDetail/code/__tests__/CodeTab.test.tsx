@@ -2,7 +2,7 @@ import { act } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentRecord } from '../../../../../shared/wireTypes';
-import type { AgentSpecV2 } from 'lousho/spec';
+import type { AgentSpecV2 } from '@linuxdevil/lousho/spec';
 import { parseHash } from '../../../../router/router';
 import { render } from '../../../../ui/__tests__/render';
 import { ToastProvider } from '../../../../ui/Toast';
@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
 
 // The Code tab calls the real SDK generators in the browser; here they are
 // stubbed so the assertions are about the tab, not the generators.
-vi.mock('lousho/spec', () => ({
+vi.mock('@linuxdevil/lousho/spec', () => ({
   specToCode: () => mocks.specToCode(),
   specToAgentDir: () => mocks.specToAgentDir(),
 }));
@@ -28,21 +28,26 @@ vi.mock('lousho/spec', () => ({
 // The Serve card (X02b) loads `/agents/:id/serve` on mount and subscribes
 // to `/events`; the tab's assertions are about the code views, so both are
 // stubbed to an unpublished, disabled status.
-vi.mock('../../../../runtime/runtimeClient', () => ({
-  runtimeClient: {
-    getServe: vi.fn(async () => ({
-      agentId: 'support-bot',
-      enabled: false,
-      allowedOrigins: [],
-      publishedVersion: null,
-      tokenMasked: 'tok…tok',
-      baseUrl: '/serve/support-bot',
-    })),
-    putServe: vi.fn(),
-    serveToken: vi.fn(),
-    rotateServeToken: vi.fn(),
-  },
-}));
+vi.mock('../../../../runtime/runtimeClient', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../runtime/runtimeClient')>();
+  return {
+    ...actual,
+    runtimeClient: {
+      getServe: vi.fn(async () => ({
+        agentId: 'support-bot',
+        enabled: false,
+        allowedOrigins: [],
+        publishedVersion: null,
+        tokenMasked: 'tok…tok',
+        baseUrl: '/serve/support-bot',
+      })),
+      putServe: vi.fn(),
+      serveToken: vi.fn(),
+      rotateServeToken: vi.fn(),
+      ejectAgent: vi.fn(),
+    },
+  };
+});
 
 vi.mock('../../../../state/useStudioEvents', () => ({
   useStudioEvents: () => {},
@@ -50,6 +55,7 @@ vi.mock('../../../../state/useStudioEvents', () => ({
 
 import { AgentDetailContext } from '../../AgentDetailContext';
 import { CodeTab } from '../CodeTab';
+import { runtimeClient, RuntimeApiError } from '../../../../runtime/runtimeClient';
 
 function record(): AgentRecord {
   return {
@@ -260,5 +266,73 @@ describe('CodeTab', () => {
     await clickView(host, 'YAML');
     expect(host.querySelector('pre.code-view')?.textContent).toContain('name: Support bot');
     expect(host.querySelector('.empty-state-title')).toBeNull();
+  });
+
+  it('Eject to project opens the dialog with the generated file count and posts on confirm', async () => {
+    const eject = vi.spyOn(runtimeClient, 'ejectAgent').mockResolvedValue({ dir: 'agents/support-bot', files: ['agent.yaml'] });
+    const host = renderTab();
+    await flush();
+
+    const ejectButton = [...host.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
+      b.textContent?.includes('Eject to project'),
+    )!;
+    act(() => ejectButton.click());
+    await flush();
+
+    const dialog = document.querySelector<HTMLElement>('.dialog, [role="dialog"], [role="alertdialog"]')!;
+    expect(dialog.textContent).toContain('Writes 2 files to agents/support-bot/');
+
+    const confirm = [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
+      b.textContent?.includes('Eject'),
+    )!;
+    act(() => confirm.click());
+    await flush();
+
+    expect(eject).toHaveBeenCalledWith('support-bot', false);
+    expect(dialog.isConnected).toBe(false);
+    expect(host.querySelector('.toast-message')?.textContent).toBe('Ejected to agents/support-bot/');
+    eject.mockRestore();
+  });
+
+  it('a 409 LOUSHO_EJECT_EXISTS shows the overwrite checkbox and resends with overwrite', async () => {
+    const err = new RuntimeApiError('agents/support-bot/ already exists.', 409, 'LOUSHO_EJECT_EXISTS', {
+      files: ['agent.yaml', 'prompts/system.md'],
+    });
+    const eject = vi
+      .spyOn(runtimeClient, 'ejectAgent')
+      .mockRejectedValueOnce(err)
+      .mockResolvedValueOnce({ dir: 'agents/support-bot', files: ['agent.yaml'] });
+    const host = renderTab();
+    await flush();
+
+    const ejectButton = [...host.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
+      b.textContent?.includes('Eject to project'),
+    )!;
+    act(() => ejectButton.click());
+    await flush();
+
+    const confirm = [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
+      b.textContent?.trim() === 'Eject',
+    )!;
+    act(() => confirm.click());
+    await flush();
+
+    expect(eject).toHaveBeenLastCalledWith('support-bot', false);
+    const checkbox = document.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(checkbox).not.toBeNull();
+    expect(document.body.textContent).toContain('agents/support-bot/ already exists.');
+
+    act(() => {
+      checkbox.click();
+    });
+    await flush();
+    const confirmAgain = [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
+      b.textContent?.trim() === 'Eject',
+    )!;
+    act(() => confirmAgain.click());
+    await flush();
+
+    expect(eject).toHaveBeenLastCalledWith('support-bot', true);
+    eject.mockRestore();
   });
 });

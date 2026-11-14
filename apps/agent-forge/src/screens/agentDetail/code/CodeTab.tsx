@@ -4,7 +4,7 @@ import { stringify as stringifyYaml } from 'yaml';
 // `lousho/spec` is the SDK's browser-safe spec entry (S23): `specToCode`
 // (S18) and `specToAgentDir` (S19) are both pure renderers, so the Code tab
 // generates every view in the browser with no server round-trip.
-import { specToAgentDir, specToCode, type AgentSpecV2 } from 'lousho/spec';
+import { specToAgentDir, specToCode, type AgentSpecV2 } from '@linuxdevil/lousho/spec';
 
 import { errorMessage } from '../../../components/errorMessage';
 import { downloadText } from '../../../persistence/importExport';
@@ -14,6 +14,7 @@ import { EmptyState } from '../../../ui/EmptyState';
 import { useToast } from '../../../ui/Toast';
 import { useAgentDetail } from '../AgentDetailContext';
 import { ServeCard } from '../ServeCard';
+import { EjectToProject } from './EjectToProject';
 import { buildTree, CODE_VIEW_LABELS, downloadName, parseCodeView, type CodeView, type TreeNode } from './codeViews';
 import '../../../ui/filterBar.css';
 import './code.css';
@@ -287,6 +288,7 @@ export function CodeTab(): JSX.Element {
             <Download size={14} strokeWidth={1.75} aria-hidden="true" />
             Download
           </button>
+          <EjectToProject agentId={record.id} spec={record.spec} updatedAt={record.updatedAt} />
         </div>
       </div>
       <p className="code-note">Generated from the spec. Read-only — edit on the canvas or in Configure.</p>

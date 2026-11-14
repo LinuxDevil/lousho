@@ -20,7 +20,7 @@ import type {
   listGuardrails,
   listModels,
   listTriggerTypes,
-} from 'lousho';
+} from '@linuxdevil/lousho';
 import type { WorkspaceRef } from './workspace';
 import type { AuthorSettings } from './authorWire';
 
@@ -1600,4 +1600,15 @@ export interface ChannelTriggerStatus {
   url: string;
   /** Mount failure (`Channel <kind> needs <key>`, duplicate kind), `null` when served. */
   error: string | null;
+}
+
+/**
+ * `POST /agents/:id/eject` (A08b): the agent directory `specToAgentDir`
+ * wrote under `agents/<id>/` in the workspace, and the file paths written.
+ */
+export interface EjectResult {
+  /** The directory, relative to the workspace root (`agents/<id>`). */
+  dir: string;
+  /** Paths of the files written, relative to `dir`, '/'-separated. */
+  files: string[];
 }

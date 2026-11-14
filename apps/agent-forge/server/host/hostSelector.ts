@@ -15,7 +15,7 @@
  * token and listener vars are stripped so project code never sees them.
  */
 import type { WorkspaceRef } from '../../shared/workspace';
-import { BRIDGE_PROTOCOL_VERSION } from 'lousho';
+import { BRIDGE_PROTOCOL_VERSION } from '@linuxdevil/lousho';
 import { observeTarget } from '../observeProxy';
 import type { HostBanner, HostMode } from '../../shared/wireTypes';
 import { BridgeClient, BridgeError, type BridgeClientOptions, type BridgeState } from './bridgeClient';
@@ -34,6 +34,10 @@ export interface HostSelection {
   /** The SDK version runs execute under, or null before it is known. */
   sdkVersion: string | null;
   banner: HostBanner | null;
+  /** The bridge protocol the SDK answered with (rows 4-7 only). */
+  protocol?: number;
+  /** The spec versions the SDK's bridge accepts (rows 4-7 only). */
+  specVersions?: readonly number[];
 }
 
 /** Everything the selector needs that the workspace context cannot build synchronously. */
@@ -55,7 +59,7 @@ export interface SelectHostDeps {
 
 const INFO_NO_SDK = (v: string): HostBanner => ({
   tone: 'info',
-  text: `This project has no @lousho/build-ai-agent installed. Runs use Studio's built-in SDK ${v}.`,
+  text: `This project has no @linuxdevil/lousho installed. Runs use Studio's built-in SDK ${v}.`,
 });
 const INFO_UNBUILT = (v: string): HostBanner => ({
   tone: 'info',
@@ -63,11 +67,11 @@ const INFO_UNBUILT = (v: string): HostBanner => ({
 });
 const WARNING_OLD_SDK = (): HostBanner => ({
   tone: 'warning',
-  text: `Update @lousho/build-ai-agent in this project to ${MIN_BRIDGE_SDK_VERSION} or later to edit agents here.`,
+  text: `Update @linuxdevil/lousho in this project to ${MIN_BRIDGE_SDK_VERSION} or later to edit agents here.`,
 });
 const WARNING_NEWER_SDK = (v: string): HostBanner => ({
   tone: 'warning',
-  text: `This project's @lousho/build-ai-agent ${v} is newer than this Studio understands. Update Studio to edit agents here.`,
+  text: `This project's @linuxdevil/lousho ${v} is newer than this Studio understands. Update Studio to edit agents here.`,
 });
 const DANGER_CRASHED = (): HostBanner => ({
   tone: 'danger',
@@ -198,14 +202,14 @@ export class WorkspaceHostSelector {
       // The handshake's version is the SDK that answered - record it over the disk read.
       if (!hello.specVersions.includes(2)) {
         await client.stop();
-        return this.settle({ mode: 'read-only', banner: WARNING_OLD_SDK(), sdkVersion: hello.sdkVersion });
+        return this.settle({ mode: 'read-only', banner: WARNING_OLD_SDK(), sdkVersion: hello.sdkVersion, protocol: hello.protocol, specVersions: hello.specVersions });
       }
       if (hello.protocol !== BRIDGE_PROTOCOL_VERSION) {
         await client.stop();
-        return this.settle({ mode: 'read-only', banner: WARNING_NEWER_SDK(hello.sdkVersion), sdkVersion: hello.sdkVersion });
+        return this.settle({ mode: 'read-only', banner: WARNING_NEWER_SDK(hello.sdkVersion), sdkVersion: hello.sdkVersion, protocol: hello.protocol, specVersions: hello.specVersions });
       }
       // Row 6.
-      return this.settle({ mode: 'bridge', banner: null, sdkVersion: hello.sdkVersion });
+      return this.settle({ mode: 'bridge', banner: null, sdkVersion: hello.sdkVersion, protocol: hello.protocol, specVersions: hello.specVersions });
     } catch (error) {
       if (error instanceof BridgeError && error.code === 'LOUSHO_BRIDGE_UNSUPPORTED') {
         // Row 3: no hello ever answered - the SDK version is unknown.
@@ -227,20 +231,24 @@ export class WorkspaceHostSelector {
     }
   }
 
-  private settle(patch: { mode: HostMode; banner: HostBanner | null; sdkVersion?: string | null }): HostSelection {
+  private settle(patch: { mode: HostMode; banner: HostBanner | null; sdkVersion?: string | null; protocol?: number; specVersions?: readonly number[] }): HostSelection {
     const next: HostSelection = {
       mode: patch.mode,
       sdk: this.sdk,
       sdkVersion: patch.sdkVersion !== undefined ? patch.sdkVersion : this.selection.sdkVersion,
       banner: patch.banner,
+      protocol: patch.protocol ?? this.selection.protocol,
+      specVersions: patch.specVersions ?? this.selection.specVersions,
     };
     const before = this.selection;
     const unchanged =
       before.mode === next.mode &&
       before.sdkVersion === next.sdkVersion &&
+      before.protocol === next.protocol &&
       before.banner?.tone === next.banner?.tone &&
       before.banner?.text === next.banner?.text &&
-      before.banner?.action === next.banner?.action;
+      before.banner?.action === next.banner?.action &&
+      (before.specVersions === undefined || next.specVersions === undefined || before.specVersions.join() === next.specVersions.join());
     if (unchanged) return before;
     this.selection = next;
     for (const listener of this.listeners) listener(this.selection);
