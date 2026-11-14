@@ -3,12 +3,13 @@
  * every `graph/v2` module imports spec types from here, so the SDK import
  * path (and any SDK renames) lives in exactly one file.
  *
- * The SDK's `lousho/spec` subpath only carries browser-safe exports, so the
- * spec v2 types come from the SDK source tree directly — the same deviation
- * `src/persistence/importExport.ts` already makes and documents.
+ * The `@linuxdevil/lousho/spec` subpath carries every spec v2 type and the
+ * Inspector's value lists Studio needs (the browser-safe `src/spec/v2`
+ * layer), so every import here is a public SDK export — no source-tree
+ * paths (PLAN §19.7, enforced by lint:imports).
  */
 
-/** The flow the run follows (from the published `lousho/flows` subpath). */
+/** The flow the run follows (from the published `@linuxdevil/lousho/flows` subpath). */
 export type { AgentFlow } from '@linuxdevil/lousho/flows';
 
 /** The agent spec the canvas edits, plus its subagent union. */
@@ -23,7 +24,6 @@ export type { AgentSpecV2, SubagentSpec } from '@linuxdevil/lousho/spec';
 export type { ToolRef, IntegrationName, OpenApiToolRefOptions } from '@linuxdevil/lousho/spec';
 export { INTEGRATION_CREDENTIALS, SECRET_CREDENTIALS } from '@linuxdevil/lousho/spec';
 export { isSafeRelativePath, SPEC_ID_PATTERN } from '@linuxdevil/lousho/spec';
-/** A reference to an env var or a named Studio secret. */
 /** One `spec.skills` entry. */
 export type { SkillRef } from '@linuxdevil/lousho/spec';
 /** One `spec.memory` entry, plus its `scope`/`provider` union members for the Inspector's sub-forms. */
