@@ -7,6 +7,7 @@
 import { spawnSync } from 'node:child_process';
 import { createServer, type AddressInfo } from 'node:net';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 export const SDK_NAME = '@linuxdevil/lousho';
