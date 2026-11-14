@@ -80,7 +80,7 @@ function assertUrl(value: unknown, field: string, name: string): void {
  *
  * @example
  * ```ts
- * import { defineOAuthProvider } from '@linuxdevil/lousho';
+ * import { defineOAuthProvider } from 'lousho';
  *
  * export const github = defineOAuthProvider({
  *   name: 'github',

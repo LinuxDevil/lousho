@@ -10,9 +10,9 @@
 // advancing to the continuation turn - the same reason the SDK's own
 // bridge tests register one shared `model`.
 //
-// Imports `@linuxdevil/lousho`, the name the package ships under.
-import { LLMProviderRegistry } from '@linuxdevil/lousho';
-import { mockModel } from '@linuxdevil/lousho/testing';
+// Imports `lousho`, the name the package ships under.
+import { LLMProviderRegistry } from 'lousho';
+import { mockModel } from 'lousho/testing';
 
 const model = mockModel(JSON.parse(process.env.SCRIPTED_TURNS ?? '["ok"]'), { onExhausted: 'repeat-last' });
 LLMProviderRegistry.register('scripted', () => model);

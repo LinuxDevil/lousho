@@ -113,7 +113,7 @@ const PII_DETECTORS: Record<PiiType, Detector<PiiType>> = {
  *
  * @example
  * ```ts
- * import { piiGuardrail } from '@linuxdevil/lousho';
+ * import { piiGuardrail } from 'lousho';
  *
  * const redactContacts = piiGuardrail({ types: ['email', 'phone'], action: 'rewrite' });
  * ```

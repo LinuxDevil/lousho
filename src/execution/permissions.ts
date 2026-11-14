@@ -53,7 +53,7 @@ export interface PermissionAuditContext {
  *
  * @example
  * ```ts
- * import type { PermissionRule } from '@linuxdevil/lousho';
+ * import type { PermissionRule } from 'lousho';
  *
  * const rules: PermissionRule[] = [
  *   { tool: 'shell', when: (args) => String(args.command).startsWith('rm '), action: 'deny', reason: 'No deletes' },
@@ -135,7 +135,7 @@ export interface PermissionOptions {
    *
    * @example
    * ```ts
-   * import { allow, ask, deny } from '@linuxdevil/lousho';
+   * import { allow, ask, deny } from 'lousho';
    *
    * const permissions = [deny('delete_file', 'Deleting is not allowed'), ask(['shell', 'write_file']), allow('*')];
    * ```
@@ -153,7 +153,7 @@ export interface PermissionOptions {
    *
    * @example
    * ```ts
-   * import { createAgent } from '@linuxdevil/lousho';
+   * import { createAgent } from 'lousho';
    *
    * const agent = createAgent({ provider, instructions: 'Review the code.', tools, permissionMode: 'plan' });
    * ```

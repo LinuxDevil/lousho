@@ -35,7 +35,7 @@ import {
   type CheckpointHistoryEntry,
   type CheckpointHistoryOptions,
   type CheckpointStore,
-} from '@linuxdevil/lousho';
+} from 'lousho';
 
 /** Write to a temp file and rename it over `file`, so a crash never leaves half a file there. */
 function writeFileAtomic(file: string, content: string): void {

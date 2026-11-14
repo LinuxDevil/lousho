@@ -4,14 +4,14 @@
  *
  * The lookup is Node's own algorithm done by hand: the SDK's `exports`
  * map does not expose `./package.json`, so `require.resolve(
- * '@linuxdevil/lousho/package.json')` throws ERR_PACKAGE_PATH_NOT_EXPORTED
+ * 'lousho/package.json')` throws ERR_PACKAGE_PATH_NOT_EXPORTED
  * on every supported version. Walking `node_modules` upwards from the
  * workspace root (nearest hit wins) matches what `import` would resolve.
  *
- * Two package names are accepted: `@linuxdevil/lousho`, the scoped
- * name the package ships under, and `lousho`, the pre-rename name kept
- * for projects that still depend on it.
- * the package ships under today - a project on either gets its own SDK
+ * Two package names are accepted: `lousho`, the name the package ships
+ * under, and `@linuxdevil/lousho`, the scoped name it carried for one
+ * release cycle, kept for projects that installed it then.
+ * A project on either gets its own SDK
  * bridged. A workspace that IS an SDK checkout (`source: 'self'`) uses
  * its own `bin/lousho.js`; `built` tells the selector whether `dist/`
  * exists - an unbuilt checkout falls back to Studio's in-process host.
@@ -19,8 +19,8 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { join, parse } from 'node:path';
 
-/** Package names the SDK answers to: the scoped name, then the legacy `lousho`. */
-const SDK_PACKAGE_NAMES = ['@linuxdevil/lousho', 'lousho'] as const;
+/** Package names the SDK answers to: `lousho`, then the scoped `@linuxdevil/lousho`. */
+const SDK_PACKAGE_NAMES = ['lousho', '@linuxdevil/lousho'] as const;
 
 /** The project's own SDK install, as the bridge spawns it. */
 export interface WorkspaceSdk {
@@ -86,8 +86,8 @@ export function findWorkspaceSdk(root: string): WorkspaceSdk | undefined {
     for (const name of SDK_PACKAGE_NAMES) {
       const pkgDir = join(dir, 'node_modules', ...name.split('/'));
       // The directory name alone is not proof: verify the manifest's own
-      // `name` (a junction to the SDK checkout carries `@linuxdevil/lousho`
-      // or the legacy `lousho`).
+      // `name` (a junction to the SDK checkout carries `lousho`
+      // or the scoped `@linuxdevil/lousho`).
       if (!isSdkPackageJson(readPackageJson(pkgDir))) continue;
       try {
         const sdk = sdkAt(realpathSync(pkgDir), 'node_modules');

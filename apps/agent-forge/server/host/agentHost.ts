@@ -24,7 +24,7 @@ import type {
   ExecutionResult,
   PendingApproval,
   Span,
-} from '@linuxdevil/lousho';
+} from 'lousho';
 import type { CatalogGuardrail, CatalogModel, CatalogTool, CatalogTriggerType } from '../../shared/wireTypes';
 
 export interface AgentHost {

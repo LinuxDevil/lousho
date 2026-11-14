@@ -33,7 +33,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@linuxdevil/lousho": "^1.0.0-alpha.119",
+    "lousho": "^1.0.0-alpha.119",
     "prompts": "^2.4.2"
   },
   "devDependencies": {

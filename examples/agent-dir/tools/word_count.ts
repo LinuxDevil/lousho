@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { defineTool } from '@linuxdevil/lousho';
+import { defineTool } from 'lousho';
 
 export default defineTool({
   name: 'word_count',

@@ -13,7 +13,7 @@ import {
   emptyRunUsage,
   type AgentSpecV2,
   type Span,
-} from '@linuxdevil/lousho';
+} from 'lousho';
 import { RunManager } from '../runRegistry';
 import { newTestHost } from './testHost';
 import { attachWebSocketServer } from '../wsServer';

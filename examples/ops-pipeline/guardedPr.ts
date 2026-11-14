@@ -25,8 +25,8 @@ import {
   createDiffSizeCheck,
   runPatchChecks,
   secretScanCheck,
-} from '@linuxdevil/lousho';
-import { ToolDescriptor } from '@linuxdevil/lousho';
+} from 'lousho';
+import { ToolDescriptor } from 'lousho';
 
 export interface FixerPatchContext {
   /** The REAL hardened GitHub tool's PR-creation ToolDescriptor. */

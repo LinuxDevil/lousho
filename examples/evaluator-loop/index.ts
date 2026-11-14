@@ -28,8 +28,8 @@ import {
   resolveProvider,
   type LLMJudgeConfig,
   type SimpleAgent,
-} from '@linuxdevil/lousho';
-import { mockModel } from '@linuxdevil/lousho/testing';
+} from 'lousho';
+import { mockModel } from 'lousho/testing';
 
 export const LIVE_MODEL = 'openrouter/openai/gpt-4o-mini';
 /** Bare model id, as `judge.provider.generate({ model })` expects it. */

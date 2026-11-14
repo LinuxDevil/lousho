@@ -6,7 +6,7 @@
  * can early-return.
  */
 import type { Request, Response } from 'express';
-import type { AgentSpecV2 } from '@linuxdevil/lousho';
+import type { AgentSpecV2 } from 'lousho';
 import { paramId, sendError } from '../http/routeUtils';
 import { workspaceOf } from './middleware';
 import type { WorkspaceContext } from './context';

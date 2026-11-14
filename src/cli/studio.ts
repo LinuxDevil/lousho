@@ -2,13 +2,13 @@
  * `lousho studio` - opens Lousho Studio, the visual dashboard for building,
  * running and debugging agents built with this SDK.
  *
- * Studio is a separate package (`@linuxdevil/studio`, W13a/W13b): the SDK
+ * Studio is a separate package (`lousho-studio`, W13a/W13b): the SDK
  * tarball no longer ships `apps/agent-forge`, so this command resolves a
  * Studio install and launches its CLI (`dist-server/cli.cjs`) as a child
  * process. Two kinds of target:
  *
  *   - **checkout**: `<cwd>/apps/agent-forge` whose package.json is named
- *     `@linuxdevil/studio` - i.e. this SDK repository. Keeps the
+ *     `lousho-studio` - i.e. this SDK repository. Keeps the
  *     contributor modes:
  *
  *       - **prod**: `dist-server/cli.cjs --workspace <cwd> --port <p>
@@ -18,7 +18,7 @@
  *         (HMR), exactly as before; only meaningful with the app's
  *         devDependencies installed.
  *
- *   - **installed**: `@linuxdevil/studio` resolved from the current
+ *   - **installed**: `lousho-studio` resolved from the current
  *     directory's node_modules, then next to the SDK package, then npm's
  *     global root. Launched the same way as prod (`cli.cjs` with
  *     `--workspace <cwd>`); `--prod`/`--dev` are a usage error there.
@@ -37,7 +37,7 @@ import { ConfigurationError } from '../execution/errors';
 import { findSdkRoot } from '../deploy/bundle';
 
 /** The published Studio package `lousho studio` looks for. */
-export const STUDIO_PACKAGE = '@linuxdevil/studio';
+export const STUDIO_PACKAGE = 'lousho-studio';
 /** Printed when no Studio checkout or install can be found. */
 export const STUDIO_MISSING = `Studio is a separate install: npx ${STUDIO_PACKAGE}`;
 
@@ -46,7 +46,7 @@ export type StudioMode = 'auto' | 'dev' | 'prod';
 export type StudioTarget =
   /** `<cwd>/apps/agent-forge` in the SDK repository. */
   | { kind: 'checkout'; appDir: string }
-  /** An installed `@linuxdevil/studio` package. */
+  /** An installed `lousho-studio` package. */
   | { kind: 'installed'; cliPath: string; packageDir: string };
 
 export interface FindStudioOptions {
@@ -139,7 +139,7 @@ function checkoutTarget(cwd: string): StudioTarget | undefined {
   return isStudioCheckout(cwd) ? { kind: 'checkout', appDir: path.join(cwd, 'apps', 'agent-forge') } : undefined;
 }
 
-/** The directory holding `@linuxdevil/studio`'s package.json as resolved from `fromDir`, if any. */
+/** The directory holding `lousho-studio`'s package.json as resolved from `fromDir`, if any. */
 function resolveStudioPackageDir(fromDir: string): string | undefined {
   try {
     const require = createRequire(path.join(fromDir, 'package.json'));
@@ -181,7 +181,7 @@ function defaultGlobalRoot(): string | undefined {
   return root || undefined;
 }
 
-/** Step 4: Studio installed globally (`npm i -g @linuxdevil/studio`). */
+/** Step 4: Studio installed globally (`npm i -g lousho-studio`). */
 function globalStudioTarget(globalRoot: () => string | undefined): StudioTarget | undefined {
   const root = globalRoot();
   return root ? installedTarget(path.join(root, STUDIO_PACKAGE)) : undefined;
@@ -189,7 +189,7 @@ function globalStudioTarget(globalRoot: () => string | undefined): StudioTarget 
 
 /**
  * Finds Studio: the checkout copy under `cwd` first, then an installed
- * `@linuxdevil/studio` resolved from `cwd`, from the SDK package, then npm's
+ * `lousho-studio` resolved from `cwd`, from the SDK package, then npm's
  * global root. Returns undefined when nothing runnable exists.
  */
 export function findStudio(cwd: string, options: FindStudioOptions = {}): StudioTarget | undefined {
@@ -385,8 +385,8 @@ const USAGE = 'Usage: lousho studio [--port N] [--host H]';
 
 const HELP = `${USAGE}
 
-Opens Lousho Studio on this project. Studio is a separate package: install it with npm i -g @linuxdevil/studio
-(or run npx @linuxdevil/studio). This command finds it and opens this folder as a workspace.
+Opens Lousho Studio on this project. Studio is a separate package: install it with npm i -g lousho-studio
+(or run npx lousho-studio). This command finds it and opens this folder as a workspace.
 
 Options:
   --port N    the studio's port (default 4750)

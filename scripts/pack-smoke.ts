@@ -100,7 +100,7 @@ const FORBIDDEN_PATHS = [
   /__snapshots__\//,
   /__cassettes__\//,
   /(^|\/)node_modules\//,
-  // Nothing under apps/ ships: Studio is the separate @linuxdevil/studio package (W13b).
+  // Nothing under apps/ ships: Studio is the separate lousho-studio package (W13b).
   /^apps\//,
   /^dist\/.*\.map$/,
   // bin/lousho.js loads only the ESM CLI build (dist/cli/*.mjs); the CJS one is not shipped.

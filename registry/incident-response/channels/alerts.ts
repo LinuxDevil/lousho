@@ -1,4 +1,4 @@
-import { webhookChannel } from '@linuxdevil/lousho';
+import { webhookChannel } from 'lousho';
 
 /**
  * Alert intake (PagerDuty-style): POSTs land on /channels/alerts; the JSON

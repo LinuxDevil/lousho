@@ -65,8 +65,8 @@ import {
   type HandoffInputData,
   type LLMProvider,
   type SimpleAgent,
-} from '@linuxdevil/lousho';
-import { mockModel } from '@linuxdevil/lousho/testing';
+} from 'lousho';
+import { mockModel } from 'lousho/testing';
 
 export const LIVE_MODEL = 'openrouter/openai/gpt-4o-mini';
 

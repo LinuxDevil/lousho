@@ -5,5 +5,5 @@
   "permissions": {
     "network": ["api.open-meteo.com", "geocoding-api.open-meteo.com"]
   },
-  "dependencies": ["@linuxdevil/lousho", "zod"]
+  "dependencies": ["lousho", "zod"]
 }

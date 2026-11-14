@@ -1,4 +1,4 @@
-import type { AgentHook } from '@linuxdevil/lousho';
+import type { AgentHook } from 'lousho';
 import { findDraft } from './lib/mailstore.ts';
 
 /**

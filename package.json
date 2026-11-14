@@ -1,5 +1,5 @@
 {
-  "name": "@linuxdevil/lousho",
+  "name": "lousho",
   "version": "1.0.0-alpha.119",
   "description": "TypeScript AI agent SDK with tools, MCP, durable sessions, human approvals, and OpenTelemetry. Runs in your own Node process.",
   "workspaces": [

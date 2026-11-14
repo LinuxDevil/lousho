@@ -1,6 +1,6 @@
 /**
  * `sdkRootDir()` must find the SDK both from the monorepo (workspace
- * symlink) and from an installed `node_modules/@linuxdevil/studio` layout.
+ * symlink) and from an installed `node_modules/lousho-studio` layout.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
@@ -8,7 +8,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { sdkRootDir } from '../sdkRoot';
 
-const SDK_PACKAGE = '@linuxdevil/lousho';
+const SDK_PACKAGE = 'lousho';
 let tmp: string | undefined;
 
 afterEach(() => {
@@ -34,10 +34,10 @@ describe('sdkRootDir', () => {
     expect(sdkRootDir()).toBe('/custom/sdk');
   });
 
-  it('finds the SDK from an installed node_modules/@linuxdevil/studio layout', () => {
+  it('finds the SDK from an installed node_modules/lousho-studio layout', () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-sdkroot-'));
-    const sdkDir = path.join(tmp, 'node_modules', '@linuxdevil', 'lousho');
-    const studioDir = path.join(tmp, 'node_modules', '@linuxdevil', 'studio');
+    const sdkDir = path.join(tmp, 'node_modules', 'lousho');
+    const studioDir = path.join(tmp, 'node_modules', 'lousho-studio');
     fs.mkdirSync(path.join(sdkDir, 'dist'), { recursive: true });
     fs.mkdirSync(path.join(studioDir, 'dist-server'), { recursive: true });
     fs.writeFileSync(
@@ -56,6 +56,6 @@ describe('sdkRootDir', () => {
     // A temp dir outside any node_modules tree: resolution walks up to the
     // filesystem root without finding the package (unless the machine has a
     // global install, which the env override covers in real use).
-    expect(() => sdkRootDir(moduleDir)).toThrow(/could not locate the @linuxdevil\/lousho package/);
+    expect(() => sdkRootDir(moduleDir)).toThrow(/could not locate the lousho package/);
   });
 });

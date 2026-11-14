@@ -70,7 +70,7 @@ function unbound(): never {
  *
  * ```ts
  * // memory/notes.ts
- * import { defineMemory, kvMemory } from '@linuxdevil/lousho';
+ * import { defineMemory, kvMemory } from 'lousho';
  * export default defineMemory({ name: 'notes', scope: 'global', provider: kvMemory() });
  * ```
  *

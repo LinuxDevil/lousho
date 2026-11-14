@@ -23,7 +23,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { AgentSpecV2, Message } from '@linuxdevil/lousho';
+import type { AgentSpecV2, Message } from 'lousho';
 import { WorkspaceHostSelector, type SelectHostDeps } from '../host/hostSelector';
 import type { HostEvent, HostRunInput } from '../host/agentHost';
 import { HostStartError } from '../host/bridgeAgentHost';
@@ -32,7 +32,7 @@ import { FileApprovalStore } from '../approvalStore';
 import { InProcessAgentHost } from '../host/inProcessAgentHost';
 import { workspaceRefFor } from '../workspace/workspaceId';
 import { SecretsStore } from '../secretsStore';
-import { VERSION } from '@linuxdevil/lousho';
+import { VERSION } from 'lousho';
 
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const SDK_DIR = process.env.LOUSHO_BRIDGE_SDK_DIR ?? REPO_ROOT;

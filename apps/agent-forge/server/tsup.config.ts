@@ -63,6 +63,6 @@ export default defineConfig({
   clean: true,
   treeshake: true,
   minify: false,
-  external: ['@linuxdevil/lousho', 'yaml', 'ai', 'zod', '@ai-sdk/openai', '@ai-sdk/anthropic'],
+  external: ['lousho', 'yaml', 'ai', 'zod', '@ai-sdk/openai', '@ai-sdk/anthropic'],
   noExternal: ['express', 'ws'],
 });

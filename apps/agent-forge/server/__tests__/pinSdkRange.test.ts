@@ -33,7 +33,7 @@ function makeFixture({ withSdkRoot = true }: { withSdkRoot?: boolean } = {}): Fi
   if (withSdkRoot) {
     fs.writeFileSync(
       path.join(root, 'package.json'),
-      `${JSON.stringify({ name: '@linuxdevil/lousho', version: '9.9.9' }, null, 2)}\n`
+      `${JSON.stringify({ name: 'lousho', version: '9.9.9' }, null, 2)}\n`
     );
   }
   const pkgPath = path.join(app, 'package.json');
@@ -41,9 +41,9 @@ function makeFixture({ withSdkRoot = true }: { withSdkRoot?: boolean } = {}): Fi
     pkgPath,
     `${JSON.stringify(
       {
-        name: '@linuxdevil/studio',
+        name: 'lousho-studio',
         version: '0.1.0-alpha.0',
-        dependencies: { '@linuxdevil/lousho': 'file:../..', yaml: '^2.9.1' },
+        dependencies: { 'lousho': 'file:../..', yaml: '^2.9.1' },
       },
       null,
       2
@@ -66,7 +66,7 @@ describe('pin-sdk-range.mjs', () => {
       const pinned = JSON.parse(fs.readFileSync(fx.pkgPath, 'utf8')) as {
         dependencies: Record<string, string>;
       };
-      expect(pinned.dependencies['@linuxdevil/lousho']).toBe('^9.9.9');
+      expect(pinned.dependencies['lousho']).toBe('^9.9.9');
       expect(pinned.dependencies.yaml).toBe('^2.9.1');
       expect(fs.existsSync(fx.backupPath)).toBe(true);
       expect(fs.readFileSync(fx.backupPath, 'utf8')).toBe(original);

@@ -1,4 +1,4 @@
-import type { ApproveToolCall } from '@linuxdevil/lousho';
+import type { ApproveToolCall } from 'lousho';
 import { autoApproveSenders, findDraft, getMessage } from './lib/mailstore.ts';
 
 /**

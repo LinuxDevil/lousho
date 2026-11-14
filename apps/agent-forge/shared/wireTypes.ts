@@ -20,7 +20,7 @@ import type {
   listGuardrails,
   listModels,
   listTriggerTypes,
-} from '@linuxdevil/lousho';
+} from 'lousho';
 import type { WorkspaceRef } from './workspace';
 import type { AuthorSettings } from './authorWire';
 

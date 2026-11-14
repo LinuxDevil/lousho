@@ -15,7 +15,7 @@ import {
   type LLMProvider,
   type StreamChunk,
   type StreamResult,
-} from '@linuxdevil/lousho';
+} from 'lousho';
 
 export function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;

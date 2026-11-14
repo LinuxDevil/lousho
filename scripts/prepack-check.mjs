@@ -1,6 +1,6 @@
 // `npm pack` / `npm publish` (prepack): the release guard. The tarball never
 // contains Studio (apps/agent-forge left the package in W13b; `lousho studio`
-// launches the separately installed @linuxdevil/studio). The build is not run
+// launches the separately installed lousho-studio). The build is not run
 // here because `npm pack` of the checkout also runs for `lousho init
 // --sdk-path`, docs:verify-snippets and the scaffold tests; prepublishOnly
 // builds the SDK for a real publish.

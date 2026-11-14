@@ -17,7 +17,7 @@
  * deadline, `MCP_PROBE_FAILED` for everything else, and the `UNAVAILABLE`
  * catch-all for a thrown dep error (guardedToolCall).
  */
-import { defineTool } from '@linuxdevil/lousho';
+import { defineTool } from 'lousho';
 import { z } from 'zod';
 import type { McpServerSpecV2 } from '../../../shared/wireTypes';
 import { guardedToolCall, toolFailure } from './failure';

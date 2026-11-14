@@ -21,7 +21,7 @@ function makeCheckout(root: string, opts: { cli?: boolean; serverSource?: boolea
   return appDir;
 }
 
-/** An installed @linuxdevil/studio under <root>/node_modules. */
+/** An installed lousho-studio under <root>/node_modules. */
 function makeInstalled(root: string): { packageDir: string; cliPath: string } {
   const packageDir = path.join(root, 'node_modules', ...STUDIO_PACKAGE.split('/'));
   fs.mkdirSync(path.join(packageDir, 'dist-server'), { recursive: true });
@@ -44,7 +44,7 @@ function fakeSpawn() {
 }
 
 describe('findStudio', () => {
-  it('returns the checkout when <cwd>/apps/agent-forge is named @linuxdevil/studio', () => {
+  it('returns the checkout when <cwd>/apps/agent-forge is named lousho-studio', () => {
     const cwd = tmp();
     const appDir = makeCheckout(cwd);
     expect(findStudio(cwd, { packageRoot: tmp(), globalRoot: () => undefined })).toEqual({ kind: 'checkout', appDir });
@@ -76,7 +76,7 @@ describe('findStudio', () => {
     expect(hit).toEqual({ kind: 'installed', cliPath, packageDir });
 
     const globalRoot = tmp();
-    // `npm root -g` points at the global node_modules: <root>/@linuxdevil/studio.
+    // `npm root -g` points at the global node_modules: <root>/lousho-studio.
     const globalPackageDir = path.join(globalRoot, ...STUDIO_PACKAGE.split('/'));
     fs.mkdirSync(path.join(globalPackageDir, 'dist-server'), { recursive: true });
     fs.writeFileSync(path.join(globalPackageDir, 'package.json'), JSON.stringify({ name: STUDIO_PACKAGE }));

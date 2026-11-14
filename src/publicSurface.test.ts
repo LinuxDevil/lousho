@@ -21,7 +21,7 @@ type Entry = Record<string, unknown>;
 const MOVED: Array<[mod: Entry, specifier: string, names: string[]]> = [
   [
     flows as Entry,
-    '@linuxdevil/lousho/flows',
+    'lousho/flows',
     [
       'FlowBuilder',
       'FlowExecutor',
@@ -40,7 +40,7 @@ const MOVED: Array<[mod: Entry, specifier: string, names: string[]]> = [
   ],
   [
     integrations as Entry,
-    '@linuxdevil/lousho/integrations',
+    'lousho/integrations',
     [
       'createEmailTool',
       'createJiraTools',
@@ -57,7 +57,7 @@ const MOVED: Array<[mod: Entry, specifier: string, names: string[]]> = [
   ],
   [
     utils as Entry,
-    '@linuxdevil/lousho/utils',
+    'lousho/utils',
     [
       'EncryptionUtils',
       'DTOEncryptionFilter',
@@ -78,7 +78,7 @@ const MOVED: Array<[mod: Entry, specifier: string, names: string[]]> = [
   ],
   [
     executor as Entry,
-    '@linuxdevil/lousho/executor',
+    'lousho/executor',
     [
       'AgentBuilder',
       'AgentExecutor',
