@@ -66,7 +66,7 @@ jobs:
           npm version prerelease --preid=alpha --no-git-tag-version
           node scripts/sync-version.mjs
           npm version prerelease --preid=alpha --no-git-tag-version -w create-lousho
-          npm version prerelease --preid=alpha --no-git-tag-version -w @linuxdevil/studio
+          npm version prerelease --preid=alpha --no-git-tag-version -w lousho-studio
           npm install --package-lock-only --ignore-scripts
           VERSION=$(node -p "require('./package.json').version")
           sed -i "s/^## \[Unreleased\]/&\n\n## [$VERSION] - $(date -u +%F)/" CHANGELOG.md
@@ -94,26 +94,21 @@ jobs:
           done
           exit 1
       - name: Publish lousho
-        run: npm publish --access public --tag latest
+        run: npm publish --tag latest
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish create-lousho
-        run: npm publish -w create-lousho --access public --tag latest
+        run: npm publish -w create-lousho --tag latest
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       # Studio's SDK dep is pinned to ^<root version> by its prepack script, so
       # it must publish after lousho for the range to resolve on npm.
-      - name: Publish @linuxdevil/studio
-        run: npm publish -w @linuxdevil/studio --access public --tag latest
+      - name: Publish lousho-studio
+        run: npm publish -w lousho-studio --tag latest
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Mirror to GitHub Packages
-        # Best effort: npm is the source of truth, so a mirror failure must not skip the GitHub release.
-        continue-on-error: true
-        run: node scripts/publish-github-packages.mjs
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TAG: latest
+      # GitHub Packages only accepts scoped names (@owner/pkg), so the
+      # unscoped npm packages cannot be mirrored there.
       - name: GitHub release
         run: |
           TAG=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)

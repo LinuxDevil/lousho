@@ -16,9 +16,9 @@
  * `POST /assistant/sessions/:id/enable` (the SuccessCard's "Enable agent"
  * button) so the button and the model switch an agent identically.
  */
-import { defineTool } from '@linuxdevil/lousho';
+import { defineTool } from 'lousho';
 import { z } from 'zod';
-import type { AgentSpecV2 } from '@linuxdevil/lousho';
+import type { AgentSpecV2 } from 'lousho';
 import type {
   AuthorToolFailure,
   Requirement,

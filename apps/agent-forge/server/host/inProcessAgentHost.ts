@@ -24,7 +24,7 @@ import {
   VERSION,
   type AgentRun,
   type ExecutionResult,
-} from '@linuxdevil/lousho';
+} from 'lousho';
 import { buildRunnableAgent, type RunWiring, type StudioRunDeps } from '../buildAgentV2';
 import {
   HostRunNotActiveError,

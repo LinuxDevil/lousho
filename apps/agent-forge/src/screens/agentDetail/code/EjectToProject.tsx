@@ -1,6 +1,6 @@
 import { useMemo, useState, type JSX } from 'react';
 import { FolderOutput } from 'lucide-react';
-import { specToAgentDir, type AgentSpecV2 } from '@linuxdevil/lousho/spec';
+import { specToAgentDir, type AgentSpecV2 } from 'lousho/spec';
 
 import { errorMessage } from '../../../components/errorMessage';
 import { runtimeClient, RuntimeApiError } from '../../../runtime/runtimeClient';

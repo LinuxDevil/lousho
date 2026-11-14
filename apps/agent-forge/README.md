@@ -1,24 +1,24 @@
 # Lousho Studio
 
 A local web app for building, testing and watching every agent across your
-projects — powered by [`@linuxdevil/lousho`](https://www.npmjs.com/package/@linuxdevil/lousho).
+projects — powered by [`lousho`](https://www.npmjs.com/package/lousho).
 
 ## Install & run
 
 ```sh
-npx @linuxdevil/studio            # open Studio on the current folder
-npx @linuxdevil/studio --workspace ~/code/my-app --port 5000
+npx lousho-studio            # open Studio on the current folder
+npx lousho-studio --workspace ~/code/my-app --port 5000
 ```
 
 Or install it globally and use the `lousho-studio` command:
 
 ```sh
-npm i -g @linuxdevil/studio
+npm i -g lousho-studio
 lousho-studio --workspace ~/code/my-app
 ```
 
 If your project already has the SDK, `lousho studio` (from
-`@linuxdevil/lousho`) launches the same app.
+`lousho`) launches the same app.
 
 Studio prints a URL with a per-launch token — every API and WebSocket
 request needs it, so keep the URL private to your machine (it binds to
@@ -31,7 +31,7 @@ agents under its `.lousho/` directory, so one Studio instance can follow many
 projects. `--workspace <dir>` opens that folder and adds it to your workspace
 list; the first run uses the current folder.
 
-Runs use the project's own SDK when the workspace has `@linuxdevil/lousho`
+Runs use the project's own SDK when the workspace has `lousho`
 installed, so Studio works across SDK versions. See
 [Agent Forge](https://lousho.com/agent-forge) for the full guide.
 

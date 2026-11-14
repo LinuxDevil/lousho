@@ -10,7 +10,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import request from 'supertest';
-import { specToAgentDir } from '@linuxdevil/lousho/spec';
+import { specToAgentDir } from 'lousho/spec';
 import { createApp } from '../app';
 import { RunManager } from '../runRegistry';
 import { newTestHost } from './testHost';
@@ -21,10 +21,10 @@ import { AgentRepo } from '../storage/agentRepo';
 import { SecretsStore } from '../secretsStore';
 import { studioPathsFor } from '../workspace/studioPaths';
 import type { EjectResult } from '../../shared/wireTypes';
-import type { AgentSpecV2 } from '@linuxdevil/lousho';
+import type { AgentSpecV2 } from 'lousho';
 
-vi.mock('@linuxdevil/lousho/spec', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('@linuxdevil/lousho/spec')>();
+vi.mock('lousho/spec', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('lousho/spec')>();
   return { ...mod, specToAgentDir: vi.fn(mod.specToAgentDir) };
 });
 

@@ -79,8 +79,8 @@ function lineOf(span: Span, traceId: string): TraceLine {
  *
  * @example
  * ```ts
- * import { createAgent } from '@linuxdevil/lousho';
- * import { fileTraceExporter } from '@linuxdevil/lousho/traces';
+ * import { createAgent } from 'lousho';
+ * import { fileTraceExporter } from 'lousho/traces';
  *
  * const agent = createAgent({ model: 'openai/gpt-4o-mini', exporter: fileTraceExporter() });
  * ```

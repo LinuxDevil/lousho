@@ -39,7 +39,7 @@ import { ServeConfigStore } from './serve/serveConfigStore';
 import { buildServeAgent } from './serve/serveRoutes';
 import { McpServerManager } from './serve/mcpServers';
 import type { StudioEvent } from '../shared/wireTypes';
-import { VERSION } from '@linuxdevil/lousho';
+import { VERSION } from 'lousho';
 import { sdkRootDir } from './sdkRoot';
 
 export interface StudioServerHandle {

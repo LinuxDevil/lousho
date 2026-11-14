@@ -6,5 +6,5 @@
     "exec": true,
     "filesystem": "write"
   },
-  "dependencies": ["@linuxdevil/lousho"]
+  "dependencies": ["lousho"]
 }

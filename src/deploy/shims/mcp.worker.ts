@@ -1,6 +1,6 @@
 /**
  * Worker-safe stand-in for every `@modelcontextprotocol/sdk` specifier the
- * `@linuxdevil/lousho/worker` entry reaches (#289).
+ * `lousho/worker` entry reaches (#289).
  *
  * `createAgent({ mcpServers })` lazy-imports the optional MCP peer through
  * tools/mcp/connect.ts (client/index.js, client/stdio.js,

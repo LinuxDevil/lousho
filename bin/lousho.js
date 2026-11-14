@@ -24,7 +24,7 @@ const USAGE = [
   '  lousho build <agent-dir|spec|agent.ts> --target=<node-server|cloudflare-worker|docker> [--out=<dir>]   (or --agent=<path>)',
   '      Bundle an agent for deployment (default output: .lousho/build/<target>).',
   '  lousho studio [--port N] [--host H]',
-  '      Open Lousho Studio on this project (a separate install: npm i -g @linuxdevil/studio).',
+  '      Open Lousho Studio on this project (a separate install: npm i -g lousho-studio).',
   '  lousho bridge',
   '      Speak Studio\'s bridge protocol on stdio (Lousho Studio starts it in a project).',
   '  lousho workspace <init|ls|show|validate|run> [args] [--source <dir> | --service <url>]',
@@ -52,7 +52,7 @@ const USAGE = [
 
 /**
  * Loads a command module from the ESM build (dist/cli/*.mjs). A user's tool
- * file (`tools/*.ts`) is an ES module, so its `import '@linuxdevil/lousho'`
+ * file (`tools/*.ts`) is an ES module, so its `import 'lousho'`
  * resolves to the ESM build: loading the CLI from the same build means the
  * agent directory and the tools it loads share one copy of the SDK.
  */
@@ -72,7 +72,7 @@ const COMMANDS = new Map([
   // Installs a tool, skill, channel, schedule or memory slot from a JSON registry; see src/cli/add.ts.
   ['add', { module: 'add', run: 'runAdd' }],
   ['build', { module: 'build', run: 'runBuild', env: true }],
-  // Finds an installed @linuxdevil/studio (or the SDK checkout's
+  // Finds an installed lousho-studio (or the SDK checkout's
   // apps/agent-forge) and opens this folder as a workspace; inside the
   // checkout, --prod/--dev pick the launch mode - see src/cli/studio.ts.
   ['studio', { module: 'studio', run: 'runStudio' }],

@@ -2,10 +2,10 @@
 /**
  * Rewrites the Studio package's SDK dependency for packing.
  *
- * In the monorepo `dependencies['@linuxdevil/lousho']` stays `file:../..`
+ * In the monorepo `dependencies['lousho']` stays `file:../..`
  * so the dev loop always runs the checkout next door. `npm pack`/`publish`
  * run `prepack` (`pin`) first: when the repo root package is the SDK
- * (`@linuxdevil/lousho`), the range is rewritten to `^<its version>` and the
+ * (`lousho`), the range is rewritten to `^<its version>` and the
  * original file is kept as `.package.json.prepack`; `postpack` (`restore`)
  * puts it back. Outside that layout `pin` is a no-op.
  *
@@ -14,7 +14,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-const SDK_PACKAGE = '@linuxdevil/lousho';
+const SDK_PACKAGE = 'lousho';
 const DEP_KEY = SDK_PACKAGE;
 const BACKUP = '.package.json.prepack';
 

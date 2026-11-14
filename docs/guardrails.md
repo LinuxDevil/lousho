@@ -47,7 +47,7 @@ OpenRouter use `openrouter/<vendor>/<model>` (e.g.
 `openrouter/openai/gpt-4o-mini`).
 
 ```ts
-import { createAgent, moderationGuardrail, piiGuardrail } from '@linuxdevil/lousho';
+import { createAgent, moderationGuardrail, piiGuardrail } from 'lousho';
 
 const agent = createAgent({
   provider,
@@ -87,7 +87,7 @@ import {
   maxLengthGuardrail,
   regexGuardrail,
   type IoGuardrail,
-} from '@linuxdevil/lousho';
+} from 'lousho';
 
 const noProdWrites: IoGuardrail = {
   name: 'no-prod-writes',
@@ -133,7 +133,7 @@ try {
 The last four are a starter set for checks most production agents need:
 
 ```ts
-import { createAgent, piiGuardrail, promptInjectionGuardrail, secretsGuardrail } from '@linuxdevil/lousho';
+import { createAgent, piiGuardrail, promptInjectionGuardrail, secretsGuardrail } from 'lousho';
 
 const agent = createAgent({
   provider,
@@ -181,7 +181,7 @@ proposed patch and rolls the results up into one verdict. The
 agent's patch before a pull request is opened:
 
 ```ts
-import { runPatchChecks, secretScanCheck, createDiffSizeCheck, createCommandCheck } from '@linuxdevil/lousho';
+import { runPatchChecks, secretScanCheck, createDiffSizeCheck, createCommandCheck } from 'lousho';
 
 const verdict = await runPatchChecks(
   { diff: patch },
@@ -221,8 +221,8 @@ function. The executor then calls `sandboxExecute` with the run's
 #### Advanced: the executor API
 
 ```ts
-import { AgentExecutor } from '@linuxdevil/lousho/executor';
-import { SubprocessSandbox } from '@linuxdevil/lousho';
+import { AgentExecutor } from 'lousho/executor';
+import { SubprocessSandbox } from 'lousho';
 
 // Route a flagged tool (requiresSandbox + sandboxExecute) through a real,
 // Docker-backed sandbox instead of the in-process NoopSandbox default

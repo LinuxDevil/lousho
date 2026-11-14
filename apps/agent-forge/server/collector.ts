@@ -23,8 +23,8 @@ import {
   type HealthProbe,
   type ObserveDaemon,
   type ObserveDaemonOptions,
-} from '@linuxdevil/lousho/observe';
-import { VERSION } from '@linuxdevil/lousho';
+} from 'lousho/observe';
+import { VERSION } from 'lousho';
 import type { CollectorStatus, CollectorUpdate } from '../shared/wireTypes';
 import type { SecretsStore } from './secretsStore';
 import type { SettingsStore } from './settingsStore';

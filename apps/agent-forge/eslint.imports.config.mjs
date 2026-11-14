@@ -16,7 +16,7 @@ export default [
     linterOptions: { reportUnusedDisableDirectives: 'off' },
     // The plugin is registered (not its rules) so inline
     // `eslint-disable @typescript-eslint/...` comments still resolve.
-    plugins: { '@typescript-eslint': tseslint.plugin, '@linuxdevil/lousho': { rules: { 'no-sdk-source': noSdkSource } } },
-    rules: { '@linuxdevil/lousho/no-sdk-source': 'error' },
+    plugins: { '@typescript-eslint': tseslint.plugin, 'lousho': { rules: { 'no-sdk-source': noSdkSource } } },
+    rules: { 'lousho/no-sdk-source': 'error' },
   },
 ];

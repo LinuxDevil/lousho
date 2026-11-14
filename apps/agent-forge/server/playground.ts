@@ -15,15 +15,15 @@
  * messages, so the server does not fetch the prompt again.
  */
 import type { Express, Response } from 'express';
-import { AgentExecutor } from '@linuxdevil/lousho/executor';
+import { AgentExecutor } from 'lousho/executor';
 import {
   InMemoryApprovalStore,
   SDKError,
   type AgentEvent,
   type AgentSpec,
   type Message,
-} from '@linuxdevil/lousho';
-import { fanOutExporters, type ObserveExporterOptions, type Span, type TraceExporter } from '@linuxdevil/lousho/traces';
+} from 'lousho';
+import { fanOutExporters, type ObserveExporterOptions, type Span, type TraceExporter } from 'lousho/traces';
 import { buildAgentFromSpec } from './buildAgent';
 import { observeReporting, type ObserveReporting } from './observeReporting';
 import type { SecretsStore } from './secretsStore';

@@ -15,7 +15,7 @@ import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import type { Express, Request, Response } from 'express';
-import { specToAgentDir } from '@linuxdevil/lousho/spec';
+import { specToAgentDir } from 'lousho/spec';
 import type { EjectResult } from '../shared/wireTypes';
 import { asyncRoute, sendError } from './http/routeUtils';
 import { withAgentLock, writeFileAtomic } from './storage/atomic';

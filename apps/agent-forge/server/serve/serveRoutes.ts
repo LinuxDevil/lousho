@@ -30,8 +30,8 @@ import {
   FileSessionStore,
   type AgentSpecV2,
   type SimpleAgent,
-} from '@linuxdevil/lousho';
-import { fileTraceExporter } from '@linuxdevil/lousho/traces';
+} from 'lousho';
+import { fileTraceExporter } from 'lousho/traces';
 import type { McpServeStatus, ServeAgentConfig, ServeStatus, ServeTokenReveal } from '../../shared/wireTypes';
 import { asyncRoute, paramId, sendError } from '../http/routeUtils';
 import { isValidAgentId } from '../types';

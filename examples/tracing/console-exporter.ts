@@ -9,7 +9,7 @@
  * createOtelTraceExporter() for a bundled OpenTelemetry bridge).
  */
 
-import { Span, TraceExporter } from '@linuxdevil/lousho';
+import { Span, TraceExporter } from 'lousho';
 
 export function createConsoleExporter(): TraceExporter {
   // Tracks depth so nested spans (chat/execute_tool under invoke_agent)

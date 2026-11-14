@@ -1,4 +1,4 @@
-import type { Harness, ImproveOptions } from '@linuxdevil/lousho/improve';
+import type { Harness, ImproveOptions } from 'lousho/improve';
 
 export interface RecordedRow {
   attempt: number;

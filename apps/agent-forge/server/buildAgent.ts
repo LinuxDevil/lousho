@@ -14,7 +14,7 @@
  * all public SDK exports) itself, rather than reaching past `specToAgent()`
  * into SDK internals.
  */
-import { AgentBuilder, ToolRegistry } from '@linuxdevil/lousho/executor';
+import { AgentBuilder, ToolRegistry } from 'lousho/executor';
 import {
   ConfigurationError,
   NoopSandbox,
@@ -28,8 +28,8 @@ import {
   type LLMProvider,
   type SandboxAdapter,
   type ToolDescriptor,
-} from '@linuxdevil/lousho';
-import type { AgentFlow } from '@linuxdevil/lousho/flows';
+} from 'lousho';
+import type { AgentFlow } from 'lousho/flows';
 import { compileHooksFromSpecPolicy } from './compileHooks';
 import { PROVIDER_KEY_ENV, isSecretProvider, type SecretsStore } from './secretsStore';
 

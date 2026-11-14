@@ -509,7 +509,7 @@ function resolveMode(options: RecordReplayOptions): 'record' | 'replay' {
  *
  * @example
  * ```ts
- * import { recordReplay } from '@linuxdevil/lousho/testing';
+ * import { recordReplay } from 'lousho/testing';
  *
  * const provider = recordReplay(() => resolveProvider('openai/gpt-4o-mini'), {
  *   cassette: './__cassettes__/refund-flow.json',

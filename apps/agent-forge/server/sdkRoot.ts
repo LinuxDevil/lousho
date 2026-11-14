@@ -4,10 +4,10 @@
  * (server/routes/catalogRoutes.ts) and the docs tools.
  *
  * Resolution: `LOUSHO_SDK_ROOT` when set (tests, unusual layouts), else the
- * installed `@linuxdevil/lousho` package itself - `createRequire` resolves
+ * installed `lousho` package itself - `createRequire` resolves
  * its entry and we walk up to the first folder whose `package.json` is
- * named `@linuxdevil/lousho`. That works from the monorepo (the workspace
- * symlink lands on the repo root) and from `node_modules/@linuxdevil/studio`
+ * named `lousho`. That works from the monorepo (the workspace
+ * symlink lands on the repo root) and from `node_modules/lousho-studio`
  * (the SDK is a real dependency there), where the old "three levels up"
  * rule broke.
  */
@@ -16,9 +16,9 @@ import * as path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
-const SDK_PACKAGE = '@linuxdevil/lousho';
+const SDK_PACKAGE = 'lousho';
 
-/** The SDK package root: env LOUSHO_SDK_ROOT, else the resolved `@linuxdevil/lousho` install. */
+/** The SDK package root: env LOUSHO_SDK_ROOT, else the resolved `lousho` install. */
 export function sdkRootDir(moduleDir?: string): string {
   const env = process.env.LOUSHO_SDK_ROOT;
   if (env) return env;

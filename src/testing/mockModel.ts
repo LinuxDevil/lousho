@@ -56,7 +56,7 @@ export interface MockToolCall {
  *
  * @example
  * ```ts
- * const call: MockHostedToolCall = { name: 'web_search', args: { query: '@linuxdevil/lousho' }, result: { results: [] } };
+ * const call: MockHostedToolCall = { name: 'web_search', args: { query: 'lousho' }, result: { results: [] } };
  * ```
  */
 export interface MockHostedToolCall {
@@ -406,7 +406,7 @@ class ScriptedMockModel implements MockModel {
  *
  * @example
  * ```ts
- * import { mockModel } from '@linuxdevil/lousho/testing';
+ * import { mockModel } from 'lousho/testing';
  *
  * const model = mockModel([
  *   { toolCalls: [{ name: 'get_weather', args: { city: 'Paris' } }] },

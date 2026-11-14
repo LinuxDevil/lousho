@@ -2,7 +2,7 @@
 /**
  * pack-smoke:studio
  *
- * Proves that what `npm pack` produces for `@linuxdevil/studio` (and the SDK
+ * Proves that what `npm pack` produces for `lousho-studio` (and the SDK
  * it depends on) installs and works in a fresh project that has never seen
  * this checkout:
  *
@@ -35,7 +35,7 @@ import { checkTarballContents, cleanSmokeDir, IS_WIN, SDK_NAME, dryRunPublish, f
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const STUDIO_DIR = path.join(REPO_ROOT, 'apps', 'agent-forge');
-const STUDIO_NAME = '@linuxdevil/studio';
+const STUDIO_NAME = 'lousho-studio';
 
 /**
  * Thresholds measured on the consolidated W-chain head (2026-11-14): the

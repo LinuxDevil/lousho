@@ -9,7 +9,7 @@
  * bundled docs (docsIndex.ts normalizes an unreadable folder to
  * `undefined`).
  */
-import { defineTool } from '@linuxdevil/lousho';
+import { defineTool } from 'lousho';
 import { z } from 'zod';
 import { loadDocsIndex, searchDocs } from './docsIndex';
 import { guardedToolCall, toolFailure } from './failure';

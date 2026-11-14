@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentSpecV2 } from '@linuxdevil/lousho';
+import type { AgentSpecV2 } from 'lousho';
 import { isValidAgentId } from '../../../../shared/agentId';
 import type { AuthorDraft, AuthorPatch } from '../schema';
 import { applyAuthorPatch, deriveAgentId, draftInvalidFailure, draftToSpec } from '../toSpec';

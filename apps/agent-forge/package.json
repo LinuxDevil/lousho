@@ -1,7 +1,7 @@
 {
-  "name": "@linuxdevil/studio",
+  "name": "lousho-studio",
   "version": "0.1.0-alpha.1",
-  "description": "Lousho Studio: build, test and watch every agent across your projects. A local web app for @linuxdevil/lousho.",
+  "description": "Lousho Studio: build, test and watch every agent across your projects. A local web app for lousho.",
   "type": "module",
   "bin": {
     "lousho-studio": "dist-server/cli.cjs"
@@ -52,7 +52,7 @@
     "@ai-sdk/anthropic": "^4.0.0",
     "@ai-sdk/openai": "^4.0.0",
     "@codemirror/lang-javascript": "^6.2.5",
-    "@linuxdevil/lousho": "file:../..",
+    "lousho": "file:../..",
     "@uiw/react-codemirror": "^4.25.12",
     "@xyflow/react": "^12.12.0",
     "ai": "^7.0.0",

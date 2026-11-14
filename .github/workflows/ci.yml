@@ -64,7 +64,7 @@ jobs:
       - run: npm install --no-save zod@4
       - run: npx tsc --noEmit
       - run: npm run typecheck:tests
-  # @linuxdevil/studio (apps/agent-forge): its own package since W13. Builds the SDK first (Studio depends on it through
+  # lousho-studio (apps/agent-forge): its own package since W13. Builds the SDK first (Studio depends on it through
   # file:../.. in the monorepo), then Studio's checks, then packs both and smoke-tests the install.
   studio:
     runs-on: ubuntu-latest
@@ -88,7 +88,7 @@ jobs:
       # W15b: the same bridge-compat matrix against the SDK in this commit.
       - run: npm run test:bridge-compat --workspace apps/agent-forge
       - run: npm run build:studio
-      # Packs the SDK and @linuxdevil/studio, dry-run publishes Studio, installs both in a fresh project, and checks
+      # Packs the SDK and lousho-studio, dry-run publishes Studio, installs both in a fresh project, and checks
       # that `lousho-studio` and `lousho studio` serve the UI. Never publishes.
       - run: npm run pack-smoke:studio -- --skip-build
   # W15b: the same bridge-compat matrix against the OLDEST SDK release Studio
@@ -117,11 +117,11 @@ jobs:
         env:
           MIN: ${{ steps.min.outputs.version }}
         run: |
-          if npm view "@linuxdevil/lousho@$MIN" version > /dev/null 2>&1; then
+          if npm view "lousho@$MIN" version > /dev/null 2>&1; then
             echo "published=true" >> "$GITHUB_OUTPUT"
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::@linuxdevil/lousho@$MIN is not published yet - bridge-compat-min skips until it is."
+            echo "::notice::lousho@$MIN is not published yet - bridge-compat-min skips until it is."
           fi
       - name: Install the minimum SDK
         if: steps.pub.outputs.published == 'true'
@@ -130,12 +130,12 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/min-sdk" && cd "$RUNNER_TEMP/min-sdk"
           npm init -y > /dev/null
-          npm install "@linuxdevil/lousho@$MIN" ai@7 zod@4 --no-audit --no-fund
+          npm install "lousho@$MIN" ai@7 zod@4 --no-audit --no-fund
       - name: Run the compat suite against it
         if: steps.pub.outputs.published == 'true'
         env:
           MIN: ${{ steps.min.outputs.version }}
-          LOUSHO_BRIDGE_SDK_DIR: ${{ runner.temp }}/min-sdk/node_modules/@linuxdevil/lousho
+          LOUSHO_BRIDGE_SDK_DIR: ${{ runner.temp }}/min-sdk/node_modules/lousho
         run: npm run test:bridge-compat --workspace apps/agent-forge
   test:
     runs-on: ubuntu-latest
