@@ -18,7 +18,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { parseArgs } from 'node:util';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { shutdownOnSignals, startStudioServer } from './index';
 
 export const USAGE = `Usage: lousho-studio [--workspace <dir>] [--port N] [--host H]
@@ -134,8 +134,11 @@ async function main(): Promise<void> {
   shutdownOnSignals(handle);
 }
 
+// npm's bin is a symlink to this file on POSIX: argv[1] keeps the `.bin`
+// path while import.meta.url is the real file, so compare realpaths.
+const invokedAs = process.argv[1];
 const isMainModule =
-  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+  invokedAs !== undefined && fs.realpathSync(invokedAs) === fs.realpathSync(fileURLToPath(import.meta.url));
 
 if (isMainModule) {
   void main();

@@ -38,13 +38,14 @@ const STUDIO_DIR = path.join(REPO_ROOT, 'apps', 'agent-forge');
 const STUDIO_NAME = '@linuxdevil/studio';
 
 /**
- * Thresholds measured on the first green run (2026-11-13, W15a): the Studio
- * tarball ships 9 entries, 4.9 MB unpacked, 1.3 MB packed. Budgets carry
- * ~10% headroom, like scripts/pack-smoke.ts.
+ * Thresholds measured on the consolidated W-chain head (2026-11-14): the
+ * Studio tarball ships 12 entries, 9.3 MB unpacked, 2.6 MB packed (the
+ * merged X/W features grew the client bundle well past the W15a figures).
+ * Budgets carry ~15% headroom, like scripts/pack-smoke.ts.
  */
-const STUDIO_MAX_ENTRIES = 12;
-const STUDIO_MAX_UNPACKED_BYTES = 5_500_000;
-const STUDIO_MAX_PACKED_BYTES = 1_500_000;
+const STUDIO_MAX_ENTRIES = 14;
+const STUDIO_MAX_UNPACKED_BYTES = 10_500_000;
+const STUDIO_MAX_PACKED_BYTES = 3_000_000;
 
 const STUDIO_REQUIRED_PATHS = ['dist/index.html', 'dist-server/index.cjs', 'dist-server/cli.cjs', 'package.json', 'README.md'];
 const STUDIO_FORBIDDEN_PATHS = [
