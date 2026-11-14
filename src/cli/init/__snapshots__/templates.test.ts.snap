@@ -284,8 +284,8 @@ exports[`renderProject > snapshot: minimal package.json 1`] = `
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.0",
-    "lousho": "^1.0.0-alpha.8",
     "ai": "^7.0.0",
+    "lousho": "^1.0.0-alpha.8",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -857,8 +857,8 @@ exports[`renderProject > snapshot: telegram package.json 1`] = `
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.0",
-    "lousho": "^1.0.0-alpha.8",
     "ai": "^7.0.0",
+    "lousho": "^1.0.0-alpha.8",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -892,8 +892,8 @@ exports[`renderProject > snapshot: tools package.json 1`] = `
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.0",
-    "lousho": "^1.0.0-alpha.8",
     "ai": "^7.0.0",
+    "lousho": "^1.0.0-alpha.8",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -926,8 +926,8 @@ exports[`renderProject > snapshot: yaml package.json 1`] = `
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.0",
-    "lousho": "^1.0.0-alpha.8",
     "ai": "^7.0.0",
+    "lousho": "^1.0.0-alpha.8",
     "zod": "^3.25.76"
   },
   "devDependencies": {
