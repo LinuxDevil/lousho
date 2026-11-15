@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-alpha.120] - 2026-11-15
+
 - The npm packages ship unscoped: `lousho` (SDK), `lousho-studio` (Studio) and `create-lousho` (scaffold). The `@linuxdevil/*` scoped names from alpha.118/119 are dropped — they were never published to npm, so `npm install lousho` continues the existing package line.
 
 ## [1.0.0-alpha.119] - 2026-11-14
