@@ -54,6 +54,7 @@ function record(over: { meta?: Partial<AgentRecord['meta']> } = {}): AgentRecord
     layout: { schemaVersion: 1, nodes: {}, notes: [] },
     updatedAt: '2026-10-29T10:00:00Z',
     latestVersion: null,
+    publishState: { version: null, matchesWorkingCopy: false, publishedAt: null },
   };
 }
 
@@ -129,5 +130,34 @@ describe('EnabledControl', () => {
     expect(notice.getAttribute('role')).toBe('status');
     expect(notice.textContent).toMatch(/^Turned off after 5 failed runs in a row on /);
     expect(notice.textContent).toContain('Fix the cause, then turn it back on.');
+  });
+});
+
+describe('EnabledControl disable reason (L12)', () => {
+  it('an enabled agent explains that triggers can start it', () => {
+    const host = render(<Harness initial={record()} />);
+    expect(pill(host).getAttribute('title')).toBe('On. Triggers can start it.');
+    expect(host.querySelector('.status-pill.pill-warning')).toBeNull();
+  });
+
+  it('a manual disable explains triggers will not start it', () => {
+    const host = render(<Harness initial={record({ meta: { enabled: false, disabledReason: 'manual' } })} />);
+    expect(pill(host).getAttribute('title')).toBe("Turned off. Triggers won't start it.");
+    expect(host.querySelector('.status-pill.pill-warning')).toBeNull();
+  });
+
+  it('an auto-disable shows the Auto-off pill and the streak tooltip', () => {
+    const host = render(
+      <Harness
+        initial={record({
+          meta: { enabled: false, disabledReason: 'auto_failure_streak', disabledAt: '2026-10-29T10:00:00Z' },
+        })}
+      />,
+    );
+    expect(pill(host).getAttribute('title')).toBe(
+      'Turned off automatically after 5 failed triggered runs. Turn it on to try again.',
+    );
+    const badge = host.querySelector('.status-pill.pill-warning');
+    expect(badge?.textContent).toBe('Auto-off');
   });
 });

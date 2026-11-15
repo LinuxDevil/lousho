@@ -1,6 +1,6 @@
-﻿# Changelog
+# Changelog
 
-All notable changes to @lousho/build-ai-agent will be documented in this file.
+All notable changes to lousho will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `github_submit_review` posts one pull-request review with a verdict and inline comments; `createGitHubTools()` also authenticates as a GitHub App (`app: { appId, privateKey }`) or with a token function. See [Tools](docs/tools.md).
 - `githubChannel({ pullRequestEvents, replyToPullRequest })` re-reviews pull requests on every push (drafts skipped until ready) and can stay silent when the agent posts its own review. See [Channels](docs/channels.md).
 - Built-in `workspace_read`, `workspace_write` and `shell` tools, confined to `options.root` and refusing `.env`, `.git` and `.lousho`.
+
+## [1.0.0-alpha.120] - 2026-11-15
+
+- The npm packages ship unscoped: `lousho` (SDK), `lousho-studio` (Studio) and `create-lousho` (scaffold). The `@linuxdevil/*` scoped names from alpha.118/119 are dropped — they were never published to npm, so `npm install lousho` continues the existing package line.
+
+## [1.0.0-alpha.119] - 2026-11-14
+
+## [1.0.0-alpha.118] - 2026-11-14
+
+- **Breaking:** the npm package is published unscoped as `lousho` (the `@linuxdevil/lousho` scoped name from this cycle was never published and is dropped). Studio ships separately as `lousho-studio`. Update dependencies from `"@linuxdevil/lousho"` to `"lousho"` and `"@linuxdevil/studio"` to `"lousho-studio"`. The `lousho` binary name is unchanged, so `npx lousho …` and `lousho …` commands keep working.
+- Docs: `docs/agent-forge.md` is retitled **Lousho Studio** and now documents installing the separate `lousho-studio` package, workspaces, which SDK runs a workspace's agents (with each banner), the collector, and reporting deployed agents via `LOUSHO_OBSERVE_PROJECT`.
+- **Breaking:** Studio is now the separate package `lousho-studio`; the SDK tarball no longer contains `apps/agent-forge`. `lousho studio` finds an installed `lousho-studio` (local, next to the SDK, or global) and opens the current folder as a workspace, or prints `Studio is a separate install: npx lousho-studio` when it is missing. Inside the SDK checkout it keeps its dev/prod modes (`--prod`/`--dev`). Install Studio with `npm i -g lousho-studio` (or `npx lousho-studio`).
+- Studio: the Code tab gains "Eject to project" (`POST /agents/:id/eject`), which writes the agent-directory form (`specToAgentDir`) to `agents/<id>/` in the workspace after a confirm dialog, with an explicit overwrite step when the folder already exists.
+- New `lousho/observe` subpath: `startObserveDaemon`, `probeHealth`, `isObserveDaemon`, `defaultDbPath`, `OBSERVE_DEFAULT_PORT` and the daemon option/retention defaults, so a host process (Studio) can run and probe the collector through public exports.
+- Install docs use the public npm packages again (`npm install lousho`, `npm create lousho`).
+- `lousho/improve` (experimental): `improveAgent()` proposes tested edits to an agent's instructions and skills, offline, gated against the current harness and held-out cases. It applies nothing. See [Improving an agent](docs/improve.md).
+- `lousho bridge`: a new command that speaks Studio's bridge protocol (NDJSON on stdin/stdout, protocol 1) so Lousho Studio can build and run a project's agents with that project's own SDK and dependencies. It answers `hello`, `catalog`, `compile` and `shutdown`, and runs agents: `run`/`chat` start a run or chat turn, `steer`/`abort` control it, `resolveApproval`/`answerQuestion` resume a paused run, and every `AgentEvent`, trace span, steer join and run settle arrives as a pushed event (flows are refused with `LOUSHO_HOST_UNSUPPORTED`).
 - Model strings resolve any official AI SDK provider: `mistral/...`, `groq/...`, `xai/...`, `bedrock/...`, `vertex/...`, `azure/...` and 13 more load `@ai-sdk/<vendor>` on the first call, and `ai-sdk/<vendor>/<model>` loads any other `@ai-sdk/*` package. The package reads its own credentials. See [Providers](docs/providers.md#any-ai-sdk-vendor-by-name).
 
 ## [1.0.0-alpha.117] - 2026-11-09
@@ -196,7 +213,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.0-alpha.31] - 2026-11-01
 
-- **Behavior change:** the package is renamed from `@lousho/build-ai-agent` to `lousho`, and the scaffolder from `create-lousho-agent` to `create-lousho` (`npm create lousho`). Update imports from `@lousho/build-ai-agent` to `lousho` (subpaths such as `lousho/testing` keep their names). Install with `npm install lousho` or `npm create lousho` (no token needed). The packages are also mirrored to GitHub Packages as `@linuxdevil/lousho` and `@linuxdevil/create-lousho` for the repository's Packages tab.
+- **Behavior change:** the package is renamed from `@lousho/build-ai-agent` to `lousho`, and the scaffolder from `create-lousho-agent` to `create-lousho` (`npm create lousho`). Update imports from `@lousho/build-ai-agent` to `lousho` (subpaths such as `lousho/testing` keep their names). Install with `npm install lousho` or `npm create lousho` (no token needed). The packages are also mirrored to GitHub Packages as `lousho` and `create-lousho` for the repository's Packages tab.
 
 ## [1.0.0-alpha.30] - 2026-10-31
 

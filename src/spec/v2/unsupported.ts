@@ -8,7 +8,6 @@
 import { z } from 'zod';
 
 /** Every "not supported yet" issue message starts with this, so parseAgentSpecV2() can tell it from a plain validation problem. */
-// fallow-ignore-next-line unused-export -- consumed by later spec v2 section schemas raising the same issues
 export const UNSUPPORTED_PREFIX = 'not supported yet: ';
 
 /** Adds an issue saying `what` cannot run on this SDK version yet; `path` is relative to the refined value. */
@@ -21,13 +20,4 @@ export function isUnsupportedIssue(issue: { message: string }): boolean {
   return issue.message.startsWith(UNSUPPORTED_PREFIX);
 }
 
-/** A top-level key whose section has not landed yet: absent is fine, any value is "not supported yet". */
-export function pendingField(key: string) {
-  // `.optional()` outermost on purpose: in zod 4 a checked `z.any()` reports an absent key as Required.
-  return z
-    .any()
-    .superRefine((value, ctx) => {
-      if (value !== undefined) addUnsupportedIssue(ctx, `'${key}' cannot be run by this version of the SDK`);
-    })
-    .optional();
-}
+

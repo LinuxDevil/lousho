@@ -201,3 +201,11 @@ describe('safeExpressionVariables', () => {
     }
   });
 });
+
+describe('public export', () => {
+  it('is reachable from the flows index', async () => {
+    const flows = await import('./index');
+    expect(flows.evaluateSafeExpression).toBe(evaluateSafeExpression);
+    expect(flows.ExpressionError).toBe(ExpressionError);
+  });
+});

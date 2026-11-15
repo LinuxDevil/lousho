@@ -4,11 +4,13 @@ import type { AgentStore } from '../persistence/AgentStore';
 import { graphToSpec, type GraphToSpecResult } from '../graph/v2/graphToSpec';
 import { specToGraph } from '../graph/v2/specToGraph';
 import { deriveEdges } from '../graph/v2/edges';
-import type { Graph, GraphEdge } from '../graph/v2/types';
+import { validateGraph } from '../graph/v2/validateGraph';
+import type { Graph, GraphEdge, Problem } from '../graph/v2/types';
 import { graphFromTemplate, type TemplateId } from '../canvas/templates';
 import { agentIdProblem } from '../../shared/agentId';
 import type { CanvasLayout, StudioEvent } from '../../shared/wireTypes';
 import { useStudioEvents } from './useStudioEvents';
+import { activeWorkspace } from '../workspace/activeWorkspace';
 import {
   emptyHistory,
   record as recordHistory,
@@ -21,6 +23,8 @@ import {
 const AUTOSAVE_DEBOUNCE_MS = 800;
 /** How long `agent.changed` events collect before the agents list re-fetches - a burst (rename = save+delete) is one refresh. */
 const AGENTS_REFRESH_DEBOUNCE_MS = 300;
+/** Validation (`validateGraph`: `graphToSpec` + zod) trails edits by this long so typing never blocks on it. */
+const PROBLEMS_DEBOUNCE_MS = 300;
 
 const DEFAULT_SPEC: AgentSpecV2 = {
   version: 2,
@@ -209,8 +213,12 @@ async function loadInitialAgent(
   preferredId: string,
   isCancelled: () => boolean,
   setAgents: (agents: Awaited<ReturnType<AgentStore['list']>>) => void,
+  setAgentsWorkspaceId: (id: string | undefined) => void,
   doc: DocumentSetters
 ): Promise<void> {
+  // The workspace the list belongs to (W04b): route sync must not judge a
+  // URL against a list fetched for another workspace.
+  const ws = activeWorkspace();
   let list: Awaited<ReturnType<AgentStore['list']>> = [];
   try {
     list = await store.list();
@@ -219,6 +227,7 @@ async function loadInitialAgent(
   }
   if (isCancelled()) return;
   setAgents(list);
+  setAgentsWorkspaceId(ws);
   const id = list.some((entry) => entry.id === preferredId) ? preferredId : list[0]?.id;
   if (!id) return;
   const loaded = await store.load(id).catch(() => undefined);
@@ -314,10 +323,15 @@ function useAgentChangedRefresh(refreshAgents: () => Promise<void>): (event: Stu
 function useAgentList(store: AgentStore, initialId: string, doc: DocumentSetters) {
   const [agents, setAgents] = useState<Awaited<ReturnType<AgentStore['list']>>>([]);
   const [agentsLoaded, setAgentsLoaded] = useState(false);
+  /** The workspace `agents` was fetched for (W04b); `undefined` only before the first successful fetch. */
+  const [agentsWorkspaceId, setAgentsWorkspaceId] = useState<string | undefined>(undefined);
 
   const refreshAgents = useCallback(async () => {
+    const ws = activeWorkspace();
     try {
-      setAgents(await store.list());
+      const list = await store.list();
+      setAgents(list);
+      setAgentsWorkspaceId(ws);
     } catch {
       // Server unreachable: keep the last list rather than failing the caller.
     }
@@ -327,7 +341,7 @@ function useAgentList(store: AgentStore, initialId: string, doc: DocumentSetters
   // first saved agent - or, when there is none, an unsaved 'untitled-agent'.
   useEffect(() => {
     let cancelled = false;
-    void loadInitialAgent(store, initialId, () => cancelled, setAgents, doc).finally(() => {
+    void loadInitialAgent(store, initialId, () => cancelled, setAgents, setAgentsWorkspaceId, doc).finally(() => {
       if (!cancelled) setAgentsLoaded(true);
     });
     return () => {
@@ -337,7 +351,7 @@ function useAgentList(store: AgentStore, initialId: string, doc: DocumentSetters
     // agent changes explicitly rather than re-running this on agentId writes.
   }, []);
 
-  return { agents, setAgents, refreshAgents, agentsLoaded };
+  return { agents, setAgents, refreshAgents, agentsLoaded, agentsWorkspaceId };
 }
 
 /**
@@ -565,6 +579,23 @@ function useDerivedDocument(
 }
 
 /**
+ * `validateGraph(graph)` debounced by {@link PROBLEMS_DEBOUNCE_MS}: the
+ * canvas badges, the Inspector's Problems section and the drawer's
+ * Problems tab all read the same list, and validation re-emits the spec
+ * and runs zod on every edit, so it must never run per keystroke. The
+ * first render validates immediately so a freshly opened agent's
+ * problems are there before the first paint settles.
+ */
+function useProblems(graph: Graph): Problem[] {
+  const [problems, setProblems] = useState<Problem[]>(() => validateGraph(graph));
+  useEffect(() => {
+    const timer = setTimeout(() => setProblems(validateGraph(graph)), PROBLEMS_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [graph]);
+  return problems;
+}
+
+/**
  * The editable document for the currently-loaded agent: its id, canvas
  * `Graph` (graph v2), the spec/layout/nodeIdMap `graphToSpec` derives from
  * it, dirty flag, selection, and the saved-agent list - plus
@@ -579,12 +610,13 @@ export function useAgentDocument(store: AgentStore, initialId?: string) {
   const agentIdRef = useRef(agentId);
   agentIdRef.current = agentId;
   const { setDirty, lastSavedJson, setSelectedNodeId } = doc;
-  const { agents, setAgents, refreshAgents, agentsLoaded } = useAgentList(store, initialId ?? agentId, doc);
+  const { agents, setAgents, refreshAgents, agentsLoaded, agentsWorkspaceId } = useAgentList(store, initialId ?? agentId, doc);
   // `WS /events`: another tab's write refreshes this tab's agents list.
   useStudioEvents(useAgentChangedRefresh(refreshAgents));
 
   const { derived, edges } = useDerivedDocument(graph, doc.lastDerived, latestJson);
   const spec = derived.spec;
+  const problems = useProblems(graph);
 
   const saveDeps: SaveDeps = { store, agentId, derived, setDirty, refreshAgents, lastSavedJson, latestJson };
   const save = useExplicitSave(saveDeps);
@@ -633,6 +665,8 @@ export function useAgentDocument(store: AgentStore, initialId?: string) {
     /** The `layout.json` `graphToSpec` derives alongside `spec` — the proposal overlay's position source (C21). */
     layout: derived.layout,
     nodeIdMap: derived.nodeIdMap,
+    specPaths: derived.specPaths,
+    problems,
     dirty,
     save,
     reload,
@@ -640,6 +674,9 @@ export function useAgentDocument(store: AgentStore, initialId?: string) {
     setSelectedNodeId,
     agents,
     agentsLoaded,
+    /** The workspace `agents` was fetched for; route sync waits for it to match the URL's workspace (W04b). */
+    agentsWorkspaceId,
+    /** Re-fetches the saved-agent list - the workspace-switch reload (W04b) and every mutation already call it. */
     refreshAgents,
     autosaveError,
     switchAgent,

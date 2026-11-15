@@ -24,7 +24,7 @@ describe('validateWorkspace', () => {
 
   it('each negative fixture yields exactly its code', () => {
     const index = readNegativeIndex();
-    expect(new Set(index.cases.map((item) => item.code)).size).toBe(22);
+    expect(new Set(index.cases.map((item) => item.code)).size).toBe(23);
     for (const item of index.cases) {
       const problems = validateWorkspace(readNegativeTree(item.name), { mode: 'default' });
       expect(codes(problems), item.name).toEqual([item.code]);
@@ -115,6 +115,19 @@ describe('cross-file checks', () => {
     expect(validateWorkspace(tree, { mode: 'default', resolveGlobal })).toEqual([]);
     const missing = edit(base(), 'pages/main/page.json', (doc) => ({ ...doc, harness: { extends: ['workspace:ghost', 'nope'] } }));
     expect(validateWorkspace(missing).map((problem) => problem.code)).toEqual(['PRD024', 'PRD024']);
+  });
+
+  it('a global ref with a bad path or version range is PRD024 without asking resolveGlobal', () => {
+    const asked: string[] = [];
+    const resolveGlobal = (ref: string): WorkspaceTree => {
+      asked.push(ref);
+      return {};
+    };
+    for (const ref of ['global:tones/calm@latest', 'global:Tones/Calm@^1.0.0', 'global:tones//calm@^1.0.0', 'global:tones/calm@>=1']) {
+      const tree = edit(base(), 'pages/main/page.json', (doc) => ({ ...doc, harness: { extends: [ref] } }));
+      expect(validateWorkspace(tree, { resolveGlobal }), ref).toEqual([expect.objectContaining({ code: 'PRD024', path: 'harness.extends.0' })]);
+    }
+    expect(asked).toEqual([]);
   });
 
   it('a global profile that fails its schema is reported against its ref', () => {

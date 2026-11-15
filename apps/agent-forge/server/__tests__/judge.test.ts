@@ -12,8 +12,7 @@ import * as os from 'node:os';
 import * as http from 'node:http';
 import { once } from 'node:events';
 import request from 'supertest';
-import { startObserveDaemon, type ObserveDaemon } from '../../../../src/observe/daemon';
-import { ingestBatch, listScores } from '../../../../src/observe/store';
+import { startObserveDaemon, type ObserveDaemon } from 'lousho/observe';
 import { createApp } from '../app';
 import { judgePrompt, parseJudgeReply, startJudgeLoop, type JudgeFn, type JudgeLoop, type JudgeLoopOptions } from '../judge';
 import { RunManager } from '../runRegistry';
@@ -48,13 +47,20 @@ describe('judge loop and test-on-trace', () => {
     fs.rmSync(baseDir, { recursive: true, force: true });
   });
 
-  const seedTrace = (traceId: string): void => {
-    ingestBatch(daemon.db, [
-      {
-        type: 'observation',
-        data: { obs_id: `${traceId}-root`, trace_id: traceId, agent_id: 'support', kind: 'span', name: 'invoke_agent refund-bot', start: T0, end: T0 + 50, status: 'ok', input: 'refund?', output: 'done' },
-      },
-    ]);
+  const seedTrace = async (traceId: string): Promise<void> => {
+    const res = await fetch(`${daemonUrl}/api/v1/ingest`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        batch: [
+          {
+            type: 'observation',
+            data: { obs_id: `${traceId}-root`, trace_id: traceId, agent_id: 'support', kind: 'span', name: 'invoke_agent refund-bot', start: T0, end: T0 + 50, status: 'ok', input: 'refund?', output: 'done' },
+          },
+        ],
+      }),
+    });
+    expect(res.status).toBe(202);
   };
 
   /** A judge rule created over HTTP, then one trace whose root ended (so the daemon queues a job). */
@@ -65,19 +71,51 @@ describe('judge loop and test-on-trace', () => {
       body: JSON.stringify({ name: 'helpful', kind: 'judge', config: { model: 'mock', rubric: 'Is the refund handled?' } }),
     });
     expect(created.status).toBe(201);
-    seedTrace(traceId);
+    await seedTrace(traceId);
     daemon.evaluators.notifyRootsEnded([traceId]);
     await daemon.evaluators.idle();
     return ((await created.json()) as { evaluator: { rule_id: string } }).evaluator.rule_id;
   }
 
-  const onlineScores = (traceId: string) => listScores(daemon.db, { trace_id: traceId, source: 'online', limit: 10 }).scores;
+  interface OnlineScore {
+    name?: string;
+    value?: number | null;
+    comment?: string | null;
+    agent_id?: string | null;
+  }
+  const onlineScores = async (traceId: string): Promise<OnlineScore[]> => {
+    const res = await fetch(`${daemonUrl}/api/v1/scores?trace_id=${traceId}&source=online&limit=10`);
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { scores: OnlineScore[] }).scores;
+  };
 
   const loop = (judge: JudgeFn, extra: Partial<JudgeLoopOptions> = {}): JudgeLoop => {
     const started = startJudgeLoop({ secretsStore: new SecretsStore(baseDir), intervalMs: 60_000, judge, ...extra });
     loops.push(started);
     return started;
   };
+
+  it('pulls a judge job, runs the mock judge and writes its score as an online score', async () => {
+    await judgeRuleWithJob();
+    const seen: unknown[] = [];
+    const judge: JudgeFn = async (rule, trace) => {
+      seen.push(rule.config, trace);
+      return { value: 0.8, comment: 'refund handled' };
+    };
+    await loop(judge).tick();
+    expect(seen[0]).toEqual({ model: 'mock', rubric: 'Is the refund handled?' });
+    expect(seen[1]).toMatchObject({ trace_id: 't1', agent_id: 'support', input: 'refund?', output: 'done', duration_ms: 50 });
+    expect(await onlineScores('t1')).toEqual([expect.objectContaining({ name: 'helpful', value: 0.8, comment: 'refund handled', agent_id: 'support' })]);
+    expect(daemon.evaluators.stats()).toMatchObject({ judge_queued: 0, judge_leased: 0, judge_scored: 1 });
+  });
+
+  it('a judge that throws scores null with a judge_error comment', async () => {
+    await judgeRuleWithJob();
+    await loop(async () => {
+      throw new Error('no key for openai');
+    }).tick();
+    expect(await onlineScores('t1')).toEqual([expect.objectContaining({ value: null, comment: 'judge_error: no key for openai' })]);
+  });
 
   it('the default judge turns a missing provider key into a judge_error score', async () => {
     const created = await fetch(`${daemonUrl}/api/v1/evaluators`, {
@@ -86,7 +124,7 @@ describe('judge loop and test-on-trace', () => {
       body: JSON.stringify({ name: 'keyless', kind: 'judge', config: { model: 'openai/gpt-4o-mini', rubric: 'r' } }),
     });
     expect(created.status).toBe(201);
-    seedTrace('t1');
+    await seedTrace('t1');
     daemon.evaluators.notifyRootsEnded(['t1']);
     await daemon.evaluators.idle();
     const prevKey = process.env.OPENAI_API_KEY;
@@ -98,7 +136,7 @@ describe('judge loop and test-on-trace', () => {
     } finally {
       if (prevKey !== undefined) process.env.OPENAI_API_KEY = prevKey;
     }
-    const [score] = onlineScores('t1');
+    const [score] = await onlineScores('t1');
     expect(score).toMatchObject({ name: 'keyless', value: null });
     expect(score.comment).toMatch(/^judge_error: /);
     expect((score.comment ?? '').length).toBeLessThanOrEqual('judge_error: '.length + 200);
@@ -120,22 +158,22 @@ describe('judge loop and test-on-trace', () => {
     await started.tick();
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain('unreachable');
-    expect(onlineScores('t1')).toEqual([]);
+    expect(await onlineScores('t1')).toEqual([]);
 
     process.env.LOUSHO_OBSERVE_URL = daemonUrl;
     await started.tick();
-    expect(onlineScores('t1')).toHaveLength(1);
+    expect(await onlineScores('t1')).toHaveLength(1);
   });
 
   it('normalizes a judge result the daemon would refuse (out of range, long comment)', async () => {
     await judgeRuleWithJob('t1');
     await loop(async () => ({ value: 7, comment: 'way out' })).tick();
-    expect(onlineScores('t1')).toEqual([expect.objectContaining({ value: null, comment: 'invalid_judge_output' })]);
-    seedTrace('t2');
+    expect(await onlineScores('t1')).toEqual([expect.objectContaining({ value: null, comment: 'invalid_judge_output' })]);
+    await seedTrace('t2');
     daemon.evaluators.notifyRootsEnded(['t2']);
     await daemon.evaluators.idle();
     await loop(async () => ({ value: 0.5, comment: 'y'.repeat(5000) })).tick();
-    expect(onlineScores('t2')).toEqual([expect.objectContaining({ value: 0.5, comment: 'y'.repeat(1000) })]);
+    expect(await onlineScores('t2')).toEqual([expect.objectContaining({ value: 0.5, comment: 'y'.repeat(1000) })]);
   });
 
   it('aborts a judge call at judgeTimeoutMs and scores it judge_error, even when the judge ignores the signal', async () => {
@@ -152,12 +190,12 @@ describe('judge loop and test-on-trace', () => {
     await started.tick();
     expect(Date.now() - begun).toBeLessThan(2000);
     expect(aborted).toBeInstanceOf(Error);
-    expect(onlineScores('t1')).toEqual([expect.objectContaining({ value: null, comment: 'judge_error: timed out after 100 ms' })]);
+    expect(await onlineScores('t1')).toEqual([expect.objectContaining({ value: null, comment: 'judge_error: timed out after 100 ms' })]);
   });
 
   it('does not run a claimed job once its lease has run out locally (it expires and requeues)', async () => {
     await judgeRuleWithJob('t1');
-    seedTrace('t2');
+    await seedTrace('t2');
     daemon.evaluators.notifyRootsEnded(['t2']);
     await daemon.evaluators.idle();
     const clock = { now: Date.now() };
@@ -174,7 +212,26 @@ describe('judge loop and test-on-trace', () => {
     expect(judged).toEqual(['t1']);
     // t1's result posted (the daemon's own lease is still live); t2 was skipped, still leased until it expires.
     expect(daemon.evaluators.stats()).toMatchObject({ judge_scored: 1, judge_leased: 1, judge_queued: 0 });
-    expect(onlineScores('t2')).toEqual([]);
+    expect(await onlineScores('t2')).toEqual([]);
+  });
+
+  it('caps a judge call at what is left of the lease', async () => {
+    await judgeRuleWithJob();
+    const clock = { now: Date.now() };
+    let signalled: AbortSignal | undefined;
+    const started = loop(
+      (_rule, _trace, signal) => {
+        signalled = signal;
+        return new Promise(() => undefined);
+      },
+      // A 1150 ms lease minus the 1000 ms post margin leaves 150 ms (the clock stands still).
+      { leaseMs: 1150, judgeTimeoutMs: 20_000, now: () => clock.now }
+    );
+    const begun = Date.now();
+    await started.tick();
+    expect(Date.now() - begun).toBeLessThan(2000);
+    expect(signalled?.aborted).toBe(true);
+    expect(await onlineScores('t1')).toEqual([expect.objectContaining({ comment: 'judge_error: timed out after 150 ms' })]);
   });
 
   it('warns once per outage for a 2xx claim answer that is not JSON', async () => {
@@ -185,6 +242,13 @@ describe('judge loop and test-on-trace', () => {
     await started.tick();
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain('without a jobs array');
+  });
+
+  it('without a loop the job stays queued (nothing claims it)', async () => {
+    await judgeRuleWithJob();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(daemon.evaluators.stats()).toMatchObject({ judge_queued: 1, judge_leased: 0, judge_scored: 0 });
+    expect(await onlineScores('t1')).toEqual([]);
   });
 
   describe('POST /observe/api/v1/evaluators/:id/test', () => {
@@ -213,9 +277,27 @@ describe('judge loop and test-on-trace', () => {
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ result: { value: 0.8, comment: 'looks right' } });
       expect(seen[0]).toMatchObject({ trace_id: 't1', name: 'invoke_agent refund-bot', status: 'ok' });
-      expect(onlineScores('t1')).toEqual([]);
+      expect(await onlineScores('t1')).toEqual([]);
       // The dry run left the queued job alone.
       expect(daemon.evaluators.stats()).toMatchObject({ judge_queued: 1 });
+    });
+
+    it('forwards a code rule to the daemon unchanged', async () => {
+      await seedTrace('t1');
+      const created = await fetch(`${daemonUrl}/api/v1/evaluators`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'len', kind: 'code', config: { source: '(t) => 1' } }),
+      });
+      const ruleId = ((await created.json()) as { evaluator: { rule_id: string } }).evaluator.rule_id;
+      const app = appWith(async () => {
+        throw new Error('the judge must not run for a code rule');
+      });
+      // The daemon's own validation answers (the body goes through as sent).
+      const bad = await request(app).post(`/observe/api/v1/evaluators/${ruleId}/test`).send({ trace_id: 't1', extra: 1 });
+      expect(bad.status).toBe(400);
+      const missing = await request(app).post(`/observe/api/v1/evaluators/${ruleId}/test`).send({ trace_id: 'nope' });
+      expect(missing.status).toBe(404);
     });
 
     it('passes through 404s for an unknown rule or trace, 400s a bad body, 502s a daemon that is down', async () => {
@@ -245,6 +327,20 @@ describe('parseJudgeReply', () => {
   it('reads a valid JSON reply', () => {
     expect(parseJudgeReply('{"score": 0.8, "comment": "good"}')).toEqual({ value: 0.8, comment: 'good' });
     expect(parseJudgeReply('{"score": 1}')).toEqual({ value: 1, comment: null });
+  });
+
+  it('finds the first JSON object inside prose and code fences', () => {
+    expect(parseJudgeReply('Sure! Here is my grade:\n```json\n{"score": 0, "comment": "wrong {refund}"}\n```\nThanks.')).toEqual({
+      value: 0,
+      comment: 'wrong {refund}',
+    });
+    expect(parseJudgeReply('I think {this} is fine. {"score": 0.5, "comment": "ok"}')).toEqual({ value: 0.5, comment: 'ok' });
+  });
+
+  it('rejects an out-of-range or non-numeric score', () => {
+    for (const reply of ['{"score": 1.5}', '{"score": -0.1}', '{"score": "0.5"}', '{"comment": "no score"}']) {
+      expect(parseJudgeReply(reply)).toEqual({ value: null, comment: 'invalid_judge_output' });
+    }
   });
 
   it('rejects garbage', () => {

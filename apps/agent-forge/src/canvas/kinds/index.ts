@@ -16,6 +16,7 @@ import { SKILL_VIEW } from './skill';
 import { SUBAGENT_VIEW } from './subagent';
 import { TOOL_VIEW } from './tool';
 import { TRIGGER_VIEW } from './trigger';
+import { FLOW_VIEW } from './flow';
 import { GenericFields } from './GenericFields';
 
 /** A kind tile's colour family: `kind-<tone>` in screens/agents/agents.css (also the MiniMap's node fill). */
@@ -47,6 +48,19 @@ export interface PaletteEntry {
   keywords?: string[];
   /** The kind `create` produces — lets the drop compute `ownerForNewNode` before calling `create`. */
   kind: NodeKind;
+  /**
+   * Optional per-entry overrides for the palette tile: flow steps give each
+   * step type its own icon/tone (the `KindView` only knows the `flow` kind).
+   */
+  Icon?: LucideIcon;
+  tone?: KindTone;
+  /**
+   * Optional post-add hook: runs on the graph *after* `addNode` inserted the
+   * palette node, receiving its id and the selected node id, and returns the
+   * graph to keep. Flow steps use it (`attachNewStep`) so a palette add is
+   * always linked into the step tree — never an orphan.
+   */
+  afterAdd?: (graph: Graph, nodeId: string, selectedNodeId: string | undefined) => Graph;
   /** Default data for a node of `kind` owned by `owner`. */
   create: (graph: Graph, owner: string | null) => NewNode;
   /** Why this entry cannot be added for `owner` right now, or undefined. Palette shows it disabled with this as title; drop refuses with it. */
@@ -61,6 +75,23 @@ export interface KindFieldsProps<K extends NodeKind> {
   patch: (patch: Record<string, unknown>) => void;
   /** `setNodeData(graph, node.id, data)` through `setGraph`. */
   replace: (data: NodeOfKind<K>['data']) => void;
+  /**
+   * Flow root step only: merges `patch` into `data.flowMeta` (the
+   * `AgentFlow` wrapper fields — code, name, inputs, …). Undefined on
+   * non-flow selections and in test doubles.
+   */
+  patchFlowMeta?: (patch: Record<string, unknown>) => void;
+  /**
+   * Flow containers only: moves `childId` `delta` places inside the
+   * node's ordered children (sequence/parallel `steps`, router `options`).
+   */
+  moveChild?: (childId: string, delta: -1 | 1) => void;
+  /**
+   * Flow `oneOf` nodes only: sets a router option's `condition` (empty
+   * makes it the default branch). Lives outside `data.step`, so it is not
+   * reachable through `patch`.
+   */
+  setOptionCondition?: (childId: string, condition: string) => void;
   /** `validateGraph(graph)` filtered to this node (C19 fills it; `[]` before). */
   problems: Problem[];
 }
@@ -75,7 +106,10 @@ export interface KindFieldsProps<K extends NodeKind> {
 export interface KindView<K extends NodeKind> {
   /** 'Tool', 'MCP server', … used in "Selected node (<label>)". */
   label: string;
+  /** Fallback tile tone; `toneFor` wins when a kind's tone depends on the node (flow steps). */
   tone: KindTone;
+  /** Per-node tile tone — flow cards colour by step type. */
+  toneFor?: (node: NodeOfKind<K>) => KindTone;
   Icon: LucideIcon;
   /** The card title. `graph` is passed where the caller has it (card, Inspector head) for titles that read sibling nodes — the abort listener names its trigger. */
   title: (node: NodeOfKind<K>, graph?: Graph) => string;
@@ -107,6 +141,7 @@ export const KIND_VIEWS: { [K in NodeKind]?: KindView<K> } = {
   permission: PERMISSION_VIEW,
   hook: HOOK_VIEW,
   output: OUTPUT_VIEW,
+  flow: FLOW_VIEW,
   note: NOTE_VIEW,
 };
 

@@ -23,7 +23,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { Express } from 'express';
-import { listBuiltinTools, listGuardrails, listModels, listTriggerTypes } from 'lousho';
+import { listBuiltinTools, listGuardrails, listTriggerTypes } from 'lousho';
 import type {
   CatalogGuardrail,
   CatalogKit,
@@ -36,6 +36,7 @@ import { asyncRoute, sendError } from '../http/routeUtils';
 import { sdkRootDir } from '../sdkRoot';
 import { hasOpenRouterKey, withOpenRouterModels } from './openRouterCatalog';
 import { isSecretProvider, type SecretsStore } from '../secretsStore';
+import { workspaceOf } from '../workspace/middleware';
 
 /** Deps for {@link registerCatalogRoutes}. */
 export interface CatalogRouteDeps {
@@ -134,8 +135,13 @@ export function loadStaticCatalog(registryIndexPath?: string): StaticCatalog {
  * `available` flag on models - keys are never placed in a response body.
  */
 export function registerCatalogRoutes(app: Express, deps: CatalogRouteDeps): void {
-  const { registryItems, tools, guardrails, triggerTypes } = loadStaticCatalog(deps.registryIndexPath);
+  const { registryItems } = loadStaticCatalog(deps.registryIndexPath);
 
+  // W11c: models/tools/guardrails/triggers come from the request
+  // workspace's AgentHost - a bridge workspace answers with the PROJECT
+  // SDK's catalog, in-process with Studio's (identical lists today).
+  // `/catalog/skills|kits` stay on the registry index: they are not
+  // SDK-versioned.
   app.get(
     '/catalog/models',
     asyncRoute(async (req, res) => {
@@ -144,22 +150,34 @@ export function registerCatalogRoutes(app: Express, deps: CatalogRouteDeps): voi
         sendError(res, 400, parsed.error, 'LOUSHO_QUERY_INVALID');
         return;
       }
-      const sdk = withStoredKeyAvailability(listModels(parsed.provider === undefined ? {} : { provider: parsed.provider }), deps.secretsStore);
+      const { models } = await workspaceOf(req).host.catalog();
+      const filtered =
+        parsed.provider === undefined ? models : models.filter((model) => model.provider === parsed.provider);
+      const sdk = withStoredKeyAvailability(filtered, deps.secretsStore);
       res.json(deps.openRouterModels === undefined ? sdk : await withOpenRouterModels(sdk, parsed.provider, hasOpenRouterKey(deps.secretsStore), deps.openRouterModels));
     })
   );
 
-  app.get('/catalog/tools', (_req, res) => {
-    res.json(tools);
-  });
+  app.get(
+    '/catalog/tools',
+    asyncRoute(async (req, res) => {
+      res.json((await workspaceOf(req).host.catalog()).tools);
+    })
+  );
 
-  app.get('/catalog/guardrails', (_req, res) => {
-    res.json(guardrails);
-  });
+  app.get(
+    '/catalog/guardrails',
+    asyncRoute(async (req, res) => {
+      res.json((await workspaceOf(req).host.catalog()).guardrails);
+    })
+  );
 
-  app.get('/catalog/triggers', (_req, res) => {
-    res.json(triggerTypes);
-  });
+  app.get(
+    '/catalog/triggers',
+    asyncRoute(async (req, res) => {
+      res.json((await workspaceOf(req).host.catalog()).triggers);
+    })
+  );
 
   app.get(
     '/catalog/skills',

@@ -2,9 +2,16 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import * as http from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { WebSocket } from 'ws';
 import { upgradeSpec, type AgentSpec, type AgentSpecV2 } from 'lousho';
 import { RunManager } from '../runRegistry';
 import { newTestHost } from './testHost';
+import { deferred, resetSteerGate, setSteerGateScript } from './steerGate';
+import { attachWebSocketServer } from '../wsServer';
+import { createUpgradeRouter } from '../ws/upgradeRouter';
+import { singleWorkspace, type WorkspaceContext } from '../workspace/context';
 import { FileCheckpointStore } from '../checkpointStore';
 import { FileApprovalStore } from '../approvalStore';
 
@@ -14,6 +21,14 @@ const SPEC: AgentSpecV2 = {
   model: 'mock/mock-1',
   instructions: 'You are a helpful agent.',
   tools: [{ builtin: 'current_date' }],
+};
+
+/** Parks its first model call on a test-released gate so the run stays 'running' while asserted. */
+const STEER_SPEC: AgentSpecV2 = {
+  version: 2,
+  name: 'steer-agent',
+  model: 'steergate/steer-1',
+  instructions: 'You are a test agent.',
 };
 
 function waitForStatus(
@@ -59,6 +74,43 @@ describe('RunManager', () => {
     fs.rmSync(baseDir, { recursive: true, force: true });
   });
 
+  it('reports idle status for an agent that has never run', () => {
+    const status = runManager.status('nope');
+    expect(status.status).toBe('idle');
+  });
+
+  it('hasActiveRun is false while idle and true while a run is in flight (W02a)', async () => {
+    resetSteerGate();
+    expect(runManager.hasActiveRun()).toBe(false);
+
+    const gate = deferred();
+    setSteerGateScript({ blockCalls: 1, mode: 'before-output', gate: gate.promise });
+    const running = runManager.run('agent-active', 'hi', STEER_SPEC);
+    await waitForStatus(runManager, 'agent-active', (s) => s.status === 'running');
+    expect(runManager.hasActiveRun()).toBe(true);
+
+    gate.resolve();
+    await running;
+    await waitForStatus(runManager, 'agent-active', (s) => s.status === 'done');
+    expect(runManager.hasActiveRun()).toBe(false);
+  });
+
+  it('runs an agent to completion and reports the result text', async () => {
+    await runManager.run('agent-1', 'please use current_date', SPEC);
+    const final = await waitForStatus(runManager, 'agent-1', (s) => s.status === 'done');
+    expect(final.resultText).toBe('This is a mock response.');
+  });
+
+  it('rejects a second run() call while one is already in flight', async () => {
+    await runManager.run('agent-2', 'please use current_date', SPEC);
+    await expect(runManager.run('agent-2', 'again', SPEC)).rejects.toThrow(/already running/i);
+    await waitForStatus(runManager, 'agent-2', (s) => s.status === 'done');
+  });
+
+  it('throws when running an agent id with no spec available', async () => {
+    await expect(runManager.run('unknown-agent', 'hi')).rejects.toThrow(/no agent spec/i);
+  });
+
   it('stop() then run() resumes from the last checkpoint instead of restarting', async () => {
     const checkpointStore = new FileCheckpointStore(baseDir);
     const agentId = 'agent-3';
@@ -98,6 +150,128 @@ describe('RunManager', () => {
     expect(afterResume?.status).toBe('finished');
     expect(afterResume?.messages.map((m) => m.content)).toContain('please use current_date');
     expect(afterResume?.messages.map((m) => m.content)).toContain('a follow-up appended on resume');
+  });
+
+  it('streams each model step over the WebSocket: several text.delta, one text.done per step', async () => {
+    const server = http.createServer();
+    const ctx = { ref: { id: 'ws-abc123', name: 'ws', root: baseDir, addedAt: '', lastOpenedAt: '' }, runs: runManager } as unknown as WorkspaceContext;
+    const wss = attachWebSocketServer(createUpgradeRouter(server), singleWorkspace(ctx));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/agents/agent-ws/stream`);
+    const events: any[] = [];
+    try {
+      ws.on('message', (data) => {
+        const message = JSON.parse(String(data));
+        if (message.type === 'event') events.push(message.payload);
+      });
+      await new Promise((resolve, reject) => {
+        ws.once('open', resolve);
+        ws.once('error', reject);
+      });
+
+      // A tool call, then the final reply: two model steps, each streamed by the mock provider.
+      await runManager.run('agent-ws', 'please use current_date', SPEC);
+      const final = await waitForStatus(runManager, 'agent-ws', (s) => s.status === 'done');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(final.resultText).toBe('This is a mock response.');
+      const steps: { deltas: string[]; done: string[] }[] = [];
+      for (const event of events) {
+        if (event.type === 'step.start') steps.push({ deltas: [], done: [] });
+        if (event.type === 'text.delta') steps.at(-1)!.deltas.push(event.text);
+        if (event.type === 'text.done') steps.at(-1)!.done.push(event.text);
+      }
+      expect(steps).toHaveLength(2);
+      for (const step of steps) {
+        expect(step.deltas.length).toBeGreaterThan(1);
+        expect(step.done).toEqual(['This is a mock response.']);
+        expect(step.deltas.join('')).toBe(step.done[0]);
+      }
+      expect(events.filter((e) => e.type === 'tool.done').map((e) => e.toolName)).toEqual(['current_date']);
+    } finally {
+      ws.close();
+      wss.close();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('emits structured log entries derived from the AgentEvent stream', async () => {
+    const logs: any[] = [];
+    runManager.on('log', (agentId: string, entry: any) => {
+      if (agentId === 'agent-logs') logs.push(entry);
+    });
+
+    await runManager.run('agent-logs', 'please use current_date', SPEC);
+    await waitForStatus(runManager, 'agent-logs', (s) => s.status === 'done');
+
+    expect(logs.length).toBeGreaterThan(0);
+    expect(logs.every((l) => typeof l.id === 'string' && typeof l.timestamp === 'string')).toBe(true);
+    expect(logs.some((l) => l.phase === 'trigger' && l.message.includes('started'))).toBe(true);
+    expect(logs.some((l) => l.phase === 'tool' && l.toolName === 'current_date')).toBe(true);
+  });
+
+  it('emits real span start/end events from the SDK TraceExporter hook', async () => {
+    const spans: any[] = [];
+    runManager.on('span', (agentId: string, span: any) => {
+      if (agentId === 'agent-spans') spans.push(span);
+    });
+
+    await runManager.run('agent-spans', 'please use current_date', SPEC);
+    await waitForStatus(runManager, 'agent-spans', (s) => s.status === 'done');
+
+    const runSpans = spans.filter((s) => s.attributes['gen_ai.operation.name'] === 'invoke_agent');
+    expect(runSpans).toHaveLength(2); // start + end
+    const [startSpan, endSpan] = runSpans;
+    expect(startSpan.endTime).toBeUndefined();
+    // Span kind is forwarded, and status when the SDK set one (only a failed span has it).
+    expect(startSpan.kind).toBe('internal');
+    expect(spans.every((s) => s.status === undefined)).toBe(true);
+    expect(spans.find((s) => s.attributes['gen_ai.operation.name'] === 'chat')?.kind).toBe('client');
+    expect(endSpan.endTime).toBeGreaterThanOrEqual(endSpan.startTime);
+    expect(spans.some((s) => s.attributes['gen_ai.operation.name'] === 'chat')).toBe(true);
+    expect(
+      spans.some((s) => s.attributes['gen_ai.operation.name'] === 'execute_tool' && s.parentId === startSpan.id)
+    ).toBe(true);
+  });
+
+  it('pauses a run at a configured breakpoint and resumes on continueRun()', async () => {
+    const debugStates: any[] = [];
+    let pauseCount = 0;
+    // The fixture SPEC's prompt drives the mock provider through a tool
+    // call then a final response - two provider.generate() calls, so a
+    // persistent 'llm:before' breakpoint pauses twice. continueRun() every
+    // time the run reports paused, same as a real client would on seeing
+    // `{type:'debug', payload:{paused:true}}` over the WS stream.
+    runManager.on('debug', (agentId: string, state: any) => {
+      if (agentId !== 'agent-debug') return;
+      debugStates.push(state);
+      if (state.paused) {
+        pauseCount += 1;
+        runManager.continueRun('agent-debug');
+      }
+    });
+
+    runManager.setBreakpoints('agent-debug', ['llm:before']);
+    await runManager.run('agent-debug', 'please use current_date', SPEC);
+    await waitForStatus(runManager, 'agent-debug', (s) => s.status === 'done');
+
+    expect(pauseCount).toBeGreaterThanOrEqual(1);
+    expect(runManager.debugState('agent-debug').paused).toBe(false);
+    expect(debugStates.some((s) => s.paused === true && s.atBreakpoint?.phase === 'llm')).toBe(true);
+  });
+
+  it('surfaces a thrown provider error as status "error" without crashing the process', async () => {
+    const errorSpec: AgentSpecV2 = {
+      version: 2,
+      name: 'erroring-agent',
+      instructions: 'You are a helpful agent.',
+      // 'mock' provider type ignores model-specific errors, so simulate one
+      // via a spec whose provider type is unregistered - the build inside
+      // host.start() rejects, which run() surfaces (never a stuck 'running').
+      model: 'definitely-not-a-real-provider/x',
+    };
+    await expect(runManager.run('agent-4', 'hi', errorSpec)).rejects.toThrow();
   });
 
   describe('branching graphs run through FlowExecutor', () => {
@@ -152,6 +326,17 @@ describe('RunManager', () => {
       // executed the branch's tool step, not just returned the LLM text.
       expect(final.resultText).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
+
+    it('non-regression: an agent whose graph has no router node still runs the unchanged flat-spec AgentExecutor path', async () => {
+      // SPEC (module-level, used by every other test in this file) has no
+      // router node and therefore no spec.policy.flow - graphToSpec/
+      // extractFlowFromSpec never touch it, so this is exactly the original
+      // original code path with the exact original result text.
+      expect((SPEC as { flow?: unknown }).flow).toBeUndefined();
+      await runManager.run('flat-agent', 'please use current_date', SPEC);
+      const final = await waitForStatus(runManager, 'flat-agent', (s) => s.status === 'done');
+      expect(final.resultText).toBe('This is a mock response.');
+    });
   });
 
   it('a spec with an ask permission rule pauses in Studio (was ignored before v2)', async () => {
@@ -163,5 +348,38 @@ describe('RunManager', () => {
     const paused = await waitForStatus(runManager, 'ask-agent', (s) => s.status === 'paused');
     expect(paused.reason).toBe('awaiting_approval');
     expect(paused.pendingApproval?.toolName).toBe('current_date');
+  });
+
+  it('a second sendMessage continues the conversation with exactly one system message', async () => {
+    await runManager.sendMessage('chat-once', 'hi there', SPEC);
+    await waitForStatus(runManager, 'chat-once', (s) => s.status === 'done');
+    await runManager.sendMessage('chat-once', 'and again', SPEC);
+    const done = await waitForStatus(runManager, 'chat-once', (s) => s.status === 'done');
+    const result = done.result as { messages: { role: string }[] };
+    expect(result.messages.filter((m) => m.role === 'system')).toHaveLength(1);
+  });
+
+  it('stop() during a run maps finishReason aborted to status stopped and clears hostRunId', async () => {
+    const internals = runManager as unknown as { entries: Map<string, { hostRunId?: string }> };
+    runManager.on('event', (id: string, event: { type: string }) => {
+      if (id === 'stop-agent' && event.type === 'step.start') runManager.stop('stop-agent');
+    });
+    await runManager.run('stop-agent', 'please use current_date', SPEC);
+    await waitForStatus(runManager, 'stop-agent', (s) => s.status === 'stopped');
+    expect(internals.entries.get('stop-agent')?.hostRunId).toBeUndefined();
+  });
+
+  it('entry.hostRunId is set while a run is live or paused, undefined after it settles', async () => {
+    const internals = runManager as unknown as { entries: Map<string, { hostRunId?: string }> };
+    const gated: AgentSpecV2 = {
+      ...SPEC,
+      permissions: [{ id: 'p1', tool: 'current_date', action: 'ask' }],
+    };
+    await runManager.run('live-agent', 'please use current_date', gated);
+    const paused = await waitForStatus(runManager, 'live-agent', (s) => s.status === 'paused');
+    expect(internals.entries.get('live-agent')?.hostRunId).toBeTruthy();
+    await runManager.approve('live-agent', paused.pendingApproval!.approvalId, true);
+    await waitForStatus(runManager, 'live-agent', (s) => s.status === 'done');
+    expect(internals.entries.get('live-agent')?.hostRunId).toBeUndefined();
   });
 });

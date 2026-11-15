@@ -27,6 +27,18 @@ const appState = vi.hoisted(() => ({
 }));
 vi.mock('../../state/AppState', () => ({ useAppState: () => appState }));
 
+// W04b: useScreen reads the launch workspace for legacy-URL redirects.
+const workspaces = vi.hoisted(() => ({ launchId: 'launch-abc123' as string | undefined }));
+vi.mock('../../workspace/WorkspacesProvider', () => ({
+  useWorkspaces: () => ({
+    list: [],
+    launchId: workspaces.launchId,
+    activeId: workspaces.launchId,
+    error: undefined,
+    refresh: async () => {},
+  }),
+}));
+
 // The off-Agents screens themselves are not under test here, only the frame around them.
 vi.mock('../traces/TracesScreen', () => ({ TracesScreen: () => null }));
 vi.mock('../monitoring/MonitoringScreen', () => ({ MonitoringScreen: () => null }));
@@ -49,6 +61,13 @@ function render(node: React.ReactElement) {
   act(() => root!.render(<ToastProvider>{node}</ToastProvider>));
 }
 
+function go(hash: string) {
+  act(() => {
+    window.location.hash = hash;
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  });
+}
+
 const buttonNames = () => [...container.querySelectorAll('button')].map((b) => b.textContent?.trim());
 
 beforeEach(() => {
@@ -62,6 +81,49 @@ afterEach(() => {
 });
 
 describe('screenFor', () => {
+  it('maps every nav destination and its deep links to a screen', () => {
+    expect(screenFor('#/agents')).toBe('agentList');
+    // Pre-W04b links: every '/agents/:id…' row is a legacy redirect into the launch workspace.
+    expect(screenFor('#/agents/support-bot')).toBe('agents');
+    expect(screenFor('#/agents/support-bot/canvas')).toBe('agents');
+    expect(screenFor('#/agents/support-bot/overview')).toBe('agents');
+    // Workspace-scoped rows (W04b).
+    expect(screenFor('#/w/app-1a2b3c/agents')).toBe('agentList');
+    expect(screenFor('#/w/app-1a2b3c/agents/support-bot')).toBe('agents');
+    expect(screenFor('#/w/app-1a2b3c/agents/support-bot/canvas')).toBe('agents');
+    expect(screenFor('#/w/app-1a2b3c/agents/support-bot/overview')).toBe('agentDetail');
+    expect(screenFor('#/observed/3f6b2a1c-9d4e-4f5a-8b7c-1d2e3f4a5b6c')).toBe('observedAgent');
+    // Code agents (W08b): legacy '/code-agents/:path' redirects into the
+    // launch workspace; the workspace-scoped row is the real route.
+    expect(screenFor('#/code-agents/agents%2Fsupport')).toBe('codeAgent');
+    expect(screenFor('#/w/app-1a2b3c/code-agents/agents%2Fsupport')).toBe('codeAgent');
+    expect(screenFor('#/inbox')).toBe('inbox');
+    expect(screenFor('#/templates')).toBe('templates');
+    expect(screenFor('#/templates?category=Support&template=pr-reviewer')).toBe('templates');
+    expect(screenFor('#/traces')).toBe('traces');
+    expect(screenFor('#/traces/abc?obs=1')).toBe('trace');
+    expect(screenFor('#/monitoring?window=24h')).toBe('monitoring');
+    expect(screenFor('#/evals/scores')).toBe('scores');
+    expect(screenFor('#/evals/datasets')).toBe('datasets');
+    expect(screenFor('#/evals/datasets/golden.v1?offset=50')).toBe('datasets');
+    expect(screenFor('#/evals/evaluators')).toBe('evaluators');
+    expect(screenFor('#/evals/evaluators/r1?trace=t1')).toBe('evaluators');
+    expect(screenFor('#/evals/queues')).toBe('queues');
+    expect(screenFor('#/evals/queues/q1')).toBe('queues');
+    expect(screenFor('#/playground')).toBe('playground');
+    expect(screenFor('#/threads/s1')).toBe('threads');
+    expect(screenFor('#/prompts/greeting@v2')).toBe('prompts');
+    expect(screenFor('#/hub/docs')).toBe('hub');
+    expect(screenFor('#/settings')).toBe('settings');
+  });
+  it('has no screen for an empty hash or an unknown route', () => {
+    expect(screenFor('')).toBeNull();
+    expect(screenFor('#/')).toBeNull();
+    expect(screenFor('#/nope')).toBeNull();
+    // Every Evaluations section has its own screen now; an unknown one is an unknown route.
+    expect(screenFor('#/evals/nope')).toBeNull();
+    expect(screenFor('#/evals/nope/1')).toBeNull();
+  });
   it("gives every route an example path that lands on that route's screen", () => {
     for (const { pattern, screen, example } of ROUTES) {
       expect(example.split('/').length, pattern).toBe(pattern.split('/').length);
@@ -90,14 +152,52 @@ describe('useScreen', () => {
     expect(seen.every((s) => s === 'agentList')).toBe(true);
   });
 
-  it('redirects the legacy #/agents/:id builder URL to its canvas tab, keeping ?token=', () => {
+  it('redirects the legacy #/agents/:id builder URL into the launch workspace, keeping ?token=', () => {
     window.history.replaceState(null, '', '/?token=secret#/agents/x');
     const before = window.history.length;
     const seen = probe();
-    expect(window.location.hash).toBe('#/agents/x/canvas');
+    expect(window.location.hash).toBe('#/w/launch-abc123/agents/x/canvas');
     expect(window.location.search).toBe('?token=secret');
     expect(window.history.length).toBe(before);
     expect(seen.every((s) => s === 'agents')).toBe(true);
+  });
+
+  it('waits on a legacy #/agents/:id URL until the launch workspace is known', () => {
+    workspaces.launchId = undefined;
+    try {
+      window.history.replaceState(null, '', '/?token=secret#/agents/x');
+      probe();
+      expect(window.location.hash).toBe('#/agents/x');
+    } finally {
+      workspaces.launchId = 'launch-abc123';
+    }
+  });
+
+  it('redirects the legacy #/code-agents/:path URL into the launch workspace, keeping ?token=', () => {
+    window.history.replaceState(null, '', '/?token=secret#/code-agents/agents%2Fsupport');
+    const before = window.history.length;
+    const seen = probe();
+    expect(window.location.hash).toBe('#/w/launch-abc123/code-agents/agents%2Fsupport');
+    expect(window.location.search).toBe('?token=secret');
+    expect(window.history.length).toBe(before);
+    expect(seen.every((s) => s === 'codeAgent')).toBe(true);
+  });
+
+  it('waits on a legacy #/code-agents/:path URL until the launch workspace is known', () => {
+    workspaces.launchId = undefined;
+    try {
+      window.history.replaceState(null, '', '/#/code-agents/agents%2Fsupport');
+      probe();
+      expect(window.location.hash).toBe('#/code-agents/agents%2Fsupport');
+    } finally {
+      workspaces.launchId = 'launch-abc123';
+    }
+  });
+
+  it('redirects #/w/<bad>/agents back to the all-workspaces list', () => {
+    window.history.replaceState(null, '', '/?token=secret#/w/NOT!/agents');
+    probe();
+    expect(window.location.hash).toBe('#/agents');
   });
 
   it('redirects an unknown route to #/agents, keeping ?token=', () => {
@@ -106,9 +206,40 @@ describe('useScreen', () => {
     expect(window.location.hash).toBe('#/agents');
     expect(window.location.search).toBe('?token=secret');
   });
+
+  it('follows hash changes', () => {
+    window.history.replaceState(null, '', '/?token=secret#/traces');
+    const seen = probe();
+    expect(seen.at(-1)).toBe('traces');
+    go('#/monitoring');
+    expect(seen.at(-1)).toBe('monitoring');
+  });
 });
 
 describe('Topbar', () => {
+  it('shows the Build controls on the builder', () => {
+    window.history.replaceState(null, '', '/?token=secret#/agents/demo/canvas');
+    render(<Topbar />);
+    expect(buttonNames()).toEqual(expect.arrayContaining(['Run', 'Stop', 'Import', 'Export', 'Save', 'Debug']));
+    expect(container.querySelector('.env-select')).not.toBeNull();
+  });
+
+  it("centres the LLM node's provider · model as the model badge, hidden when the graph has none", () => {
+    window.history.replaceState(null, '', '/?token=secret#/agents/demo/canvas');
+    render(<Topbar />);
+    expect(container.querySelector('.env-select')?.textContent).toBe('mock · echoMOCK');
+    expect(container.querySelector('.crumbs')?.textContent).toBe('Agentsdemo');
+    act(() => root?.unmount());
+    const { graph } = appState;
+    appState.graph = { version: 2, nodes: [], emptySections: [], unplaced: [] };
+    try {
+      render(<Topbar />);
+      expect(container.querySelector('.env-select')).toBeNull();
+      expect(buttonNames()).toEqual(expect.arrayContaining(['Run', 'Save']));
+    } finally {
+      appState.graph = graph;
+    }
+  });
 
   // Off Agents the Topbar is not rendered at all: the screen frame carries the shell's ScreenHeader.
   it('has no Build controls or model badge on #/traces', () => {
@@ -121,6 +252,20 @@ describe('Topbar', () => {
     expect(container.querySelector('.mock-badge')).toBeNull();
     expect(container.querySelector('header')?.textContent).toContain('Traces');
     expect(container.querySelector('[role="status"][aria-live="polite"]')).not.toBeNull();
+  });
+
+  it('has no Build controls in the narrow layout off Agents either', () => {
+    window.history.replaceState(null, '', '/?token=secret#/monitoring');
+    render(<Screens />);
+    expect(buttonNames()).not.toContain('Run');
+    expect(container.querySelector('[aria-label="More actions"]')).toBeNull();
+  });
+
+  it('drops the Build/Observe switch on the builder', () => {
+    window.history.replaceState(null, '', '/?token=secret#/agents/demo/canvas');
+    render(<Topbar />);
+    expect(container.querySelector('[aria-label="Studio surface"]')).toBeNull();
+    expect(buttonNames()).not.toContain('Observe');
   });
 
   it("maps the old 'Observe surface' shortcut to #/traces", () => {

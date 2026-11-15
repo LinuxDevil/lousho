@@ -69,18 +69,18 @@ export function sdkRuntimePlugin({ sdkEntry = 'main' }: { sdkEntry?: 'main' | 'w
   return {
     name: 'lousho-deploy-runtime',
     setup(build) {
-      build.onResolve({ filter: /^lousho\/deploy-runtime(-worker)?$/ }, (args) => ({
+      build.onResolve({ filter: /^(?:lousho|@linuxdevil\/lousho)\/deploy-runtime(-worker)?$/ }, (args) => ({
         path: runtimeSourceFile(
           args.path === WORKER_RUNTIME_SPECIFIER ? 'runtime.worker.ts' : 'runtime.ts'
         ),
       }));
       // An agent directory's own `import ... from 'lousho'` bundles this SDK copy
       // (the one the runtime above comes from), so tools, schedules and channels share its classes.
-      build.onResolve({ filter: /^lousho$/ }, () => ({
+      build.onResolve({ filter: /^(?:lousho|@linuxdevil\/lousho)$/ }, () => ({
         path: sdkEntry === 'worker' ? runtimeSourceFile('workerSdk.ts') : path.join(findSdkRoot(), 'src', 'index.ts'),
       }));
       // An agent directory's auth.ts imports its helpers from the auth subpath.
-      build.onResolve({ filter: /^lousho\/auth$/ }, () => ({
+      build.onResolve({ filter: /^(?:lousho|@linuxdevil\/lousho)\/auth$/ }, () => ({
         path: path.join(findSdkRoot(), 'src', 'auth', 'index.ts'),
       }));
     },

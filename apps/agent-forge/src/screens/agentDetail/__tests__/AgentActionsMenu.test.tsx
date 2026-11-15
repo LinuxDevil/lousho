@@ -7,13 +7,28 @@ import { ToastProvider } from '../../../ui/Toast';
 
 const mocks = vi.hoisted(() => ({
   createAgentRecord: vi.fn(),
+  duplicateAgent: vi.fn(),
   deleteAgent: vi.fn(),
+  downloadExport: vi.fn(),
+  checkPortability: vi.fn(),
 }));
 
 vi.mock('../../../runtime/runtimeClient', () => ({
   runtimeClient: {
     createAgentRecord: mocks.createAgentRecord,
+    duplicateAgent: mocks.duplicateAgent,
     deleteAgent: mocks.deleteAgent,
+    downloadExport: mocks.downloadExport,
+    checkPortability: mocks.checkPortability,
+  },
+  RuntimeApiError: class RuntimeApiError extends Error {
+    constructor(
+      message: string,
+      public readonly status: number,
+      public readonly code?: string
+    ) {
+      super(message);
+    }
   },
 }));
 
@@ -52,6 +67,7 @@ function record(over: Partial<AgentRecord> = {}): AgentRecord {
     layout: { schemaVersion: 1, nodes: {}, notes: [] },
     updatedAt: '2026-10-29T10:00:00Z',
     latestVersion: null,
+    publishState: { version: null, matchesWorkingCopy: false, publishedAt: null },
     ...over,
   };
 }
@@ -90,16 +106,40 @@ function toastTexts(): string {
 
 beforeEach(() => {
   mocks.createAgentRecord.mockReset();
+  mocks.duplicateAgent.mockReset();
   mocks.deleteAgent.mockReset();
+  mocks.downloadExport.mockReset();
+  mocks.checkPortability.mockReset();
   takePendingOpen(); // drain any queued Author open
   appState.agentId = 'other-agent';
   window.history.replaceState(null, '', '/#/agents/support-bot/overview');
 });
 
 describe('AgentActionsMenu', () => {
+  it('lists Change with AI, Duplicate, Export… and Delete agent… with one separator and a danger delete', () => {
+    renderMenu();
+    const menu = openMenu();
 
-  it('duplicates the agent, toasts and opens the copy’s overview', async () => {
-    mocks.createAgentRecord.mockResolvedValue({ id: 'support-bot-copy', spec: { name: 'support-bot copy' } });
+    const labels = [...menu.querySelectorAll<HTMLElement>('[role^="menuitem"]')].map((el) => el.textContent ?? '');
+    expect(labels[0]).toContain('Change with AI');
+    expect(labels[1]).toContain('Duplicate');
+    expect(labels[2]).toContain('Export…');
+    expect(labels[3]).toContain('Delete agent…');
+    expect(menu.querySelectorAll('[role="separator"]').length).toBe(1);
+    expect(menuItem('Delete agent…').classList.contains('menu-item-danger')).toBe(true);
+  });
+
+  it('Change with AI opens the Author focused on this agent (AA19)', async () => {
+    renderMenu();
+    openMenu();
+    await act(async () => {
+      menuItem('Change with AI').click();
+    });
+    expect(takePendingOpen()).toEqual({ source: 'agent-header', focus: { mode: 'edit', agentId: 'support-bot' } });
+  });
+
+  it('duplicates the agent, toasts and opens the copy’s canvas', async () => {
+    mocks.duplicateAgent.mockResolvedValue({ id: 'support-bot-copy', spec: { name: 'support-bot copy' } });
     renderMenu();
     openMenu();
 
@@ -109,35 +149,19 @@ describe('AgentActionsMenu', () => {
     });
     await flush();
 
-    expect(mocks.createAgentRecord).toHaveBeenCalledWith({ from: { copyOf: 'support-bot' } });
-    expect(toastTexts()).toContain('Duplicated as “support-bot copy”');
-    expect(window.location.hash).toBe('#/agents/support-bot-copy/overview');
+    expect(mocks.duplicateAgent).toHaveBeenCalledWith('support-bot');
+    expect(toastTexts()).toContain('Made a copy: support-bot copy. It is off until you turn it on.');
+    expect(window.location.hash).toBe('#/agents/support-bot-copy/canvas');
   });
 
-  it('exports the spec as <id>.yaml and toasts the filename', async () => {
-    const originalCreate = URL.createObjectURL;
-    const originalRevoke = URL.revokeObjectURL;
-    const originalClick = HTMLAnchorElement.prototype.click;
-    const downloads: string[] = [];
-    URL.createObjectURL = () => 'blob:mock';
-    URL.revokeObjectURL = () => {};
-    HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
-      downloads.push(this.download);
-    };
-    try {
-      renderMenu();
-      openMenu();
-      await act(async () => {
-        menuItem('Export YAML').click();
-      });
-    } finally {
-      URL.createObjectURL = originalCreate;
-      URL.revokeObjectURL = originalRevoke;
-      HTMLAnchorElement.prototype.click = originalClick;
-    }
-
-    expect(downloads).toEqual(['support-bot.yaml']);
-    expect(toastTexts()).toContain('Exported support-bot.yaml');
+  it('opens the export sheet from Export… without downloading yet', async () => {
+    renderMenu();
+    openMenu();
+    await act(async () => {
+      menuItem('Export…').click();
+    });
+    expect(document.querySelector('.sheet-title')?.textContent).toBe('Export Support bot');
+    expect(mocks.downloadExport).not.toHaveBeenCalled();
   });
 
   it('asks before deleting; confirm deletes, toasts and returns to #/agents', async () => {

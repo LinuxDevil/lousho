@@ -70,6 +70,39 @@ beforeEach(() => {
 });
 
 describe('NewAgentMenu', () => {
+  it('shows a primary "New agent" trigger that opens the four ways plus a separator', async () => {
+    const host = mount(<MenuHarness />);
+    const trigger = triggerOf(host);
+    expect(trigger.textContent).toContain('New agent');
+    expect(trigger.classList.contains('btn-primary')).toBe(true);
+
+    await openMenu(host);
+    const labels = menuItems().map((el) => el.textContent ?? '');
+    expect(labels.some((t) => t.startsWith('Blank agent'))).toBe(true);
+    expect(labels.some((t) => t.startsWith('Describe with AI'))).toBe(true);
+    expect(labels.some((t) => t.startsWith('From template'))).toBe(true);
+    expect(labels.some((t) => t.startsWith('Import from file…'))).toBe(true);
+    expect(document.body.querySelectorAll('[role="separator"]')).toHaveLength(1);
+  });
+
+  it('runs Describe with AI through the Author entry point (AA19) and keeps Import disabled', async () => {
+    const host = mount(<MenuHarness />);
+    await openMenu(host);
+
+    const importItem = menuItem('Import from file…')!;
+    expect(importItem.getAttribute('aria-disabled')).toBe('true');
+    expect(importItem.getAttribute('title')).toBe('Import is not available here.');
+
+    const describe = menuItem('Describe with AI')!;
+    expect(describe.getAttribute('aria-disabled')).toBeNull();
+    await act(async () => describe.click());
+    expect(takePendingOpen()).toEqual({
+      source: 'agents-list',
+      focus: { mode: 'create' },
+      draft: CREATE_AGENT_DRAFT,
+      newChat: true,
+    });
+  });
 
   it('hasTemplatesRoute detects the /templates route entry', () => {
     expect(hasTemplatesRoute([])).toBe(false);
@@ -98,6 +131,29 @@ describe('NewAgentMenu', () => {
     expect(window.location.hash).toBe('#/templates');
   });
 
+  it('reads "Creating…" while the blank create is in flight, then opens the canvas', async () => {
+    let resolveCreate!: (record: AgentRecord) => void;
+    api.createAgentRecord.mockReturnValue(
+      new Promise<AgentRecord>((resolve) => {
+        resolveCreate = resolve;
+      })
+    );
+    const host = mount(<MenuHarness />);
+    await openMenu(host);
+    await act(async () => menuItem('Blank agent')!.click());
+    await flush();
+
+    const trigger = triggerOf(host);
+    expect(trigger.textContent).toContain('Creating…');
+    expect(trigger.disabled).toBe(true);
+
+    await act(async () => resolveCreate({ id: 'untitled-1' } as AgentRecord));
+    await flush();
+    expect(api.createAgentRecord).toHaveBeenCalledWith({ from: 'blank' });
+    expect(window.location.hash).toBe('#/agents/untitled-1/canvas');
+    expect(trigger.disabled).toBe(false);
+  });
+
   it('toasts the server message and re-enables the trigger when the create fails', async () => {
     api.createAgentRecord.mockRejectedValue(new Error('Disk full'));
     const host = mount(<MenuHarness />);
@@ -113,16 +169,16 @@ describe('NewAgentMenu', () => {
 });
 
 describe('StartOptions', () => {
-  it('renders the three start buttons; disabled ones explain why; Blank creates', async () => {
+  it('renders the four start buttons; disabled ones explain why; Blank creates', async () => {
     const host = mount(<OptionsHarness />);
     const group = host.querySelector('.start-options')!;
     expect(group.getAttribute('role')).toBe('group');
     expect(group.getAttribute('aria-label')).toBe('Ways to start');
 
     const buttons = [...host.querySelectorAll<HTMLButtonElement>('button.start-option')];
-    expect(buttons).toHaveLength(3);
+    expect(buttons).toHaveLength(4);
     const titles = buttons.map((b) => b.querySelector('.start-option-title')?.textContent);
-    expect(titles).toEqual(['Blank agent', 'Describe with AI', 'From template']);
+    expect(titles).toEqual(['Blank agent', 'Describe with AI', 'From template', 'Import from file…']);
 
     const describe = buttons[1];
     expect(describe.disabled).toBe(false);

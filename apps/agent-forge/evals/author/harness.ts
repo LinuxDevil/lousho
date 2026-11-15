@@ -15,7 +15,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { parse as parseYaml } from 'yaml';
-import { agentSpecV2Schema, upgradeSpec, type LLMProvider } from 'lousho';
+import { agentSpecV2Schema, upgradeSpec, VERSION, type LLMProvider } from 'lousho';
+import { envCollector } from '../../server/host/hostSelector';
 import { mockModel, type MockRequest, type MockStaticTurn, type MockToolCall } from 'lousho/testing';
 import type { AuthorMessage, AuthorServerEvent } from '../../shared/authorWire';
 import { SecretsStore } from '../../server/secretsStore';
@@ -30,6 +31,9 @@ import { sdkRootDir } from '../../server/sdkRoot';
 import { createWorkspaceContext, singleWorkspace, type WorkspaceContext } from '../../server/workspace/context';
 import { workspaceRefFor } from '../../server/workspace/workspaceId';
 import { studioPathsFor } from '../../server/workspace/studioPaths';
+import { PassRunner } from '../../server/passes/passRunner';
+import { SpendLog } from '../../server/passes/spendLog';
+import { AlertStore } from '../../server/inbox/alertStore';
 import { collectParts, type CollectedTranscript } from './checks';
 import type { AuthorScenario } from './scenario';
 
@@ -95,10 +99,28 @@ function createEvalServices(baseDir: string, opts: EvalHarnessOptions): EvalServ
   const sessionsDir = path.join(baseDir, '.lousho', 'assistant', 'sessions');
   fs.mkdirSync(sessionsDir, { recursive: true });
   const sessions = new AuthorSessionStore(sessionsDir);
+  const evalSpendLog = new SpendLog(path.join(baseDir, '.lousho', 'passes', 'spend.jsonl'));
   const workspace = createWorkspaceContext(workspaceRefFor(baseDir), {
     secretsStore: secrets,
     settingsStore: settings,
     observe: false,
+    // Evals never run real passes; the runner exists only to satisfy the
+    // context shape, writing to a throwaway spend log under baseDir (one
+    // instance shared with `spendLog` below so appends stay serialized).
+    passRunner: new PassRunner({
+      baseDir,
+      spendLog: evalSpendLog,
+      isEnabled: () => false,
+    }),
+    spendLog: evalSpendLog,
+    // Evals never trigger runs; the store exists only to satisfy the
+    // context shape, under the same throwaway `.lousho` as the spend log.
+    alerts: new AlertStore(globalPaths.alerts),
+    // Evals run in-process only; the collector/version exist for the
+    // host selector's shape (a bridge candidate would still spawn - eval
+    // baseDirs carry no SDK install, so selection lands in-process).
+    collector: { url: () => envCollector().url, token: () => envCollector().token },
+    studioVersion: VERSION,
   });
   const workspaceResolver = singleWorkspace(workspace);
   const services = createAuthorServices({

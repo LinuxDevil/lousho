@@ -5,7 +5,9 @@
  * two scripts cannot drift and `fallow` sees no duplicated code.
  */
 import { spawnSync } from 'node:child_process';
+import { createServer, type AddressInfo } from 'node:net';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 export const SDK_NAME = 'lousho';
@@ -16,6 +18,7 @@ const OPTIONAL_PEERS = ['vue', 'react', 'svelte', '@opentelemetry/api', '@modelc
 
 /** Collects failures and prints `[<prefix>]` lines. */
 export interface Reporter {
+  prefix: string;
   failures: string[];
   log(msg: string): void;
   fail(msg: string): void;
@@ -24,6 +27,7 @@ export interface Reporter {
 export function createReporter(prefix: string): Reporter {
   const failures: string[] = [];
   return {
+    prefix,
     failures,
     log: (msg) => console.log(`[${prefix}] ${msg}`),
     fail: (msg) => {
@@ -49,7 +53,7 @@ export function run(cmd: string, argv: string[], cwd: string, env: NodeJS.Proces
   return { status: res.status ?? 1, stdout: res.stdout ?? '', stderr: res.stderr ?? '' };
 }
 
-export function mustRun(rep: Reporter, label: string, cmd: string, argv: string[], cwd: string, env?: NodeJS.ProcessEnv): RunResult {
+function mustRun(rep: Reporter, label: string, cmd: string, argv: string[], cwd: string, env?: NodeJS.ProcessEnv): RunResult {
   rep.log(label);
   const res = run(cmd, argv, cwd, env);
   if (res.status !== 0) {
@@ -59,17 +63,126 @@ export function mustRun(rep: Reporter, label: string, cmd: string, argv: string[
   return res;
 }
 
+/**
+ * `npm publish <tarball> --dry-run` - never a real publish. Tolerates the
+ * "cannot publish over the previously published versions" failure that only
+ * means this version is already on npm.
+ */
+export function dryRunPublish(rep: Reporter, label: string, tarball: string, cwd: string): void {
+  // `--tag next`: the versions are prereleases and npm 11 refuses a prerelease without an explicit tag.
+  const res = run('npm', ['publish', tarball, '--dry-run', '--tag', 'next', '--access', 'public'], cwd);
+  const out = res.stdout + res.stderr;
+  if (/cannot publish over the previously published versions/i.test(out)) {
+    rep.log(`npm publish --dry-run ${label}: ok (this version is already on npm; bump it before the next release)`);
+  } else if (res.status !== 0 || /npm (error|ERR!)/.test(out)) {
+    rep.fail(`npm publish --dry-run ${label} failed:\n${out}`);
+  } else {
+    rep.log(`npm publish --dry-run ${label}: ok`);
+  }
+}
+
+export interface PackEntry {
+  filename: string;
+  entryCount: number;
+  size: number;
+  unpackedSize: number;
+  files: { path: string }[];
+}
+
+/** `npm pack --json` for one package; tolerates prepack/postpack stdout before the JSON array. */
+export function packTarball(rep: Reporter, label: string, cwd: string, dest: string): { entry: PackEntry; tarball: string } {
+  const res = mustRun(rep, `npm pack ${label}`, 'npm', ['pack', '--json', '--pack-destination', dest], cwd);
+  const jsonStart = res.stdout.search(/^\[/m);
+  if (jsonStart < 0) throw new Error(`npm pack ${label}: no JSON array in output:\n${res.stdout}`);
+  const entry = (JSON.parse(res.stdout.slice(jsonStart)) as PackEntry[])[0];
+  return { entry, tarball: path.join(dest, entry.filename) };
+}
+
+export interface TarballLimits {
+  maxEntries: number;
+  maxUnpackedBytes: number;
+  maxPackedBytes: number;
+  requiredPaths: readonly string[];
+  forbiddenPatterns: readonly RegExp[];
+}
+
+/** Entry count, sizes, required/forbidden paths and budgets for one packed tarball. */
+export function checkTarballContents(rep: Reporter, entry: PackEntry, limits: TarballLimits): void {
+  rep.log(`tarball ${entry.filename}: ${entry.entryCount} entries, ${(entry.unpackedSize / 1048576).toFixed(1)} MB unpacked, ${(entry.size / 1048576).toFixed(1)} MB packed`);
+  if (entry.entryCount > limits.maxEntries) rep.fail(`tarball has ${entry.entryCount} entries (max ${limits.maxEntries})`);
+  if (entry.unpackedSize > limits.maxUnpackedBytes) rep.fail(`tarball unpacked size ${entry.unpackedSize} exceeds ${limits.maxUnpackedBytes}`);
+  if (entry.size > limits.maxPackedBytes) rep.fail(`tarball packed size ${entry.size} exceeds ${limits.maxPackedBytes}`);
+  const packed = new Set(entry.files.map((f) => f.path));
+  for (const p of limits.requiredPaths) {
+    if (!packed.has(p)) rep.fail(`tarball is missing required file ${p}`);
+  }
+  for (const f of entry.files) {
+    if (limits.forbiddenPatterns.some((re) => re.test(f.path))) rep.fail(`tarball contains forbidden file ${f.path}`);
+  }
+}
+
+/** The argv/reporter/mustRun preamble every pack-smoke script shares. */
+export function smokeSetup(prefix: string): {
+  args: Set<string>;
+  rep: Reporter;
+  log(msg: string): void;
+  fail(msg: string): void;
+  mustRun(label: string, cmd: string, argv: string[], cwd: string, env?: NodeJS.ProcessEnv): RunResult;
+} {
+  const args = new Set(process.argv.slice(2));
+  const rep = createReporter(prefix);
+  const { log, fail } = rep;
+  const mustRunLocal = (label: string, cmd: string, argv: string[], cwd: string, env?: NodeJS.ProcessEnv) => mustRun(rep, label, cmd, argv, cwd, env);
+  return { args, rep, log, fail, mustRun: mustRunLocal };
+}
+
+/** `<tmp>/<prefix>-XXXX/{tarballs,project}` for a smoke run. */
+export function smokeDirs(prefix: string): { base: string; packDir: string; project: string } {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-`));
+  const packDir = path.join(base, 'tarballs');
+  const project = path.join(base, 'project');
+  fs.mkdirSync(packDir);
+  fs.mkdirSync(project);
+  return { base, packDir, project };
+}
+
+/** Shared tail, step 1: keep or remove the temp dir (call from `finally`). */
+export function cleanSmokeDir(rep: Reporter, base: string, keep: boolean): void {
+  if (keep) rep.log(`kept ${base}`);
+  else fs.rmSync(base, { recursive: true, force: true });
+}
+
+/** Shared tail, step 2: report collected failures, or pass. */
+export function reportSmoke(rep: Reporter): void {
+  if (rep.failures.length) {
+    console.error(`\n[${rep.prefix}] ${rep.failures.length} failure(s):\n- ${rep.failures.join('\n- ')}`);
+    process.exit(1);
+  }
+  rep.log('all checks passed');
+}
+
+/** An ephemeral loopback port, free at call time (a small race window is fine for smoke tests). */
+export async function freePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as AddressInfo).port;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return port;
+}
+
 /** All `exports` subpaths with their targets, from the installed package.json. */
 export function listExports(pkgDir: string): { subpath: string; spec: string; targets: string[] }[] {
   const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'));
   // Conditions may nest (`import: { types, default }`): every leaf string is a target.
   const leaves = (node: unknown): string[] =>
     typeof node === 'string' ? [node] : node && typeof node === 'object' ? Object.values(node).flatMap(leaves) : [];
-  return Object.entries<unknown>(pkg.exports).map(([subpath, conds]) => ({
-    subpath,
-    spec: subpath === '.' ? SDK_NAME : `${SDK_NAME}/${subpath.slice(2)}`,
-    targets: leaves(conds),
-  }));
+  return Object.entries<unknown>(pkg.exports)
+    .filter(([subpath]) => !subpath.includes('*'))
+    .map(([subpath, conds]) => ({
+      subpath,
+      spec: subpath === '.' ? SDK_NAME : `${SDK_NAME}/${subpath.slice(2)}`,
+      targets: leaves(conds),
+    }));
 }
 
 /** Source of a probe script that loads every spec in one module format and prints JSON results. */

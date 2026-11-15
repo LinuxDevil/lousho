@@ -40,9 +40,11 @@ import { FlowExecutor, type AgentFlow } from 'lousho/flows';
 import { buildAgentFromSpec, extractFlowFromSpec } from './buildAgent';
 import { toLegacySpec } from './storage/legacySpec';
 import { HostRunNotActiveError, type AgentHost, type HostEvent, type HostRunResult } from './host/agentHost';
+import { HostUnsupportedError } from './host/hostStatus';
 import { withAbortSignal, RunAbortedError } from './abortableProvider';
 import { FileApprovalStore } from './approvalStore';
 import { approvalDeadline, EXPIRED_APPROVAL_NOTE, NO_ANSWER_TEXT } from './approvalDeadline';
+import { autoApprovalLogEntry } from './autoApproval';
 import { DebugSession, type BreakpointKey } from './debugController';
 import { FileChatStore, previewFor } from './chatStore';
 import { markRunInput, markSteerInputs, reconcileChatMessages } from './chatReconcile';
@@ -63,7 +65,25 @@ import type {
   ChatSessionMeta,
   ChatSessionRecord,
   RunHistoryStep,
+  ToolPin,
 } from '../shared/wireTypes';
+import { pinnedResultsHook } from './pins';
+
+/** Options for {@link RunManager.run}: what started the run plus this launch's tool pins (T04). */
+export interface RunOptions {
+  /**
+   * `'trigger'` for runs a trigger launched (R08a/R08c/R07 pass it); absent
+   * or `'manual'` for Run/chat starts. Carried on the status payload so the
+   * failure-streak pass (L12) counts triggered runs only.
+   */
+  source?: 'manual' | 'trigger';
+  /** The trigger that started the run, when `source` is `'trigger'`. */
+  triggerId?: string;
+  /** The trigger's raw event payload - accepted for the trigger tickets; not stored on the entry. */
+  triggerEvent?: unknown;
+  /** This launch's pinned tool results (T04 run-from-here); never stored, never sent on chat turns. */
+  pins?: ToolPin[];
+}
 
 interface RunEntry {
   status: RunStatus;
@@ -122,6 +142,12 @@ interface RunEntry {
    */
   runInput?: string;
   /**
+   * Why the run was cancelled - only ever set on the transition to
+   * `status: 'stopped'` (see abort()), surfaced on the status payload as
+   * `abortReason` and cleared by the next launch.
+   */
+  abortReason?: string;
+  /**
    * The chat transcript for this agent's CURRENT chat session -
    * reconciled from the real `ExecutionResult.messages` on every run
    * settle (see chatReconcile.ts), plus the just-sent user message pushed
@@ -141,6 +167,13 @@ interface RunEntry {
    * resets it via the `steering: []` patch in startAgentRun/startFlowRun.
    */
   steering?: SteerInfo[];
+  /**
+   * What started the in-flight/last run (L12): set on launch from
+   * `RunOptions.source`, kept through approve()/resume of the same run,
+   * cleared by the next launch that passes no source (a manual run).
+   */
+  source?: 'manual' | 'trigger';
+  triggerId?: string;
 }
 
 export interface RunManagerOptions {
@@ -182,6 +215,12 @@ export interface RunManagerOptions {
    * itself inside the test. Production callers leave it unset.
    */
   minDeadlineMs?: number;
+  /**
+   * The Studio collector (collector.ts): run reporting reads its
+   * `url()`/`token()` per exporter, so a Settings → Collector change
+   * repoints new runs without a restart.
+   */
+  collector?: import('./collector').CollectorSource;
 }
 
 export class AgentNotFoundError extends Error {}
@@ -279,9 +318,20 @@ export class RunManager extends EventEmitter {
       result: entry.result,
       provider: entry.provider,
       traceId: entry.traceId,
+      abortReason: entry.abortReason,
       steering: entry.steering,
+      source: entry.source,
+      triggerId: entry.triggerId,
       updatedAt: entry.updatedAt,
     };
+  }
+
+  /** True while any agent's run is 'running' or 'paused' - `WorkspaceManager.sweep()` keeps a context warm on this. */
+  hasActiveRun(): boolean {
+    for (const entry of this.entries.values()) {
+      if (entry.status === 'running' || entry.status === 'paused') return true;
+    }
+    return false;
   }
 
   private setEntry(agentId: string, patch: Partial<RunEntry>, base?: RunEntry): RunEntry {
@@ -435,7 +485,12 @@ export class RunManager extends EventEmitter {
     if (!observe) return undefined;
     let reporting = this.reporting.get(agentId);
     if (!reporting) {
-      reporting = observeReporting({ agentName: agentId, baseDir: this.opts.baseDir, ...(observe === true ? {} : { overrides: observe }) });
+      reporting = observeReporting({
+        agentName: agentId,
+        baseDir: this.opts.baseDir,
+        ...(observe === true ? {} : { overrides: observe }),
+        ...(this.opts.collector ? { collector: this.opts.collector } : {}),
+      });
       this.reporting.set(agentId, reporting);
     }
     return reporting;
@@ -497,12 +552,17 @@ export class RunManager extends EventEmitter {
    * it re-sends the message the interrupted run started from; after a
    * finished run it continues the conversation.
    */
-  async run(agentId: string, input: string, spec?: AgentSpecV2): Promise<void> {
+  async run(
+    agentId: string,
+    input: string,
+    spec?: AgentSpecV2,
+    options?: RunOptions
+  ): Promise<void> {
     const existing = this.entries.get(agentId);
     if (existing && existing.status === 'running') {
       throw new AlreadyRunningError(`Agent '${agentId}' is already running`);
     }
-    await this.launch(agentId, input, spec, { runInput: input });
+    await this.launch(agentId, input, spec, { runInput: input, ...options });
   }
 
   /**
@@ -656,13 +716,21 @@ export class RunManager extends EventEmitter {
     agentId: string,
     input: AgentInput,
     spec?: AgentSpecV2,
-    options: { runInput?: string } = {}
+    options: { runInput?: string; source?: 'manual' | 'trigger'; triggerId?: string; triggerEvent?: unknown; pins?: ToolPin[] } = {}
   ): Promise<void> {
     const existing = this.entries.get(agentId);
     const resolvedSpec = await this.resolveLaunchSpec(agentId, spec, existing);
     const legacySpec = toLegacySpec(resolvedSpec);
     const flow = extractFlowFromSpec(legacySpec);
     if (flow) {
+      // W11c: the flow path is Studio's own in-process FlowExecutor - on a
+      // bridge workspace that would silently bypass the project's SDK, so
+      // refuse until the bridge protocol carries flows (protocol 2).
+      if (this.opts.host.kind === 'bridge') {
+        throw new HostUnsupportedError(
+          "Flow runs need Studio's built-in SDK for now. Remove the project's SDK from this workspace or run the flow from code."
+        );
+      }
       return this.startFlowRun(agentId, flow, resolvedSpec, legacySpec, existing, options);
     }
     return this.startAgentRun(agentId, input, resolvedSpec, existing, options);
@@ -680,7 +748,7 @@ export class RunManager extends EventEmitter {
     input: AgentInput,
     resolvedSpec: AgentSpecV2,
     existing: RunEntry | undefined,
-    options: { runInput?: string }
+    options: { runInput?: string; source?: 'manual' | 'trigger'; triggerId?: string; pins?: ToolPin[] }
   ): Promise<void> {
     const sessionId = agentId;
     const debugSession = this.makeDebugSession(agentId);
@@ -695,8 +763,16 @@ export class RunManager extends EventEmitter {
       sessionId,
       input,
       captureContent: this.captureContentFor(agentId),
-      extraHooks: debugSession.agentHooks(),
+      // The debugger hook first, then this run's pins (T04): a pinned tool
+      // call resolves to its recorded result without executing - for this
+      // launch only, never stored and never sent on chat turns.
+      extraHooks: [
+        ...debugSession.agentHooks(),
+        ...(options.pins !== undefined && options.pins.length > 0 ? [pinnedResultsHook(options.pins)] : []),
+      ],
       onEvent: (event) => this.onHostEvent(agentId, event, live),
+      // R01b: every auto-approval decision becomes an 'approval'-phase Logs row.
+      onAutoApproval: (decision) => this.emit('log', agentId, autoApprovalLogEntry(agentId, decision)),
     });
     live.runId = runId;
     this.setEntry(
@@ -712,6 +788,7 @@ export class RunManager extends EventEmitter {
         startedAt: new Date().toISOString(),
         resultText: undefined,
         traceId: undefined,
+        abortReason: undefined,
         runInput: options.runInput,
         lastSpec: resolvedSpec,
         provider: modelLabel,
@@ -719,6 +796,10 @@ export class RunManager extends EventEmitter {
         hostRunId: runId,
         kind: 'agent',
         steering: [],
+        // `undefined` on a manual/chat launch clears a previous trigger
+        // run's source (L12); a trigger launch stamps both fields.
+        source: options.source,
+        triggerId: options.triggerId,
       },
       existing
     );
@@ -804,7 +885,7 @@ export class RunManager extends EventEmitter {
     resolvedSpec: AgentSpecV2,
     legacySpec: import('lousho').AgentSpec,
     existing: RunEntry | undefined,
-    options: { runInput?: string }
+    options: { runInput?: string; source?: 'manual' | 'trigger'; triggerId?: string }
   ): Promise<void> {
     const { agent, provider, toolRegistry, sandbox } = buildAgentFromSpec(legacySpec, agentId, undefined, {
       secretsStore: this.opts.secretsStore,
@@ -826,6 +907,7 @@ export class RunManager extends EventEmitter {
         startedAt: new Date().toISOString(),
         resultText: undefined,
         traceId: undefined,
+        abortReason: undefined,
         runInput: options.runInput,
         lastSpec: resolvedSpec,
         provider: `${provider.name}/${legacySpec.provider.model}`,
@@ -833,6 +915,8 @@ export class RunManager extends EventEmitter {
         hostRunId: undefined,
         kind: 'flow',
         steering: [],
+        source: options.source,
+        triggerId: options.triggerId,
       },
       existing
     );
@@ -924,12 +1008,17 @@ export class RunManager extends EventEmitter {
       this.recordPause(agentId, result, result.approvalId, entryBefore, reconciledMessages);
       return;
     }
+    const aborted = result.finishReason === 'aborted';
     const next = this.setEntry(agentId, {
-      status: result.finishReason === 'aborted' ? 'stopped' : 'done',
+      status: aborted ? 'stopped' : 'done',
       resultText: result.text,
       result,
       controller: undefined,
       hostRunId: undefined,
+      // The SDK reports the abort's reason as `{ name, message }` - the
+      // message is the string abort() passed through (e.g. 'user',
+      // 'abort_listener:<id>').
+      abortReason: aborted ? result.abortReason?.message : undefined,
       deadlineTimer: this.clearDeadlineTimer(entryBefore),
       messages: reconciledMessages,
     });
@@ -990,9 +1079,25 @@ export class RunManager extends EventEmitter {
   /** Shared failure-path handling: a host run's 'failed' event, or a flow/execute() rejection. */
   private handleRunFailed(agentId: string, error: unknown): void {
     const entry = this.entries.get(agentId);
-    if (error instanceof RunAbortedError) {
-      // User-initiated stop() - a deliberate terminal state, not an error.
-      this.setEntry(agentId, { status: 'stopped', controller: undefined, hostRunId: undefined, deadlineTimer: this.clearDeadlineTimer(entry) });
+    // A user-initiated abort is a deliberate terminal state, not an error:
+    // the flow path surfaces it either as RunAbortedError (the provider
+    // wrapper's check) or as the controller signal's own reason
+    // (FlowExecutor's `signal.throwIfAborted()` rethrows it verbatim).
+    if (error instanceof RunAbortedError || entry?.controller?.signal.aborted) {
+      const signalReason: unknown = entry?.controller?.signal.reason;
+      const abortReason =
+        signalReason instanceof DOMException
+          ? signalReason.message
+          : typeof signalReason === 'string'
+            ? signalReason
+            : undefined;
+      this.setEntry(agentId, {
+        status: 'stopped',
+        controller: undefined,
+        hostRunId: undefined,
+        abortReason,
+        deadlineTimer: this.clearDeadlineTimer(entry),
+      });
       return;
     }
     this.setEntry(agentId, {
@@ -1067,44 +1172,80 @@ export class RunManager extends EventEmitter {
   }
 
   /**
-   * Requests cancellation of the in-flight run for `agentId`: the agent
-   * path aborts through the AgentHost (its run resolves
-   * `finishReason: 'aborted'`, which handleRunSettled maps to 'stopped'),
-   * the flow path aborts its controller (RunAbortedError → 'stopped').
-   * A PAUSED run has no live execution to signal: its `host.abort()`
-   * discards the pending approval files and emits no event, so this also
-   * marks the entry 'stopped' directly - a paused agent must never be
-   * stuck waiting for a settle that never comes.
-   * No-ops (rather than throwing) if the agent isn't currently running -
-   * Stop is safe to click on an already-stopped/idle agent.
+   * Cancels the in-flight run for `agentId` (`POST /agents/:id/abort`).
+   *
+   * - Running agent path: `host.abort(hostRunId, reason)` aborts the live
+   *   run; the `settled` event that follows (`finishReason: 'aborted'`)
+   *   maps to `status: 'stopped'` with `abortReason` in handleRunSettled.
+   * - Running flow path: the entry's AbortController is aborted with the
+   *   reason; the flow fails and handleRunFailed maps the abort (the
+   *   signal's own `aborted` state, not just RunAbortedError) to 'stopped',
+   *   not 'error'.
+   * - Paused on an approval: `host.abort()` discards the pending approval
+   *   itself (InProcessAgentHost resolves/deletes the pause file; a bridge
+   *   host deletes its own) and emits NO event, so the entry is marked
+   *   'stopped' directly once the call returns - a paused run must never
+   *   wait for a settle that never comes. Flows cannot pause, so a paused
+   *   entry is always the agent kind.
+   * - Idle/done/stopped (or no entry): a no-op, not an error - abort is
+   *   safe to call on an agent with nothing running.
    */
-  stop(agentId: string): void {
+  async abort(agentId: string, reason?: string): Promise<void> {
     const entry = this.entries.get(agentId);
     if (!entry) {
       return;
     }
+    const abortReason = reason ?? 'user';
     if (entry.status === 'paused') {
-      if (entry.kind === 'agent' && entry.hostRunId !== undefined) {
-        void this.opts.host.abort(entry.hostRunId, 'user');
-      }
-      this.setEntry(agentId, {
-        status: 'stopped',
-        reason: undefined,
-        pendingApproval: undefined,
-        deadlineTimer: this.clearDeadlineTimer(entry),
-        controller: undefined,
-        hostRunId: undefined,
-      });
+      await this.abortPaused(agentId, entry, abortReason);
       return;
     }
     if (entry.status !== 'running') {
       return;
     }
+    await this.abortRunning(entry, abortReason);
+  }
+
+  /** The running-run half of abort(): agent path through the host, flow path through its controller. */
+  private async abortRunning(entry: RunEntry, reason: string): Promise<void> {
     if (entry.kind === 'agent') {
-      if (entry.hostRunId !== undefined) void this.opts.host.abort(entry.hostRunId, 'user');
+      if (entry.hostRunId !== undefined) await this.opts.host.abort(entry.hostRunId, reason);
       return;
     }
-    entry.controller?.abort();
+    // DOMException named 'AbortError' keeps the SDK's abort detection (and
+    // the reason string readable off signal.reason) working - see
+    // abortableProvider.ts's RunAbortedError doc comment.
+    entry.controller?.abort(new DOMException(reason, 'AbortError'));
+  }
+
+  /**
+   * The paused-run half of abort(): the host discards the pending approval
+   * (no 'settled' event follows), then the entry is marked 'stopped' with
+   * the reason - see abort()'s doc comment for why the order matters.
+   */
+  private async abortPaused(agentId: string, entry: RunEntry, reason: string): Promise<void> {
+    if (entry.kind === 'agent' && entry.hostRunId !== undefined) {
+      await this.opts.host.abort(entry.hostRunId, reason);
+    }
+    this.setEntry(agentId, {
+      status: 'stopped',
+      reason: undefined,
+      pendingApproval: undefined,
+      deadlineTimer: this.clearDeadlineTimer(entry),
+      controller: undefined,
+      hostRunId: undefined,
+      abortReason: reason,
+    });
+  }
+
+  /**
+   * `POST /agents/:id/stop` - kept for existing callers (the draft tool's
+   * run timeout, older clients); now just `abort(agentId, 'user')`. Still
+   * synchronous on purpose: the abort itself proceeds in the background
+   * and the 'stopped' status arrives via the usual status push.
+   */
+  stop(agentId: string): void {
+    void this.abort(agentId, 'user');
   }
 
   /**

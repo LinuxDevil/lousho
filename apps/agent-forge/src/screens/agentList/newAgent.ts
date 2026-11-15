@@ -1,14 +1,14 @@
 /**
  * The "New agent" ways to start (A04): the header menu's four actions and
- * the empty state's three large start buttons share this one table. Blank
+ * the empty state's four large start buttons share this one table. Blank
  * creates through `POST /agents` and opens the new agent's canvas; From
  * template navigates to `/templates` once A10 registers that route (checked
  * against `routeTable.ts`, which is React-free so there is no import cycle
  * with `screens/routes.tsx`). Describe with AI opens the Agent Author dock
  * through AA19's `openAuthor` (a new chat, create focus, the shared draft
- * prefill - never sent). Import from file… still waits for L08's import
- * sheet, so it carries a `disabledReason` the menu and start buttons
- * surface as their title.
+ * prefill - never sent). Import from file… opens L08b's import sheet through
+ * the `onImport` callback the screen passes in; without one it stays
+ * disabled with its reason.
  */
 import { useCallback, useMemo, useState } from 'react';
 import { FilePlus2, LayoutTemplate, Sparkles, Upload, type LucideIcon } from 'lucide-react';
@@ -64,19 +64,24 @@ export interface NewAgentActions {
  * header menu and the empty state (AgentListScreen owns it): two instances
  * would each track `creating` separately and allow a duplicate POST /agents.
  */
-export function useNewAgentActions(): NewAgentActions {
+export function useNewAgentActions(onImport?: () => void, createWorkspaceId?: string): NewAgentActions {
   const toast = useToast();
   const [creating, setCreating] = useState(false);
   const templatesAvailable = hasTemplatesRoute();
 
   const createBlank = useCallback(() => {
     setCreating(true);
-    runtimeClient
+    // W06b: the blank agent is created in `createWorkspaceId` when the
+    // screen resolved one (the scoped route's workspace, the single
+    // selected Workspace filter, or the launch workspace); undefined
+    // means the client's own target (the URL's/launch workspace).
+    const client = createWorkspaceId === undefined ? runtimeClient : runtimeClient.forWorkspace(createWorkspaceId);
+    client
       .createAgentRecord({ from: 'blank' })
-      .then((record) => navigate(agentTabPath(record.id, 'canvas')))
+      .then((record) => navigate(agentTabPath(record.id, 'canvas', createWorkspaceId)))
       .catch((error: unknown) => toast.show({ message: messageOf(error), tone: 'error' }))
       .finally(() => setCreating(false));
-  }, [toast]);
+  }, [toast, createWorkspaceId]);
 
   const openTemplates = useCallback(() => navigate('/templates'), []);
 
@@ -115,15 +120,17 @@ export function useNewAgentActions(): NewAgentActions {
             icon: LayoutTemplate,
             disabledReason: 'Templates aren’t available yet.',
           },
-      {
-        kind: 'import',
-        label: 'Import from file…',
-        hint: HINT_IMPORT,
-        icon: Upload,
-        disabledReason: 'Import arrives with the import sheet.',
-      },
+      onImport === undefined
+        ? {
+            kind: 'import',
+            label: 'Import from file…',
+            hint: HINT_IMPORT,
+            icon: Upload,
+            disabledReason: 'Import is not available here.',
+          }
+        : { kind: 'import', label: 'Import from file…', hint: HINT_IMPORT, icon: Upload, run: onImport },
     ];
-  }, [creating, templatesAvailable, createBlank, openTemplates, describeWithAi]);
+  }, [creating, templatesAvailable, createBlank, openTemplates, describeWithAi, onImport]);
 
   return { actions, creating };
 }

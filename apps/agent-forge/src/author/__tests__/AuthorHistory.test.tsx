@@ -14,6 +14,11 @@ vi.mock('../../runtime/runtimeClient', async (importOriginal) => {
     runtimeClient: {
       listAuthorSessions: vi.fn(),
       deleteAuthorSession: vi.fn(),
+      // The shell's NavRail badge reads these (R02b, Studio-wide since
+      // W09b); implementations are set in beforeEach because afterEach's
+      // restoreAllMocks wipes them.
+      allInboxCount: vi.fn(),
+      subscribeAllEvents: vi.fn(),
     },
   };
 });
@@ -125,6 +130,8 @@ beforeEach(() => {
   appState.agents = [{ id: 'support-triage', name: 'Support Triage' }];
   vi.mocked(runtimeClient.listAuthorSessions).mockResolvedValue([]);
   vi.mocked(runtimeClient.deleteAuthorSession).mockResolvedValue(undefined);
+  vi.mocked(runtimeClient.allInboxCount).mockResolvedValue(0);
+  vi.mocked(runtimeClient.subscribeAllEvents).mockReturnValue(() => {});
 });
 
 afterEach(() => {

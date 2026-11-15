@@ -5,13 +5,14 @@ import { mergeProposal, type ProposalOverlay } from '../graph/v2/proposal';
 import { HttpAgentStore } from '../persistence/HttpAgentStore';
 import { runtimeClient } from '../runtime/runtimeClient';
 import type { AgentStore } from '../persistence/AgentStore';
-import type { Graph, GraphEdge } from '../graph/v2/types';
+import type { Graph, GraphEdge, Problem } from '../graph/v2/types';
 import type { TemplateId } from '../canvas/templates';
 import type { AgentListItem } from '../../shared/wireTypes';
 import type {
   AgentRunStatusPayload,
   LogEntry,
   SpanEvent,
+  ToolPin,
   DebugStatePayload,
   ChatSessionMeta,
   ChatSessionRecord,
@@ -23,11 +24,13 @@ import type { NodeStates } from './nodeStateReducer';
 import { useAgentDocument, type SetGraphOptions } from './useAgentDocument';
 import { useNodeSpans } from './useNodeSpans';
 import { agentRouteId } from '../screens/agents/agentRoute';
+import { useWorkspaces } from '../workspace/WorkspacesProvider';
 import { useAgentStatuses, useAgentStream } from './useAgentStream';
 import { useActiveProfile, useChatControls, useRunControls } from './useAgentControls';
+import { usePins } from './usePins';
 
 type RailTab = 'agents' | 'nodes';
-export type DrawerTab = 'test' | 'logs' | 'trace' | 'output' | 'history' | 'settings';
+export type DrawerTab = 'test' | 'problems' | 'logs' | 'trace' | 'output' | 'history' | 'settings';
 
 interface AppState {
   store: AgentStore;
@@ -64,6 +67,15 @@ interface AppState {
   edges: GraphEdge[];
   /** Graph node id → the id `specToGraph(spec)` gives it today, from the same `graphToSpec` call as `spec`. */
   nodeIdMap: Record<string, string>;
+  /** Graph node id → its spec path (`''` root, `'tools[2]'`, `'subagents.r.inline'`), from the same `graphToSpec` call. */
+  specPaths: Record<string, string>;
+  /**
+   * `validateGraph(graph)` — structural, per-kind and AgentSpec v2 schema
+   * problems — debounced 300 ms behind edits (useAgentDocument). The node
+   * badges, the Inspector's Problems section and the drawer's Problems tab
+   * all read this one list.
+   */
+  problems: Problem[];
   /**
    * The proposal overlay (C21): an Agent Author proposal spec shown on top
    * of the canvas — added nodes dashed, removed faded, changed marked —
@@ -129,8 +141,10 @@ interface AppState {
   agents: AgentListItem[];
   /** False until the first `agents` fetch (and opening the initial agent) has finished, failed included. */
   agentsLoaded: boolean;
-  /** Re-reads the agent list from the server. */
+  /** Re-fetches the saved-agent list from the active workspace (W04b calls it on every workspace switch). */
   refreshAgents: () => Promise<void>;
+  /** The workspace `agents` was fetched for; `undefined` before the first successful fetch (W04b). */
+  agentsWorkspaceId: string | undefined;
   /** Why the last autosave failed; cleared by the next successful save. */
   autosaveError: string | undefined;
   /** Loads a different agent's graph into the canvas - a full state swap, not a visual pan. */
@@ -159,8 +173,27 @@ interface AppState {
   nodeStates: NodeStates;
   /** POSTs the current graph's compiled spec + `input` to `/agents/:id/run`. */
   runAgent: (input: string) => Promise<void>;
-  /** POSTs `/agents/:id/stop` - see runtimeClient.ts/runRegistry.ts for what this can and can't interrupt. */
+  /** POSTs `/agents/:id/abort` - cancels the active run (running or approval-paused); see runtimeClient.ts/runRegistry.ts for what this can and can't interrupt. */
   stopAgent: () => Promise<void>;
+  /**
+   * The tool results pinned from a node's spans sheet (T04 "run from
+   * here"): sent as `pins` on the next `runFromHere()` only - chat turns
+   * and plain `runAgent()` calls never carry them.
+   */
+  pins: ToolPin[];
+  /** Adds `pin` to `pins`, or removes the pin with the same node/tool/args key when already pinned. */
+  togglePin: (pin: ToolPin) => void;
+  /** Drops every pin (the spans sheet's clear action). */
+  clearPins: () => void;
+  /** True when a pin with `pin`'s node/tool/args key is in `pins`. */
+  isPinned: (pin: ToolPin) => boolean;
+  /**
+   * "Run from here": re-runs the agent with the newest user chat message
+   * as input and `pins` replayed (pinned tool calls return their recorded
+   * result instead of executing). Closes the spans sheet and switches the
+   * drawer to the Test tab. No-op without a user message or while running.
+   */
+  runFromHere: () => Promise<void>;
   /** Resolves the run's current pending approval, if any, via `/agents/:id/approve`. */
   approveAgent: (approved: boolean, note?: string) => Promise<void>;
   /** Pushes `message` into the live run's input queue via `/agents/:id/steer`; rejects when nothing is running (or a flow run). */
@@ -314,6 +347,7 @@ function agentActionsClearing(doc: AgentDocument, hideProposal: () => void) {
   };
 }
 
+// fallow-ignore-next-line complexity
 export function AppStateProvider({ children }: { children: ReactNode }) {
   // Agents live in the server workspace (.lousho/agents/), not the browser.
   const store = useMemo(() => new HttpAgentStore(runtimeClient), []);
@@ -323,12 +357,35 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [initialAgentId] = useState(() => agentRouteId(window.location.hash));
   const doc = useAgentDocument(store, initialAgentId);
   const { agentId, spec } = doc;
+  // W04b: the saved-agent list is per workspace - refetch it whenever the
+  // active workspace changes (the URL's `#/w/<id>/…`, else the launch id).
+  // useAgentRouteSync then re-judges the URL against the fresh list and
+  // opens the agent it names (with the usual unsaved-changes guard).
+  const { activeId } = useWorkspaces();
+  const workspaceSeen = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (activeId === undefined) return;
+    if (workspaceSeen.current === activeId) return;
+    workspaceSeen.current = activeId;
+    void doc.refreshAgents();
+  }, [activeId]);
   const nodeSpans = useNodeSpans();
   const overlay = useProposalOverlay(doc);
   const { saveVersion, latestVersionRef } = useSaveVersion(doc);
   const agentStatuses = useAgentStatuses(doc.agents);
   const stream = useAgentStream(agentId);
   const run = useRunControls({ agentId, spec, ...stream });
+  const pinsState = usePins({
+    agentId,
+    spec,
+    chat: stream.chat,
+    runStatus: stream.runStatus,
+    setLogs: stream.setLogs,
+    setSpans: stream.setSpans,
+    setNodeStates: stream.setNodeStates,
+    closeNodeSpans: nodeSpans.closeNodeSpans,
+    setDrawerTab,
+  });
   const chatControls = useChatControls({ agentId, spec, ...stream });
   const { activeProfile, refreshActiveProfile } = useActiveProfile();
 
@@ -352,6 +409,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     }),
     ...nodeSpans,
     ...run,
+    ...pinsState,
     agentStatuses,
     ...stream,
     ...chatControls,

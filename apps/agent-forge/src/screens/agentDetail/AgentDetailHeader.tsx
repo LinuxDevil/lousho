@@ -3,7 +3,10 @@ import { CircleAlert, CircleCheck, CircleDashed, Clock, Cpu, Play, Wrench, Zap, 
 
 import type { AgentRecord, Requirement } from '../../../shared/wireTypes';
 import { fmtAge } from '../../observe/format';
-import { agentTabItems, agentTabPath, type AgentTab } from '../agents/agentTabs';
+import { agentListPath, agentTabItems, agentTabPath, type AgentTab } from '../agents/agentTabs';
+import { activeWorkspace } from '../../workspace/activeWorkspace';
+import { PublishStatePill } from '../../components/PublishPill';
+import { usePendingDraftCount } from '../../state/usePendingDraftCount';
 import { AgentTile } from '../../ui/AgentTile';
 import { StatusBadge } from '../../ui/StatusBadge';
 import { Tabs } from '../../ui/Tabs';
@@ -102,6 +105,11 @@ export interface AgentDetailHeaderProps {
   labelsItem?: ReactNode;
   /** Notices under the facts row (A09's auto-disable notice). */
   notices?: ReactNode;
+  /**
+   * W11c: the read-only workspace's banner text - the Test link renders
+   * disabled with it as `title` (runs would be refused anyway).
+   */
+  readOnlyTitle?: string;
 }
 
 /**
@@ -110,20 +118,22 @@ export interface AgentDetailHeaderProps {
  * actions row (enabled state, Test, overflow menu), the facts row and the
  * tab strip with the readiness chips pinned right.
  */
-export function AgentDetailHeader({ record, tab, menu, enabledControl, labelsItem, notices }: AgentDetailHeaderProps): JSX.Element {
+export function AgentDetailHeader({ record, tab, menu, enabledControl, labelsItem, notices, readOnlyTitle }: AgentDetailHeaderProps): JSX.Element {
   const { id, spec, meta } = record;
   const [expanded, setExpanded] = useState(false);
   const description = spec.description ?? '';
   const canExpand = description.length > 140 || description.includes('\n');
   const name = spec.name;
   const facts = headerFacts(record, Date.now());
+  // The Suggestions tab's pending-draft badge (L11b).
+  const draftCount = usePendingDraftCount(id);
 
   return (
     <header className="agent-detail-header">
       <nav className="page-header-crumbs" aria-label="Breadcrumb">
         <ol>
           <li>
-            <a href="#/agents">Agents</a>
+            <a href={`#${agentListPath(activeWorkspace())}`}>Agents</a>
           </li>
           <li aria-hidden="true">
             <span className="page-header-crumb-sep">›</span>
@@ -159,10 +169,18 @@ export function AgentDetailHeader({ record, tab, menu, enabledControl, labelsIte
         </div>
         <div className="agent-detail-actions">
           {enabledControl ?? <StatusBadge status={meta.enabled ? 'enabled' : 'disabled'} />}
-          <a className="btn btn-primary btn-sm" href={`#${agentTabPath(id, 'canvas')}?test=1`}>
-            <Play size={14} strokeWidth={1.75} aria-hidden="true" />
-            Test
-          </a>
+          <PublishStatePill state={record.publishState} />
+          {readOnlyTitle === undefined ? (
+            <a className="btn btn-primary btn-sm" href={`#${agentTabPath(id, 'canvas')}?test=1`}>
+              <Play size={14} strokeWidth={1.75} aria-hidden="true" />
+              Test
+            </a>
+          ) : (
+            <button type="button" className="btn btn-primary btn-sm" disabled title={readOnlyTitle}>
+              <Play size={14} strokeWidth={1.75} aria-hidden="true" />
+              Test
+            </button>
+          )}
           {menu}
         </div>
       </div>
@@ -178,7 +196,7 @@ export function AgentDetailHeader({ record, tab, menu, enabledControl, labelsIte
       </ul>
       {notices}
       <div className="agent-detail-tabs">
-        <Tabs label="Agent" currentId={tab} items={agentTabItems(id)} trailing={<ReadinessChips requirements={record.requirements} agentId={id} />} />
+        <Tabs label="Agent" currentId={tab} items={agentTabItems(id, { suggestions: draftCount })} trailing={<ReadinessChips requirements={record.requirements} agentId={id} />} />
       </div>
     </header>
   );

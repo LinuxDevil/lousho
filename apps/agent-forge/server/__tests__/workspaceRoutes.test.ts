@@ -12,7 +12,7 @@ import { FileCheckpointStore } from '../checkpointStore';
 import { FileApprovalStore } from '../approvalStore';
 import { createFsAgentStore } from '../../src/persistence/fsAgentStore';
 import { AgentRepo } from '../storage/agentRepo';
-import type { WorkspaceList } from '../../shared/wireTypes';
+import type { WorkspaceList, WorkspaceListItem } from '../../shared/wireTypes';
 import { workspaceIdFor } from '../workspace/workspaceId';
 import { WorkspaceRegistry } from '../workspace/workspaceRegistry';
 
@@ -89,6 +89,70 @@ describe('/workspaces routes', () => {
     expect((await request(app).delete(`/workspaces/${launchId}`)).status).toBe(401);
   });
 
+  it('GET /workspaces answers the launch workspace with defaultId, JSON even in prod mode', async () => {
+    const res = await authed(request(app).get('/workspaces'));
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/application\/json/);
+    const list = res.body as WorkspaceList;
+    expect(list.defaultId).toBe(launchId);
+    expect(list.workspaces).toHaveLength(1);
+    expect(list.workspaces[0]).toMatchObject({
+      id: launchId,
+      isLaunch: true,
+      available: true,
+      agentCount: 0,
+    });
+  });
+
+  it('GET /workspaces sorts by name (case-insensitive), then id', async () => {
+    const zulu = workspaceFolder('Zulu');
+    const alpha = workspaceFolder('alpha');
+    await registry.add(zulu);
+    await registry.add(alpha);
+    const res = await authed(request(app).get('/workspaces'));
+    expect(res.status).toBe(200);
+    const names = (res.body as WorkspaceList).workspaces.map((w) => w.name);
+    expect(names).toEqual([...names].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())));
+    expect(names.indexOf('alpha')).toBeLessThan(names.indexOf('Zulu'));
+  });
+
+  it('POST /workspaces adds a folder and answers its WorkspaceListItem (201)', async () => {
+    const b = workspaceFolder('beta', ['one', 'two']);
+    const res = await authed(request(app).post('/workspaces').send({ root: b }));
+    expect(res.status).toBe(201);
+    const item = res.body as WorkspaceListItem;
+    expect(item).toMatchObject({
+      id: workspaceIdFor(b),
+      name: 'beta',
+      isLaunch: false,
+      available: true,
+      agentCount: 2,
+    });
+    expect((await registry.list()).map((r) => r.id)).toContain(item.id);
+  });
+
+  it('GET /workspaces items carry observeProject - the package.json name, else default (W09a)', async () => {
+    const savedEnv = process.env.LOUSHO_OBSERVE_PROJECT;
+    delete process.env.LOUSHO_OBSERVE_PROJECT;
+    try {
+      const named = workspaceFolder('named');
+      fs.writeFileSync(path.join(named, 'package.json'), JSON.stringify({ name: 'named-pkg' }));
+      const plain = workspaceFolder('plain');
+      await registry.add(named);
+      await registry.add(plain);
+      const res = await authed(request(app).get('/workspaces'));
+      expect(res.status).toBe(200);
+      const items = (res.body as WorkspaceList).workspaces;
+      expect(items.find((w) => w.root === named)?.observeProject).toBe('named-pkg');
+      expect(items.find((w) => w.root === plain)?.observeProject).toBe('default');
+      // The launch folder has no package.json either.
+      expect(items.find((w) => w.id === launchId)?.observeProject).toBe('default');
+    } finally {
+      if (savedEnv === undefined) delete process.env.LOUSHO_OBSERVE_PROJECT;
+      else process.env.LOUSHO_OBSERVE_PROJECT = savedEnv;
+    }
+  });
+
   it('POST /workspaces of a registered folder answers 409 LOUSHO_WORKSPACE_EXISTS (also with a trailing separator)', async () => {
     const b = workspaceFolder('beta');
     const first = await authed(request(app).post('/workspaces').send({ root: b }));
@@ -105,6 +169,16 @@ describe('/workspaces routes', () => {
     expect(launch.status).toBe(409);
     expect(launch.body.code).toBe('LOUSHO_WORKSPACE_EXISTS');
     expect(launch.body.details).toEqual({ id: launchId });
+  });
+
+  it.each([
+    ['a relative path', { root: path.join('some', 'relative') }, 'LOUSHO_WORKSPACE_ROOT_INVALID'],
+    ['an empty root', { root: '  ' }, 'LOUSHO_WORKSPACE_ROOT_INVALID'],
+    ['a missing root', {}, 'LOUSHO_WORKSPACE_ROOT_INVALID'],
+  ])('POST /workspaces rejects %s with 400 %s', async (_label, body, code) => {
+    const res = await authed(request(app).post('/workspaces').send(body));
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe(code);
   });
 
   it('POST /workspaces rejects a missing folder (400 LOUSHO_WORKSPACE_ROOT_MISSING) and a file (400 LOUSHO_WORKSPACE_ROOT_NOT_DIR)', async () => {

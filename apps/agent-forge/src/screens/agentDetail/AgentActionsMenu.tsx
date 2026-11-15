@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Copy, Download, Sparkles, Trash2 } from 'lucide-react';
+import { Copy, FileDown, Sparkles, Trash2 } from 'lucide-react';
 
 import { openAuthor } from '../../author/authorEntry';
 import type { AgentRecord } from '../../../shared/wireTypes';
@@ -7,17 +7,18 @@ import { navigate } from '../../router/router';
 import { runtimeClient } from '../../runtime/runtimeClient';
 import { useAppState } from '../../state/AppState';
 import { errorMessage } from '../../components/errorMessage';
-import { downloadYaml } from '../../persistence/importExport';
 import { ConfirmDialog } from '../../ui/Dialog';
 import { Menu, type MenuEntry } from '../../ui/Menu';
 import { useToast } from '../../ui/Toast';
-import { agentTabPath } from '../agents/agentTabs';
+import { agentListPath, agentTabPath } from '../agents/agentTabs';
+import { activeWorkspace } from '../../workspace/activeWorkspace';
+import { ExportSheet } from './export/ExportSheet';
 
 /**
  * The detail header's overflow menu (PLAN §11, A12): Change with AI (AA19's
  * Author entry point focused on this agent), Duplicate (a
- * `POST /agents { from: { copyOf } }` copy that opens its Overview), Export
- * YAML (a client-side `<a download>` of the spec until L07's export sheet)
+ * `POST /agents { from: { copyOf } }` copy that opens its canvas), Export…
+ * (L09b's export sheet: format pick, portability check, adapted download)
  * and Delete agent… behind a ConfirmDialog. Passed to `AgentDetailHeader`'s
  * `menu` prop by `AgentDetailRoute`.
  */
@@ -26,6 +27,7 @@ export function AgentActionsMenu({ record }: { record: AgentRecord }): JSX.Eleme
   const toast = useToast();
   const { agentId, switchAgent } = useAppState();
   const [duplicating, setDuplicating] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | undefined>(undefined);
@@ -36,20 +38,17 @@ export function AgentActionsMenu({ record }: { record: AgentRecord }): JSX.Eleme
   async function duplicate(): Promise<void> {
     setDuplicating(true);
     try {
-      const copy = await runtimeClient.createAgentRecord({ from: { copyOf: id } });
-      toast.show({ message: `Duplicated as “${copy.spec.name}”`, tone: 'success' });
-      navigate(agentTabPath(copy.id, 'overview'));
+      const copy = await runtimeClient.duplicateAgent(id);
+      toast.show({
+        message: `Made a copy: ${copy.spec.name}. It is off until you turn it on.`,
+        tone: 'success',
+      });
+      navigate(agentTabPath(copy.id, 'canvas'));
     } catch (error) {
-      toast.show({ message: errorMessage(error), tone: 'error' });
+      toast.show({ message: `Couldn't duplicate: ${errorMessage(error)}`, tone: 'error' });
     } finally {
       setDuplicating(false);
     }
-  }
-
-  function exportYaml(): void {
-    const filename = `${id}.yaml`;
-    downloadYaml(spec, filename);
-    toast.show({ message: `Exported ${filename}`, tone: 'success' });
   }
 
   async function confirmDelete(): Promise<void> {
@@ -61,7 +60,7 @@ export function AgentActionsMenu({ record }: { record: AgentRecord }): JSX.Eleme
       // The builder must not keep the deleted agent open; 'untitled-agent' is the document's fresh default.
       if (agentId === id) await switchAgent('untitled-agent');
       // Navigate before the toast so the detail screen unmounts without refetching the deleted record.
-      navigate('/agents');
+      navigate(agentListPath(activeWorkspace()));
       toast.show({ message: 'Agent deleted', tone: 'success' });
       setConfirmOpen(false);
     } catch (error) {
@@ -90,11 +89,11 @@ export function AgentActionsMenu({ record }: { record: AgentRecord }): JSX.Eleme
     },
     {
       id: 'export',
-      label: 'Export YAML',
-      icon: Download,
+      label: 'Export…',
+      icon: FileDown,
       disabled: busyReason !== undefined,
       disabledReason: busyReason,
-      onSelect: exportYaml,
+      onSelect: () => setExportOpen(true),
     },
     { id: 'sep-actions', separator: true },
     {
@@ -114,6 +113,12 @@ export function AgentActionsMenu({ record }: { record: AgentRecord }): JSX.Eleme
   return (
     <>
       <Menu label="More actions" items={items} />
+      <ExportSheet
+        agentId={id}
+        agentName={spec.name}
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+      />
       <ConfirmDialog
         open={confirmOpen}
         title={`Delete “${spec.name}”?`}

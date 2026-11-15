@@ -5,10 +5,10 @@ import type { AgentRecord, Requirement, TraceSummaryPayload } from '../../../../
 import { render } from '../../../ui/__tests__/render';
 import type { AgentSpecV2 } from 'lousho/spec';
 
-const mocks = vi.hoisted(() => ({ listTraces: vi.fn() }));
+const mocks = vi.hoisted(() => ({ listTraces: vi.fn(), channelTriggerStatus: vi.fn() }));
 
 vi.mock('../../../runtime/runtimeClient', () => ({
-  runtimeClient: { listTraces: mocks.listTraces },
+  runtimeClient: { listTraces: mocks.listTraces, channelTriggerStatus: mocks.channelTriggerStatus },
 }));
 
 import { AgentDetailContext } from '../AgentDetailContext';
@@ -28,7 +28,7 @@ function meta(): AgentRecord['meta'] {
   };
 }
 
-function record(over: { spec?: Partial<AgentSpecV2>; requirements?: Requirement[] } = {}): AgentRecord {
+function record(over: { spec?: Partial<AgentSpecV2>; requirements?: Requirement[]; meta?: Partial<AgentRecord['meta']> } = {}): AgentRecord {
   return {
     id: 'support-bot',
     spec: {
@@ -38,10 +38,11 @@ function record(over: { spec?: Partial<AgentSpecV2>; requirements?: Requirement[
       instructions: 'Be helpful.',
       ...over.spec,
     } as AgentSpecV2,
-    meta: meta(),
+    meta: { ...meta(), ...over.meta },
     layout: { schemaVersion: 1, nodes: {}, notes: [] },
     updatedAt: '2026-10-29T10:00:00Z',
     latestVersion: null,
+    publishState: { version: null, matchesWorkingCopy: false, publishedAt: null },
     requirements: over.requirements,
   };
 }
@@ -100,9 +101,38 @@ function rowText(cardEl: HTMLElement, label: string): string {
 beforeEach(() => {
   mocks.listTraces.mockReset();
   mocks.listTraces.mockResolvedValue([]);
+  mocks.channelTriggerStatus.mockReset();
+  mocks.channelTriggerStatus.mockResolvedValue([]);
 });
 
 describe('AgentOverviewTab', () => {
+  it('shows the missing-requirements banner with a Settings link', async () => {
+    const requirements: Requirement[] = [
+      { id: 'provider:anthropic', kind: 'provider_key', status: 'missing', label: 'Anthropic API key' },
+      { id: 'model:x', kind: 'model', status: 'ok', label: 'Model x' },
+    ];
+    const host = renderTab(record({ requirements }));
+    await flush();
+
+    const banner = host.querySelector('.agent-overview-banner')!;
+    expect(banner.getAttribute('role')).toBe('status');
+    expect(banner.textContent).toContain('This agent can’t run yet: Anthropic API key.');
+    const link = banner.querySelector<HTMLAnchorElement>('a.btn')!;
+    expect(link.textContent).toBe('Open settings');
+    expect(link.getAttribute('href')).toBe('#/settings');
+  });
+
+  it('hides the banner when nothing is missing or requirements are absent', async () => {
+    const ok = renderTab(
+      record({ requirements: [{ id: 'm', kind: 'model', status: 'ok', label: 'Model' }] }),
+    );
+    await flush();
+    expect(ok.querySelector('.agent-overview-banner')).toBeNull();
+
+    const absent = renderTab(record());
+    await flush();
+    expect(absent.querySelector('.agent-overview-banner')).toBeNull();
+  });
 
   it('shows the six capability rows, with None for empty sections', async () => {
     const host = renderTab(
@@ -136,12 +166,105 @@ describe('AgentOverviewTab', () => {
     const items = triggersCard.querySelectorAll('.agent-overview-list li');
     expect(items.length).toBe(5);
     expect(items[1].textContent).toContain('Cron · 0 9 * * 1-5 · UTC');
+    // Webhook triggers show their public URL with a Copy button (R08a).
+    expect(items[2].querySelector('.agent-overview-webhook code')?.textContent).toBe(
+      `${window.location.origin}/hooks/support-bot/gh`,
+    );
+    expect(items[2].querySelector('.agent-overview-webhook button')?.textContent).toBe('Copy');
 
     const emptyHost = renderTab(record({ spec: { triggers: [] } }));
     await flush();
     expect(card(emptyHost, 'Triggers').textContent).toContain(
       'No triggers. Runs start from the Test pane or chat.',
     );
+  });
+
+  it('shows a channel trigger URL, its mount error, and the Runs/Traces note (R08b)', async () => {
+    mocks.channelTriggerStatus.mockResolvedValue([
+      {
+        triggerId: 't4',
+        channel: 'github',
+        url: '/hooks/support-bot/channel/github',
+        error: 'Channel github needs token',
+      },
+    ]);
+    const triggers: AgentSpecV2['triggers'] = [
+      { id: 't4', type: 'channel', channel: 'github', secrets: {} },
+    ];
+    const host = renderTab(record({ spec: { triggers } }));
+    await flush();
+    await flush();
+
+    expect(mocks.channelTriggerStatus).toHaveBeenCalledWith('support-bot');
+    const triggersCard = card(host, 'Triggers');
+    const item = triggersCard.querySelector('.agent-overview-list li')!;
+    expect(item.querySelector('.agent-overview-webhook code')?.textContent).toBe(
+      `${window.location.origin}/hooks/support-bot/channel/github`,
+    );
+    expect(item.querySelector('.agent-overview-channel-error')?.textContent).toBe(
+      'Channel github needs token',
+    );
+    expect(triggersCard.textContent).toContain('Channel runs show up in Runs and Traces.');
+  });
+
+  it('shows the off note on the Triggers card for a disabled agent with firable triggers (R09)', async () => {
+    const triggers: AgentSpecV2['triggers'] = [
+      { id: 't1', type: 'chat' },
+      { id: 't2', type: 'cron', cron: '0 9 * * *', prompt: 'x' },
+    ];
+    const host = renderTab(record({ spec: { triggers }, meta: { enabled: false } }));
+    await flush();
+
+    const note = card(host, 'Triggers').querySelector('.triggers-off-note');
+    expect(note?.textContent).toBe("Off — triggers won't fire. Turn the agent on to start them.");
+  });
+
+  it('shows the auto-disabled copy when the streak turned the agent off (R09)', async () => {
+    const triggers: AgentSpecV2['triggers'] = [{ id: 't2', type: 'cron', cron: '0 9 * * *', prompt: 'x' }];
+    const host = renderTab(
+      record({ spec: { triggers }, meta: { enabled: false, disabledReason: 'auto_failure_streak' } }),
+    );
+    await flush();
+
+    expect(card(host, 'Triggers').querySelector('.triggers-off-note')?.textContent).toBe(
+      'Turned off after 5 failed triggered runs in a row. Fix the cause, then turn it back on.',
+    );
+  });
+
+  it('hides the off note for an enabled agent or one with only a chat trigger (R09)', async () => {
+    const cron: AgentSpecV2['triggers'] = [{ id: 't2', type: 'cron', cron: '0 9 * * *', prompt: 'x' }];
+    const enabled = renderTab(record({ spec: { triggers: cron } }));
+    await flush();
+    expect(card(enabled, 'Triggers').querySelector('.triggers-off-note')).toBeNull();
+
+    const chatOnly = renderTab(
+      record({ spec: { triggers: [{ id: 't1', type: 'chat' }] }, meta: { enabled: false } }),
+    );
+    await flush();
+    expect(card(chatOnly, 'Triggers').querySelector('.triggers-off-note')).toBeNull();
+  });
+
+  it('shows permission-rule counts by action in the Safety card', async () => {
+    const host = renderTab(
+      record({
+        spec: {
+          permissions: [
+            { id: 'p1', tool: 'github_*', action: 'ask' },
+            { id: 'p2', tool: '*', action: 'ask' },
+            { id: 'p3', tool: 'rm', action: 'deny' },
+          ],
+        },
+      }),
+    );
+    await flush();
+    expect(rowText(card(host, 'Safety'), 'Permission rules')).toBe('1 deny · 2 ask');
+  });
+
+  it('shows a skeleton status while runs load', async () => {
+    mocks.listTraces.mockReturnValue(new Promise(() => {}));
+    const host = renderTab();
+    await flush();
+    expect(card(host, 'Recent runs').querySelector('[role="status"]')?.textContent).toBe('Loading');
   });
 
   it('links each recent run to its trace', async () => {
@@ -157,6 +280,18 @@ describe('AgentOverviewTab', () => {
     expect(links[0].querySelector('.agent-overview-run-name')?.textContent).toBe('Run t-1');
   });
 
+  it('shows the empty copy and a Test pane link when there are no runs', async () => {
+    const host = renderTab();
+    await flush();
+
+    const runsCard = card(host, 'Recent runs');
+    expect(runsCard.textContent).toContain('No runs yet. Try it from the Test pane.');
+    const link = [...runsCard.querySelectorAll<HTMLAnchorElement>('a.btn')].find(
+      (a) => a.textContent === 'Open Test pane',
+    )!;
+    expect(link.getAttribute('href')).toBe('#/agents/support-bot/canvas?test=1');
+  });
+
   it('shows a retryable error when the run list fails', async () => {
     mocks.listTraces.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce([trace('t-9')]);
     const host = renderTab();
@@ -170,5 +305,13 @@ describe('AgentOverviewTab', () => {
 
     expect(mocks.listTraces).toHaveBeenCalledTimes(2);
     expect(runsCard.querySelectorAll('a.agent-overview-run').length).toBe(1);
+  });
+
+  it('links All runs to the runs tab now that it is built', async () => {
+    const host = renderTab();
+    await flush();
+    const runsCard = card(host, 'Recent runs');
+    const link = [...runsCard.querySelectorAll<HTMLAnchorElement>('a')].find((a) => a.textContent === 'All runs');
+    expect(link?.getAttribute('href')).toBe('#/agents/support-bot/runs');
   });
 });

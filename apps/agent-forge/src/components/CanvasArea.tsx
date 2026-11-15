@@ -40,7 +40,7 @@ import { orderedNodes } from '../graph/v2/order';
 import { deriveEdges } from '../graph/v2/edges';
 import { proposalCounts } from '../graph/v2/proposal';
 import { toolNodeName } from '../graph/v2/nodeIds';
-import type { Graph, GraphEdge, GraphNode, ToolNodeData } from '../graph/v2/types';
+import type { Graph, GraphEdge, GraphNode, Problem, ToolNodeData } from '../graph/v2/types';
 import { ROOT_AGENT_ID, ROOT_ONLY_KINDS } from '../graph/v2/types';
 import { KIND_VIEWS, type PaletteEntry } from '../canvas/kinds';
 import { applyLayoutResult, autoLayout } from '../canvas/layout';
@@ -70,10 +70,10 @@ function hasBreakpointOn(n: GraphNode, breakpoints: string[]): boolean {
  * `dimensions` changes React Flow reports must be fed back as `measured` -
  * without it the MiniMap has no node sizes and draws nothing.
  */
-type MeasuredSizes = Record<string, { width: number; height: number }>;
+export type MeasuredSizes = Record<string, { width: number; height: number }>;
 
-/** Folds a batch of `dimensions` changes into the measured-size map (same object when nothing changed). */
-function applyDimensionChanges(prev: MeasuredSizes, changes: NodeChange[]): MeasuredSizes {
+/** Folds a batch of `dimensions` changes into the measured-size map (same object when nothing changed). Exported for X06b's read-only canvas. */
+export function applyDimensionChanges(prev: MeasuredSizes, changes: NodeChange[]): MeasuredSizes {
   let next = prev;
   for (const change of changes) {
     if (change.type !== 'dimensions' || !change.dimensions) continue;
@@ -85,14 +85,22 @@ function applyDimensionChanges(prev: MeasuredSizes, changes: NodeChange[]): Meas
   return next;
 }
 
-/** What each card shows beyond its own graph node: selection, highlight, breakpoints and run status. */
+/** What each card shows beyond its own graph node: selection, highlight, breakpoints, run status and validation problems. */
 interface NodeDecor {
   selectedNodeId: string | undefined;
   highlightedNodeId: string | undefined;
   breakpoints: string[];
   statuses: Record<string, NodeRunStatus>;
+  /** This node's validation problems by node id (`validateGraph`, C19). */
+  problems?: ReadonlyMap<string, Problem[]>;
   /** Opens the node spans sheet for a card's status pill (AppState.openNodeSpans). */
   openNodeSpans?: (nodeId: string) => void;
+  /** Node ids with a pinned tool result (T04); their cards show the Pin badge. */
+  pinnedNodeIds?: ReadonlySet<string>;
+  /** `meta.enabled` of the open agent (R09); false dims non-chat trigger nodes. Absent reads enabled. */
+  agentEnabled?: boolean;
+  /** X06b: the canvas does not own this graph — node affordances that write through AppState stay disabled. */
+  readOnly?: boolean;
 }
 
 /** True when an `owner`-chain ancestor of `node` is a collapsed agent group. */
@@ -184,7 +192,7 @@ function groupSizes(graph: Graph, measured: MeasuredSizes): Map<string, { width:
  * the parent React Flow would re-lay them at absolute coordinates).
  */
 export function toRfNodes(graph: Graph, decor: NodeDecor, measured: MeasuredSizes = {}): Node<CanvasNodeData>[] {
-  const { selectedNodeId, highlightedNodeId, breakpoints, statuses, openNodeSpans } = decor;
+  const { selectedNodeId, highlightedNodeId, breakpoints, statuses, problems, openNodeSpans, pinnedNodeIds, agentEnabled, readOnly } = decor;
   const sizes = groupSizes(graph, measured);
   return canvasNodeOrder(graph).map((n) => {
     const group = isGroupNode(n);
@@ -205,7 +213,11 @@ export function toRfNodes(graph: Graph, decor: NodeDecor, measured: MeasuredSize
         highlighted: n.id === highlightedNodeId,
         hasBreakpoint: hasBreakpointOn(n, breakpoints),
         status: statuses[n.id],
+        problems: problems?.get(n.id) ?? [],
         onViewSpans: openNodeSpans,
+        pinned: pinnedNodeIds?.has(n.id) === true,
+        agentEnabled,
+        readOnly,
         insideCount: group ? descendantCount(graph, n.id) : undefined,
       },
     };
@@ -220,10 +232,10 @@ function GappedSmoothStepEdge(props: EdgeProps) {
   return <SmoothStepEdge {...props} targetX={props.targetX - ARROW_GAP} />;
 }
 
-const EDGE_TYPES = { gapped: GappedSmoothStepEdge };
+export const EDGE_TYPES = { gapped: GappedSmoothStepEdge };
 
-/** The toolbar's and the Controls' Fit view: the whole graph, never zoomed in past 1:1. */
-const FIT_VIEW_OPTIONS = { padding: 0.15, maxZoom: 1 };
+/** The toolbar's and the Controls' Fit view: the whole graph, never zoomed in past 1:1. Exported for X06b's read-only canvas. */
+export const FIT_VIEW_OPTIONS = { padding: 0.15, maxZoom: 1 };
 
 /**
  * The automatic fits (on load, on resize, after auto layout) stop zooming out
@@ -248,7 +260,7 @@ const AUTO_FIT_PADDING = '32px';
  * builder's ~540px pane at 1280px wide: the fit stopped at 0.5 and cut the
  * trigger off. A whole graph in view beats a zoom floor.
  */
-const MIN_ZOOM = 0.2;
+export const MIN_ZOOM = 0.2;
 
 /**
  * Smoothstep edges ending in a closed arrow. An edge whose source node is
@@ -302,10 +314,15 @@ function applyPositionChanges(graph: Graph, changes: NodeChange[]): Graph {
   return next;
 }
 
-/** The node id selected by the LAST select change in the batch, if any. */
-function lastSelectionChange(changes: NodeChange[]): { id: string; selected: boolean } | undefined {
+/** The node id selected by the LAST select change in the batch, if any. Exported for X06b's read-only canvas. */
+export function lastSelectionChange(changes: NodeChange[]): { id: string; selected: boolean } | undefined {
   const selectChange = [...changes].reverse().find((c) => c.type === 'select');
   return selectChange && selectChange.type === 'select' ? selectChange : undefined;
+}
+
+/** Ids of the React Flow nodes currently `hidden` (inside collapsed groups) - `toRfEdges`' `hiddenNodeIds` argument. */
+export function hiddenRfNodeIds(nodes: readonly { id: string; hidden?: boolean }[]): Set<string> {
+  return new Set(nodes.filter((n) => n.hidden).map((n) => n.id));
 }
 
 /** Auto-clearing "connection rejected" banner message. */
@@ -482,7 +499,8 @@ function useDropHandlers(
         }
         const result = addNode(g, entry.create(g, owner), positionFor(g, position, owner), owner);
         addedId = result.nodeId;
-        return result.graph;
+        // Flow steps link into the step tree here; every other entry ignores it.
+        return entry.afterAdd?.(result.graph, result.nodeId, selectedNodeId) ?? result.graph;
       });
       if (refusal !== undefined) {
         flashError(refusal);
@@ -832,8 +850,8 @@ export function useUndoRedoShortcuts(undo: () => void, redo: () => void) {
   }, [undo, redo]);
 }
 
-/** One icon button of the canvas toolbar: `label` is its accessible name, `tooltip` its title. */
-function ToolbarButton({
+/** One icon button of the canvas toolbar: `label` is its accessible name, `tooltip` its title. Exported for X06b's read-only canvas toolbar (Fit view only). */
+export function ToolbarButton({
   Icon,
   label,
   tooltip,
@@ -1068,6 +1086,7 @@ function useCanvasElements() {
     agentId,
     graph,
     displayGraph,
+    agents,
     proposal,
     hideProposal,
     setGraph,
@@ -1077,7 +1096,9 @@ function useCanvasElements() {
     debugState,
     nodeStates,
     runStatus,
+    problems,
     openNodeSpans,
+    pins,
     undo,
     redo,
     canUndo,
@@ -1093,20 +1114,35 @@ function useCanvasElements() {
     () => nodeRunStatuses(displayGraph.nodes.map((n) => n.id), nodeStates, runStatus),
     [displayGraph, nodeStates, runStatus]
   );
+  // The canvas node ids (`tool:<key>`) carrying at least one pinned tool
+  // result - their cards show the Pin badge (T04).
+  const pinnedNodeIds = useMemo(() => new Set(pins.map((pin) => pin.nodeId)), [pins]);
+  // R09: the list item's `enabled` dims non-chat trigger nodes; an agent
+  // missing from the list (just created, mid-delete) reads enabled.
+  const agentEnabled = useMemo(() => agents.find((a) => a.id === agentId)?.enabled ?? true, [agents, agentId]);
+  const problemsByNode = useMemo(() => {
+    const map = new Map<string, Problem[]>();
+    for (const problem of problems) {
+      const list = map.get(problem.nodeId) ?? [];
+      list.push(problem);
+      map.set(problem.nodeId, list);
+    }
+    return map;
+  }, [problems]);
   const nodes = useMemo(
     () =>
       toRfNodes(
         displayGraph,
-        { selectedNodeId, highlightedNodeId, breakpoints, statuses, openNodeSpans },
+        { selectedNodeId, highlightedNodeId, breakpoints, statuses, problems: problemsByNode, openNodeSpans, pinnedNodeIds, agentEnabled },
         measured
       ),
-    [displayGraph, selectedNodeId, highlightedNodeId, breakpointsKey, statuses, openNodeSpans, measured]
+    [displayGraph, selectedNodeId, highlightedNodeId, breakpointsKey, statuses, problemsByNode, openNodeSpans, pinnedNodeIds, agentEnabled, measured]
   );
   const [selectedEdgeId, setSelectedEdgeId] = useAgentEdgeSelection(agentId);
   // Edges derive from the DISPLAY graph so proposal nodes are wired in;
   // `includeRemoved` keeps a removed node's edges drawn (faded) too.
   const edges = useMemo(() => {
-    const hiddenNodeIds = new Set(nodes.filter((n) => n.hidden).map((n) => n.id));
+    const hiddenNodeIds = hiddenRfNodeIds(nodes);
     const proposed = new Map(
       displayGraph.nodes.filter((n) => n.proposed !== undefined).map((n) => [n.id, n.proposed] as const)
     );

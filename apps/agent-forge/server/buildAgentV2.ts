@@ -39,16 +39,21 @@ import {
   type AgentHook,
   type AgentSpecV2,
   type ApprovalStore,
+  type AutoApprovalDecision,
   type CheckpointStore,
   type SimpleAgent,
+  type SessionStore,
   type SpecHost,
   type ToolDescriptor,
   type TraceExporter,
 } from 'lousho';
 import type { AgentFlow } from 'lousho/flows';
+import { studioAutoApprover } from './autoApproval';
 import { asAgentFlow, LOCAL_TOOLS, resolveProviderForModel } from './buildAgent';
 import type { FileApprovalStore } from './approvalStore';
+import type { SpendLog } from './passes/spendLog';
 import { isSecretProvider, PROVIDER_KEY_ENV, type SecretsStore } from './secretsStore';
+import type { SettingsStore } from './settingsStore';
 
 /**
  * What a Studio workspace hands `buildRunnableAgent`: the workspace root
@@ -63,6 +68,21 @@ export interface StudioRunDeps {
   checkpointStore: CheckpointStore;
   approvalStore: FileApprovalStore;
   secretsStore?: SecretsStore;
+  /**
+   * The Studio-global stores auto-approval needs (R01b): `settings` for the
+   * `autoApprovalModel`/`auto_approval` switches, `spend` for the per-decision
+   * `auto_approval` PassRecord. Both absent → `action: 'auto'` rules behave
+   * as plain `ask`.
+   */
+  settings?: SettingsStore;
+  spend?: SpendLog;
+  /**
+   * The store the built agent keeps chat sessions in (createAgent's
+   * `store.sessions`, X02a): absent → sessions live in memory only, which
+   * is right for one-shot runs but wrong for the `/serve/<id>` surface,
+   * whose callers resume sessions across requests and restarts.
+   */
+  sessions?: SessionStore;
 }
 
 /** The per-run wiring that is not part of the spec: event sink, trace exporter and Studio-appended hooks. */
@@ -72,6 +92,8 @@ export interface RunWiring {
   captureContent?: boolean;
   /** Appended after the spec's own hooks (the step-debugger's `agentHooks()`). */
   extraHooks?: readonly AgentHook[];
+  /** One callback per auto-approval decision (R01b); RunManager turns it into the Logs-tab row. */
+  onAutoApproval?: (decision: AutoApprovalDecision) => void;
 }
 
 /** What `buildRunnableAgent` returns: the built agent plus the side data RunManager/the status payload need. */
@@ -166,6 +188,16 @@ function mergeLocalTools(configTools: unknown, localTools: Record<string, ToolDe
   return { ...base, ...localTools };
 }
 
+/** Seeds the stored provider key into its env var for the compile; `restore` puts it back. */
+function seedProviderKeyEnv(providerType: string, secretsStore: StudioRunDeps['secretsStore']): { envVar?: string; restore: () => void } {
+  if (!isSecretProvider(providerType)) return { restore: () => {} };
+  const envVar = PROVIDER_KEY_ENV[providerType];
+  const stored = process.env[envVar] === undefined ? secretsStore?.getKey(providerType) : undefined;
+  if (stored === undefined) return { envVar, restore: () => {} };
+  process.env[envVar] = stored;
+  return { envVar, restore: () => delete process.env[envVar] };
+}
+
 /**
  * Compiles `spec` into a ready `SimpleAgent` (see the file doc comment).
  * The spec is taken as already validated; a build problem (unknown tool
@@ -194,11 +226,21 @@ export async function buildRunnableAgent(
 ): Promise<RunnableAgent> {
   const spec = withWorkspaceRoots(savedSpec, deps.baseDir);
   const approvals = scopedApprovalStore(deps.approvalStore, agentId);
+  const autoApprover =
+    deps.settings !== undefined && deps.spend !== undefined
+      ? studioAutoApprover({ settings: deps.settings, secretsStore: deps.secretsStore, spend: deps.spend, agentId })
+      : undefined;
   const host: SpecHost = {
     baseDir: path.join(deps.baseDir, '.lousho', 'agents'),
     resolveSecret: (name) => deps.secretsStore?.getSecret(name),
     exporter: wiring.exporter,
-    store: { checkpoints: deps.checkpointStore, approvals },
+    store: {
+      checkpoints: deps.checkpointStore,
+      approvals,
+      ...(deps.sessions !== undefined && { sessions: deps.sessions }),
+    },
+    ...(autoApprover !== undefined && { autoApprover }),
+    ...(wiring.onAutoApproval !== undefined && { onAutoApproval: wiring.onAutoApproval }),
   };
 
   const { spec: compilable, localTools } = splitLocalTools(spec);
@@ -213,16 +255,7 @@ export async function buildRunnableAgent(
   // whose model is 'anthropic/claude-x' gets the 'claude' tail; a
   // stand-in model would drop or mis-pick it).
   const providerType = spec.model.slice(0, spec.model.indexOf('/')).toLowerCase();
-  let envVar: string | undefined;
-  let seeded = false;
-  if (isSecretProvider(providerType)) {
-    envVar = PROVIDER_KEY_ENV[providerType];
-    const stored = process.env[envVar] === undefined ? deps.secretsStore?.getKey(providerType) : undefined;
-    if (stored !== undefined) {
-      process.env[envVar] = stored;
-      seeded = true;
-    }
-  }
+  const seeded = seedProviderKeyEnv(providerType, deps.secretsStore);
   let compiled;
   try {
     // compileSpecWithNodeIds applies specV2ToAgent's S20 wiring: the run's
@@ -237,7 +270,7 @@ export async function buildRunnableAgent(
       toolNamesByRef: (c) => toolNamesByRefForIndex(spec, compilable, c.toolNamesByRef),
     });
   } finally {
-    if (seeded && envVar !== undefined) delete process.env[envVar];
+    seeded.restore();
   }
   const { config } = compiled;
   // The compiled provider is Studio's (stored keys over env). With a provider

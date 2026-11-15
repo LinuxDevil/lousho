@@ -11,6 +11,8 @@ import type {
   AddWorkspaceRequest,
   AgentListItem,
   AgentMeta,
+  AllAgentsResponse,
+  AllEventsFrame,
   AgentRecord,
   AgentRunStatusPayload,
   CanvasLayout,
@@ -24,22 +26,43 @@ import type {
   ChatSessionMeta,
   ChatSessionRecord,
   ChatStatePayload,
+  CodeAgentSpecResponse,
+  CollectorStatus,
+  CollectorUpdate,
   CreateAgentRequest,
   CreateDraftRequest,
   DebugStatePayload,
+  DraftView,
   DeployResult,
   ForkRunRequest,
   ForkRunResponse,
+  ImportPreview,
+  ImportRequest,
+  InboxCount,
+  InboxItem,
   McpProbeRequest,
   McpProbeResponse,
+  ChannelTriggerStatus,
+  PassSettings,
+  PassSettingsPatch,
+  PassSpendSummary,
+  PublishRequest,
+  PublishResponse,
+  RatingRequest,
   McpServerSpecV2,
   PatchAgentMetaRequest,
   PromptSuggestion,
   ProviderKeyStatus,
+  PortabilityAnalysis,
   Requirement,
+  EjectResult,
   RunComparisonPayload,
   RunHistoryPayload,
   SecretStatus,
+  McpServeStatus,
+  ServeAgentConfig,
+  ServeStatus,
+  ServeTokenReveal,
   SettingsFile,
   SteerRequest,
   SteerResponse,
@@ -51,15 +74,23 @@ import type {
   StudioEvent,
   TemplateDetail,
   TemplateSummary,
+  ToolPin,
   TraceDetailPayload,
+  LegacyImportResult,
+  LegacyImportStatus,
   TraceSummaryPayload,
+  HostStatus,
   VersionListItem,
   VersionRecord,
+  WorkspaceInboxItem,
   WorkspaceInfo,
   WorkspaceList,
   WorkspaceListItem,
+  WorkspaceScanResult,
 } from '../../shared/wireTypes';
+import { ALL_WORKSPACES, WORKSPACE_HEADER, WORKSPACE_QUERY } from '../../shared/workspace';
 import { STUDIO_TOKEN_HEADER, loadStudioToken } from './studioToken';
+import { activeWorkspace } from '../workspace/activeWorkspace';
 import {
   AUTHOR_STREAM_PATH,
   type AuthorFocus,
@@ -81,6 +112,14 @@ interface RuntimeClientOptions {
   baseUrl?: string;
   /** The per-launch API token; defaults to the one in the page URL (see studioToken.ts). */
   token?: string;
+  /**
+   * The workspace this client is bound to (W04a): when set, every request
+   * carries `x-lousho-workspace: <id>` and every socket `?ws=<id>`
+   * regardless of the URL's `#/w/…` segment. `forWorkspace(id)` builds
+   * such a client; the default client leaves it unset and follows
+   * `activeWorkspace()` instead.
+   */
+  workspaceId?: string;
 }
 
 /** Builds the error for a non-ok response: the server's `{ error }` message when present, else `fallback`, keeping `code` and `details`. */
@@ -89,7 +128,7 @@ function apiError(
   fallback: string,
   status: number
 ): RuntimeApiError {
-  return new RuntimeApiError(body?.error || fallback, status, body?.code, body?.details);
+  return new RuntimeApiError(body?.error || fallback, status, body?.code, body?.details, body);
 }
 
 export class RuntimeApiError extends Error {
@@ -99,7 +138,9 @@ export class RuntimeApiError extends Error {
     /** The server's `{ code }` when it sent one (e.g. 'STALE_PROPOSAL'). */
     public readonly code?: string,
     /** The server's `{ details }` payload when it sent one (e.g. `{ latestProposalId }`). */
-    public readonly details?: unknown
+    public readonly details?: unknown,
+    /** The whole parsed error body, for codes whose payload sits outside `details` (e.g. the publish gate's `version`, X01b). */
+    public readonly body?: unknown
   ) {
     super(message);
   }
@@ -114,16 +155,35 @@ export interface StreamConnectionHandlers {
 class RuntimeClient implements AgentApi {
   private readonly baseUrl: string;
   private readonly token: string | undefined;
+  private readonly workspaceId: string | undefined;
 
   constructor(options: RuntimeClientOptions = {}) {
     this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
     this.token = options.token ?? loadStudioToken();
+    this.workspaceId = options.workspaceId;
   }
 
-  /** `fetch` against the studio API, carrying the per-launch token. */
+  /**
+   * A client bound to workspace `id` (W04a): same base URL and token, but
+   * the `x-lousho-workspace` header (and the sockets' `?ws=`) is always
+   * `id` - for code that must talk to a workspace other than the one the
+   * URL names, like the all-agents list (W06a).
+   */
+  forWorkspace(id: string): RuntimeClient {
+    return new RuntimeClient({ baseUrl: this.baseUrl, token: this.token, workspaceId: id });
+  }
+
+  /** The workspace this request/socket targets: the bound id, else the URL's/launch workspace (`undefined` before `GET /workspaces` answers). */
+  private targetWorkspace(): string | undefined {
+    return this.workspaceId ?? activeWorkspace();
+  }
+
+  /** `fetch` against the studio API, carrying the per-launch token and the active workspace's `x-lousho-workspace` header. */
   private fetch(path: string, init?: RequestInit): Promise<Response> {
     const headers = new Headers(init?.headers);
     if (this.token) headers.set(STUDIO_TOKEN_HEADER, this.token);
+    const ws = this.targetWorkspace();
+    if (ws) headers.set(WORKSPACE_HEADER, ws);
     return fetch(`${this.baseUrl}${path}`, { ...init, headers });
   }
 
@@ -141,24 +201,28 @@ class RuntimeClient implements AgentApi {
     connection?: StreamConnectionHandlers,
     onError?: (event: Event) => void
   ): () => void {
-    const query = this.token ? `?${new URLSearchParams({ token: this.token })}` : '';
-    const ws = new WebSocket(`${this.wsBaseUrl()}${path}${query}`);
+    const params = new URLSearchParams();
+    if (this.token) params.set('token', this.token);
+    const ws = this.targetWorkspace();
+    if (ws) params.set(WORKSPACE_QUERY, ws);
+    const query = params.size > 0 ? `?${params}` : '';
+    const socket = new WebSocket(`${this.wsBaseUrl()}${path}${query}`);
     let closedByCaller = false;
-    ws.addEventListener('message', (event) => {
+    socket.addEventListener('message', (event) => {
       try {
         onFrame(JSON.parse(event.data as string) as T);
       } catch {
         return;
       }
     });
-    if (onError) ws.addEventListener('error', onError);
-    if (connection?.onOpen) ws.addEventListener('open', connection.onOpen);
-    ws.addEventListener('close', () => {
+    if (onError) socket.addEventListener('error', onError);
+    if (connection?.onOpen) socket.addEventListener('open', connection.onOpen);
+    socket.addEventListener('close', () => {
       if (!closedByCaller) connection?.onLost?.();
     });
     return () => {
       closedByCaller = true;
-      ws.close();
+      socket.close();
     };
   }
 
@@ -179,6 +243,16 @@ class RuntimeClient implements AgentApi {
     return this.request('/agents', { method: 'GET' });
   }
 
+  /**
+   * Every registered workspace's agents in one `AllAgentsResponse`
+   * (`GET /agents?ws=all`, W06a): bound to `ALL_WORKSPACES` so the
+   * `x-lousho-workspace` header can't override the aggregate with the
+   * URL's workspace.
+   */
+  async listAllAgentItems(): Promise<AllAgentsResponse> {
+    return this.forWorkspace(ALL_WORKSPACES).request('/agents?ws=all', { method: 'GET' });
+  }
+
   /** One saved agent's `AgentRecord` - spec v2 plus meta, layout and the latest version - or undefined on a 404. */
   async loadAgent(agentId: string): Promise<AgentRecord | undefined> {
     try {
@@ -194,6 +268,11 @@ class RuntimeClient implements AgentApi {
     return this.request(`/agents/${encodeURIComponent(agentId)}/requirements`, { method: 'GET' });
   }
 
+  /** The agent's channel-trigger mount rows (`GET /agents/:id/triggers/status`, R08b) - URL + mount error per channel trigger. */
+  async channelTriggerStatus(agentId: string): Promise<ChannelTriggerStatus[]> {
+    return this.request(`/agents/${encodeURIComponent(agentId)}/triggers/status`, { method: 'GET' });
+  }
+
   /** Writes `.lousho/agents/<id>.yaml` from a spec v2 working copy (`PUT /agents/:id` with a `{ spec }` body). */
   async saveAgent(agentId: string, spec: AgentSpecV2): Promise<void> {
     await this.request(`/agents/${encodeURIComponent(agentId)}`, {
@@ -205,6 +284,18 @@ class RuntimeClient implements AgentApi {
   /** Creates a blank agent or a copy (`POST /agents`) and answers its record. Named `createAgentRecord` so it never reads as the SDK's `createAgent` function. */
   async createAgentRecord(request: CreateAgentRequest): Promise<AgentRecord> {
     return this.request('/agents', { method: 'POST', body: JSON.stringify(request) });
+  }
+
+  /**
+   * `POST /agents { from: { copyOf } }` (L10): duplicates the agent -
+   * spec, labels and layout under `<id>-copy`, turned off - and answers
+   * the copy's `AgentRecord`.
+   */
+  async duplicateAgent(agentId: string): Promise<AgentRecord> {
+    return this.request('/agents', {
+      method: 'POST',
+      body: JSON.stringify({ from: { copyOf: agentId } }),
+    });
   }
 
   /** Toggles `enabled` and/or stores the label set (`PATCH /agents/:id/meta`); answers the updated meta. */
@@ -227,9 +318,9 @@ class RuntimeClient implements AgentApi {
     await this.request(`/agents/${encodeURIComponent(agentId)}`, { method: 'DELETE' });
   }
 
-  /** The agent's pending change draft, or `undefined` when it has none (the route answers 204). */
-  async getDraft(agentId: string): Promise<ChangeDraft | undefined> {
-    return this.request<ChangeDraft | undefined>(`/agents/${encodeURIComponent(agentId)}/draft`, {
+  /** The agent's pending change draft as a `DraftView` (L11b), or `undefined` when it has none (the route answers 204). */
+  async getDraft(agentId: string): Promise<DraftView | undefined> {
+    return this.request<DraftView | undefined>(`/agents/${encodeURIComponent(agentId)}/draft`, {
       method: 'GET',
     });
   }
@@ -308,6 +399,95 @@ class RuntimeClient implements AgentApi {
   }
 
   // -------------------------------------------------------------------
+  // `/agents/:id/publish` - the publish pointer (L14a). See
+  // server/lifecycle/publish.ts.
+  // -------------------------------------------------------------------
+
+  /**
+   * Pins `body.version` (or the working copy's new `publish` version) as the
+   * agent's published spec and answers the pinned version plus the eval
+   * gate's result when the spec declares `evals` (X01b). Idempotent:
+   * pinning the already-published version is a no-op. A failing gate throws
+   * `RuntimeApiError` 409 `LOUSHO_EVAL_GATE_FAILED` whose `details` is the
+   * `EvalGateResult`.
+   */
+  async publish(agentId: string, body: PublishRequest = {}): Promise<PublishResponse> {
+    return this.request(`/agents/${encodeURIComponent(agentId)}/publish`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  // -------------------------------------------------------------------
+  // `/agents/:id/serve*` - the published-agent serve switch (X02a). The
+  // token itself only ever comes back from `serveToken`/`rotateServeToken`.
+  // -------------------------------------------------------------------
+
+  /** The agent's serve config + masked token + publish pointer (`GET /agents/:id/serve`). */
+  async getServe(agentId: string): Promise<ServeStatus> {
+    return this.request(`/agents/${encodeURIComponent(agentId)}/serve`);
+  }
+
+  /** Patches `enabled`/`allowedOrigins` and answers the new status (`PUT /agents/:id/serve`). */
+  async putServe(agentId: string, patch: Partial<ServeAgentConfig>): Promise<ServeStatus> {
+    return this.request(`/agents/${encodeURIComponent(agentId)}/serve`, {
+      method: 'PUT',
+      body: JSON.stringify(patch),
+    });
+  }
+
+  /** The raw bearer token, revealed on demand (`GET /agents/:id/serve/token`). */
+  async serveToken(agentId: string): Promise<ServeTokenReveal> {
+    return this.request(`/agents/${encodeURIComponent(agentId)}/serve/token`);
+  }
+
+  /** Mints a new bearer - the old one stops working at once (`POST .../serve/rotate-token`). */
+  async rotateServeToken(agentId: string): Promise<ServeTokenReveal> {
+    return this.request(`/agents/${encodeURIComponent(agentId)}/serve/rotate-token`, { method: 'POST' });
+  }
+
+  /** The agent's MCP server state (`GET /agents/:id/serve/mcp`, X03). */
+  async mcpStatus(agentId: string): Promise<McpServeStatus> {
+    return this.request(`/agents/${encodeURIComponent(agentId)}/serve/mcp`);
+  }
+
+  /** Starts the MCP server for the published version (`POST .../serve/mcp`); 409 when unpublished. */
+  async startMcp(agentId: string): Promise<McpServeStatus> {
+    return this.request(`/agents/${encodeURIComponent(agentId)}/serve/mcp`, { method: 'POST' });
+  }
+
+  /** Stops the MCP server (`DELETE .../serve/mcp`). */
+  async stopMcp(agentId: string): Promise<McpServeStatus> {
+    return this.request(`/agents/${encodeURIComponent(agentId)}/serve/mcp`, { method: 'DELETE' });
+  }
+
+  /** Creates or rotates the widget key and returns the raw `fwk_` key once (`POST .../serve/widget-key`, X04b). */
+  async createWidgetKey(agentId: string): Promise<{ widgetKey: string }> {
+    return this.request(`/agents/${encodeURIComponent(agentId)}/serve/widget-key`, { method: 'POST' });
+  }
+
+  /** Revokes the widget key (`DELETE .../serve/widget-key`, X04b). */
+  async revokeWidgetKey(agentId: string): Promise<void> {
+    await this.request(`/agents/${encodeURIComponent(agentId)}/serve/widget-key`, { method: 'DELETE' });
+  }
+
+  /** Records a 1-5 human rating on a run's trace (`POST /agents/:id/rating`, R04a). */
+  async rateRun(agentId: string, body: RatingRequest): Promise<void> {
+    await this.request(`/agents/${encodeURIComponent(agentId)}/rating`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  /** Copies a low-rating alert's trace into the agent's `<agentId>-regressions` dataset (R04a). */
+  // fallow-ignore-next-line unused-class-member -- contract surface: called on forWorkspace()-bound clients, which the member graph can't see
+  async addAlertToDataset(agentId: string, alertId: string): Promise<{ dataset: string; exampleId: string }> {
+    return this.request(`/agents/${encodeURIComponent(agentId)}/rating/${encodeURIComponent(alertId)}/dataset`, {
+      method: 'POST',
+    });
+  }
+
+  // -------------------------------------------------------------------
   // `/agents/:id/suggestions` - the prompt suggestions the Suggestions
   // tab lists and settles. See server/routes/suggestionRoutes.ts.
   // -------------------------------------------------------------------
@@ -339,9 +519,30 @@ class RuntimeClient implements AgentApi {
     );
   }
 
+  /**
+   * "Suggest a fix" (R06): reserves a suggestion id and answers 202 while
+   * the `prompt_suggestion` pass reads the trace's friction digest; the
+   * record lands under `suggestions/<id>.json` (announced by the
+   * `suggestion.new` event) when it finishes. 409 while one is already
+   * in flight for the trace, 422 when the agent's instructions live in a
+   * file (`LOUSHO_SUGGESTION_UNSUPPORTED`).
+   */
+  // fallow-ignore-next-line unused-class-member -- contract surface: called on forWorkspace()-bound clients, which the member graph can't see
+  async suggestFromTrace(agentId: string, traceId: string): Promise<{ suggestionId: string }> {
+    return this.request(`/agents/${encodeURIComponent(agentId)}/suggestions/from-trace`, {
+      method: 'POST',
+      body: JSON.stringify({ traceId }),
+    });
+  }
+
   /** The workspace the studio serves (`baseDir` is its root; `workspace` is the full ref for addressing it by id). */
   async workspace(): Promise<WorkspaceInfo> {
     return this.request('/workspace', { method: 'GET' });
+  }
+
+  /** X06a: a listed agent directory read back as an AgentSpecV2 (422 on code/unreadable configs). */
+  async loadCodeAgentSpec(path: string): Promise<CodeAgentSpecResponse> {
+    return this.request(`/workspace/agent-dirs/spec?path=${encodeURIComponent(path)}`, { method: 'GET' });
   }
 
   // -------------------------------------------------------------------
@@ -370,15 +571,91 @@ class RuntimeClient implements AgentApi {
     await this.request(`/workspaces/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
-  async run(agentId: string, input: string, spec: AgentSpecV2): Promise<AgentRunStatusPayload> {
-    return this.request(`/agents/${encodeURIComponent(agentId)}/run`, {
+  /**
+   * W08a: `id`'s cached code-agent scan (`GET /workspaces/:ws/scan`) -
+   * scans on first read, then serves the stored result. Sent through
+   * `forWorkspace(id)` so the workspace header matches the `:ws` path.
+   */
+  async workspaceScan(id: string): Promise<WorkspaceScanResult> {
+    return this.forWorkspace(id).request(`/workspaces/${encodeURIComponent(id)}/scan`, { method: 'GET' });
+  }
+
+  /**
+   * W08a: rescan `id`'s agent dirs (`POST /workspaces/:ws/scan`). When
+   * `agentDirs` is given (1-20 glob patterns), the server persists them
+   * on the workspace entry before scanning; omitted, the stored (or
+   * default) patterns run again.
+   */
+  async scanWorkspace(id: string, agentDirs?: string[]): Promise<WorkspaceScanResult> {
+    const body = agentDirs === undefined ? {} : { agentDirs };
+    return this.forWorkspace(id).request(`/workspaces/${encodeURIComponent(id)}/scan`, {
       method: 'POST',
-      body: JSON.stringify({ input, spec }),
+      body: JSON.stringify(body),
     });
   }
 
-  async stop(agentId: string): Promise<AgentRunStatusPayload> {
-    return this.request(`/agents/${encodeURIComponent(agentId)}/stop`, { method: 'POST' });
+  /**
+   * W11c: `id`'s host status (`GET /workspaces/:ws/host`) - which SDK runs
+   * its agents, the selection banner, and the bridge child's state.
+   */
+  async hostStatus(id: string): Promise<HostStatus> {
+    return this.forWorkspace(id).request(`/workspaces/${encodeURIComponent(id)}/host`, { method: 'GET' });
+  }
+
+  /**
+   * W11c: restart `id`'s project bridge (`POST /workspaces/:ws/host/restart`)
+   * - 202 with the settled status, or 409 `LOUSHO_HOST_NOT_BRIDGE`.
+   */
+  async restartHost(id: string): Promise<HostStatus> {
+    return this.forWorkspace(id).request(`/workspaces/${encodeURIComponent(id)}/host/restart`, { method: 'POST' });
+  }
+
+  // -------------------------------------------------------------------
+  // `/workspaces/:ws/legacy-import` - the one-time old-settings/secrets
+  // import offer (W03a; server/workspace/legacyImport.ts).
+  // -------------------------------------------------------------------
+
+  /** Which old project-level files `ws` still offers to import, and whether the offer was handled. */
+  // fallow-ignore-next-line unused-class-member -- contract surface: the import-offer UI lands in a later wave; the route + client ship together here
+  async legacyImportStatus(ws: string): Promise<LegacyImportStatus> {
+    return this.request(`/workspaces/${encodeURIComponent(ws)}/legacy-import`, { method: 'GET' });
+  }
+
+  /** Copies the missing settings/secrets into the Studio home; 409s `LOUSHO_LEGACY_IMPORT_EMPTY` when there is nothing. */
+  // fallow-ignore-next-line unused-class-member -- contract surface: the import-offer UI lands in a later wave; the route + client ship together here
+  async importLegacy(ws: string): Promise<LegacyImportResult> {
+    return this.request(`/workspaces/${encodeURIComponent(ws)}/legacy-import`, { method: 'POST' });
+  }
+
+  /** Dismisses the import offer for `ws`. */
+  // fallow-ignore-next-line unused-class-member -- contract surface: the import-offer UI lands in a later wave; the route + client ship together here
+  async skipLegacyImport(ws: string): Promise<void> {
+    await this.request(`/workspaces/${encodeURIComponent(ws)}/legacy-import/skip`, { method: 'POST' });
+  }
+
+  async run(
+    agentId: string,
+    input: string,
+    spec: AgentSpecV2,
+    pins?: ToolPin[]
+  ): Promise<AgentRunStatusPayload> {
+    return this.request(`/agents/${encodeURIComponent(agentId)}/run`, {
+      method: 'POST',
+      body: JSON.stringify({ input, spec, ...(pins !== undefined && pins.length > 0 ? { pins } : {}) }),
+    });
+  }
+
+  /**
+   * `POST /agents/:id/abort` - cancels the agent's active run (running or
+   * paused on an approval) with an optional reason recorded on the status
+   * payload's `abortReason` (abort listeners pass `'abort_listener:<id>'`).
+   * A no-op 202 when nothing is running.
+   */
+  async abort(agentId: string, reason?: string): Promise<AgentRunStatusPayload> {
+    return this.request(`/agents/${encodeURIComponent(agentId)}/abort`, {
+      method: 'POST',
+      body: JSON.stringify(reason === undefined ? {} : { reason }),
+    });
   }
 
   async status(agentId: string): Promise<AgentRunStatusPayload> {
@@ -422,6 +699,40 @@ class RuntimeClient implements AgentApi {
       method: 'POST',
       body: JSON.stringify({ approvalId, answer }),
     });
+  }
+
+  /** Everything waiting on the user across this workspace's agents (R02a's `GET /inbox`). */
+  // fallow-ignore-next-line unused-class-member -- contract surface: called on forWorkspace()-bound clients, which the member graph can't see
+  async listInbox(): Promise<InboxItem[]> {
+    return this.request('/inbox', { method: 'GET' });
+  }
+
+  /**
+   * Every workspace's inbox items in one list (`GET /inbox?ws=all`, W09a):
+   * bound to `ALL_WORKSPACES` like `listAllAgentItems` so the header can't
+   * override the aggregate. Item ids are unique only inside a workspace -
+   * key by `<workspaceId>/<id>`.
+   */
+  async listAllInbox(): Promise<WorkspaceInboxItem[]> {
+    return this.forWorkspace(ALL_WORKSPACES).request('/inbox?ws=all', { method: 'GET' });
+  }
+
+  /** The inbox badge count (`GET /inbox/count`); also the `inbox.count` WS event's payload. */
+  // fallow-ignore-next-line unused-class-member -- contract surface: public client API kept beside allInboxCount; tests pin it
+  async inboxCount(): Promise<InboxCount> {
+    return this.request('/inbox/count', { method: 'GET' });
+  }
+
+  /** The Studio-wide inbox total (`GET /inbox/count?ws=all`, W09a) - what the aggregate socket's `inbox.count` frame carries. */
+  async allInboxCount(): Promise<number> {
+    const body = await this.forWorkspace(ALL_WORKSPACES).request<InboxCount>('/inbox/count?ws=all', { method: 'GET' });
+    return body.count;
+  }
+
+  /** Dismisses an undismissed inbox alert (`POST /inbox/alerts/:id/dismiss`). */
+  // fallow-ignore-next-line unused-class-member -- contract surface: called on forWorkspace()-bound clients, which the member graph can't see
+  async dismissAlert(alertId: string): Promise<void> {
+    await this.request(`/inbox/alerts/${encodeURIComponent(alertId)}/dismiss`, { method: 'POST' });
   }
 
   /** Current breakpoints + pause state for `agentId` (see debugController.ts). */
@@ -576,6 +887,16 @@ class RuntimeClient implements AgentApi {
     return this.request(`/settings/profiles/${encodeURIComponent(profileId)}/activate`, { method: 'POST' });
   }
 
+  /** The collector (observe daemon) status; `probe` re-checks the URL against the daemon first. */
+  async collectorStatus(probe = false): Promise<CollectorStatus> {
+    return this.request(`/settings/collector${probe ? '?probe=1' : ''}`, { method: 'GET' });
+  }
+
+  /** Persists a Settings → Collector change (`token` undefined keeps, null removes, a string sets the named secret). */
+  async updateCollector(update: CollectorUpdate): Promise<CollectorStatus> {
+    return this.request('/settings/collector', { method: 'PUT', body: JSON.stringify(update) });
+  }
+
   /** R2: deploy-target names this app's Settings dropdown offers - see server/deployRunner.ts's DEPLOY_ADAPTERS. */
   async listDeployAdapters(): Promise<string[]> {
     return this.request('/settings/deploy-adapters', { method: 'GET' });
@@ -662,6 +983,98 @@ class RuntimeClient implements AgentApi {
       throw apiError(body, `Deploy of '${agentId}' failed with ${res.status}`, res.status);
     }
     return body as DeployResult;
+  }
+
+  /**
+   * `GET /agents/:id/export?format=yaml|bundle` (L07) as a Blob plus the
+   * server's `Content-Disposition` filename and the bundle's
+   * `X-Lousho-Export-Warnings` list (empty for YAML and a clean bundle).
+   */
+  async downloadExport(
+    agentId: string,
+    format: 'yaml' | 'bundle',
+    opts?: { adapt?: boolean }
+  ): Promise<{ blob: Blob; filename: string; warnings: string[] }> {
+    const adapt = opts?.adapt === true ? '&adapt=1' : '';
+    const res = await this.fetch(`/agents/${encodeURIComponent(agentId)}/export?format=${format}${adapt}`, { method: 'GET' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => undefined);
+      throw apiError(body, `Export of '${agentId}' failed with ${res.status}`, res.status);
+    }
+    const disposition = res.headers.get('Content-Disposition') ?? '';
+    const filename = /filename="([^"]+)"/.exec(disposition)?.[1]
+      ?? (format === 'yaml' ? `${agentId}.yaml` : `${agentId}.lousho-agent.json`);
+    const warningsHeader = res.headers.get('X-Lousho-Export-Warnings');
+    let warnings: string[] = [];
+    if (warningsHeader !== null) {
+      try {
+        const parsed: unknown = JSON.parse(decodeURIComponent(warningsHeader));
+        if (Array.isArray(parsed)) warnings = parsed.filter((w): w is string => typeof w === 'string');
+      } catch {
+        // A malformed warnings header degrades to no warnings, never a failed download.
+      }
+    }
+    return { blob: await res.blob(), filename, warnings };
+  }
+
+  /**
+   * `POST /agents/import/preview` (L08a): parses pasted YAML/JSON/bundle
+   * text and answers what the import would write - clash, resolved id,
+   * requirements, prompts and warnings - without writing anything.
+   */
+  async previewImport(request: ImportRequest): Promise<ImportPreview> {
+    return this.request<ImportPreview>('/agents/import/preview', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+  }
+
+  /**
+   * `POST /agents/import` (L08a): writes the pasted spec in `request.mode`
+   * (`new`/`copy` answer 201, `replace` 200) and answers the `AgentRecord`.
+   */
+  async importAgent(request: ImportRequest): Promise<AgentRecord> {
+    return this.request<AgentRecord>('/agents/import', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+  }
+
+  /**
+   * `POST /agents/:id/portability` (L09a): runs the portability check pass
+   * for an agent (cached server-side by spec hash) and answers the
+   * `PortabilityAnalysis` - findings plus the `[YOUR …]`-adapted
+   * instructions an `adapt=1` export substitutes.
+   */
+  async checkPortability(agentId: string): Promise<PortabilityAnalysis> {
+    return this.request<PortabilityAnalysis>(`/agents/${encodeURIComponent(agentId)}/portability`, {
+      method: 'POST',
+      body: '{}',
+    });
+  }
+
+  /**
+   * `POST /agents/import/portability` (L09a): runs the same check on
+   * pasted YAML/JSON/bundle text (parsed like `previewImport`) before the
+   * agent exists; the analysis caches in memory server-side.
+   */
+  async checkImportPortability(text: string): Promise<PortabilityAnalysis> {
+    return this.request<PortabilityAnalysis>('/agents/import/portability', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    });
+  }
+
+  /**
+   * `POST /agents/:id/eject` (A08b): writes the agent-directory form to
+   * `agents/<id>/` in this workspace. `overwrite` resends after the 409
+   * "already exists" answer; the `EjectResult` lists what was written.
+   */
+  async ejectAgent(agentId: string, overwrite = false): Promise<EjectResult> {
+    return this.request<EjectResult>(`/agents/${encodeURIComponent(agentId)}/eject`, {
+      method: 'POST',
+      body: JSON.stringify({ overwrite }),
+    });
   }
 
   /**
@@ -770,6 +1183,26 @@ class RuntimeClient implements AgentApi {
     return this.request('/settings/author', { method: 'PUT', body: JSON.stringify(patch) });
   }
 
+  /** The background passes' model choices and per-kind switches (`GET /settings/passes`, L06b). */
+  async getPassSettings(): Promise<PassSettings> {
+    return this.request('/settings/passes', { method: 'GET' });
+  }
+
+  /**
+   * Patches the pass settings (`PUT /settings/passes`) and answers the
+   * effective settings. Rejects with the server's `{ error }` (400 for a
+   * `model` that is not `provider/model` or an unknown `enabled` kind).
+   */
+  async savePassSettings(patch: PassSettingsPatch): Promise<PassSettings> {
+    return this.request('/settings/passes', { method: 'PUT', body: JSON.stringify(patch) });
+  }
+
+  /** This window's pass spend rollup (`GET /settings/passes/spend?month=YYYY-MM`, L06a). */
+  async getPassSpend(month?: string): Promise<PassSpendSummary> {
+    const query = month === undefined ? '' : `?month=${encodeURIComponent(month)}`;
+    return this.request(`/settings/passes/spend${query}`, { method: 'GET' });
+  }
+
   /**
    * `WS /assistant/stream?session=<id>&token=<token>` - the raw socket
    * `connectAuthorStream` (src/author/authorStream.ts) wraps with reconnects.
@@ -791,6 +1224,20 @@ class RuntimeClient implements AgentApi {
     connection?: StreamConnectionHandlers
   ): () => void {
     return this.subscribeJson('/events', onEvent, connection);
+  }
+
+  /**
+   * Subscribes to `WS /events?ws=all` (W09a): every workspace's
+   * `StudioEvent` tagged with its `workspaceId`, plus the Studio-wide
+   * `{ type: 'inbox.count', workspaceId: 'all' }` total. Bound to
+   * `ALL_WORKSPACES` so the socket's `?ws=` can't be overridden by the
+   * URL's workspace.
+   */
+  subscribeAllEvents(
+    onFrame: (frame: AllEventsFrame) => void,
+    connection?: StreamConnectionHandlers
+  ): () => void {
+    return this.forWorkspace(ALL_WORKSPACES).subscribeJson('/events', onFrame, connection);
   }
 }
 

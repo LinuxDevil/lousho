@@ -182,6 +182,26 @@ Page paths may not start with `pages/` (nested pages, PRD009).
 
 The block named by `type` is required. The other blocks are validated but not run, so a page keeps its other configurations when its type changes (see [type switching](#type-switching)). Aliases are names from `agents.json`, never refs.
 
+### goal.json (`lousho.goal/1`)
+
+The goal file of a goal-oriented page, named by `page.json` `execution.goal.goal` (`./goal.json`).
+
+| Field | Type and default |
+| --- | --- |
+| `goal` | The goal, in words; required, non-empty |
+| `checks` | Required, at least one `{ criterion }`; `criterion` names an id in the page's effective `evaluation.criteria`, and at least one named criterion must have an executable `check` (R19, PRD033) |
+| `stop.maxIterations` | Required integer, 1 to 50 (A12) |
+| `stop.maxCostUsd` | Required, US dollars (F5.3) |
+| `stop.maxDurationMs` | Optional integer |
+| `stop.onStall` | `stop` (default) or `continue` |
+| `stop.stallAfter` | Integer, default 2 |
+
+`goal.json` is structure: improvement never edits it (R10); people change it with the `write_goal` operation. The goal page's `lead` and `delegates` are in `page.json` `execution.goal`, so every attachment stays usable under every type.
+
+**How the loop stops.** The loop runs one turn per iteration in one session. It stops when the check passes, or at `maxIterations`, `maxDurationMs` or `maxCostUsd`, whichever comes first. The run's spend cap (P5.30) and the page's limits apply on top, the lower value of each winning. A stall — `stallAfter` iterations in a row without a better check score — stops the loop as `stalled` unless `onStall` is `continue`. Every iteration is a `goal-iteration` step, so a failure is attributed to the iteration it happened in.
+
+**Checkpoints and resume.** Given a `runId` and a checkpoint store, `runGoal` saves the loop's progress — the finished iterations, spend, elapsed time and stall count — as a checkpoint under the page run id after every iteration, and again with status `finished` at the end. `resumeGoal` reads that checkpoint and continues at the next iteration with the spend so far, so the limits count the whole run; a finished run returns its saved result and runs nothing. The turn that was running when the process died is not resumed mid-turn: it is run again from its start as the next iteration, its partial spend lost as for any crashed turn.
+
 ### Model precedence and `models.provider`
 
 `resolvePageModel` (exported from `lousho/workspaces`) picks the model a page's agent runs with. The first level that sets a model wins:
@@ -196,6 +216,8 @@ It returns `{ model, source }`, where `source` is `attachment`, `page`, `agent`,
 Then the provider wrapper applies. The effective provider is the page's `models.provider` when the page sets the key (`null` means no wrapper), otherwise the workspace's `models.provider`. A model `x/y` becomes `<provider>/x/y`, unless it already starts with `<provider>/`, so a model is never wrapped twice. For example, with `models: { "provider": "pi" }` in `workspace.json`, `anthropic/claude-sonnet-5-5` runs as `pi/anthropic/claude-sonnet-5-5`.
 
 The schema checks only the name's format (lowercase letters, digits and dashes, starting with a letter). Whether the provider is registered on this host is a runtime check, since the host injects providers (R17).
+
+The host's `providers.resolve(model)` is the model allow-list. Every page agent and the main agent get their provider through it, so a host that must keep a workspace off some vendors or models throws there for any model it does not allow; the run then fails before any model call. The policy has no model list in v1 (G6).
 
 The improver is separate (R8): `improve.proposerModel` and any Determinator model are never wrapped by `models.provider`, and never go through `resolvePageModel`.
 
@@ -271,7 +293,9 @@ One rule: **a file a harness lists resolves from the folder that owns that harne
 | `local:<name>` agent | `pages/<page>/agents/<name>/` |
 | `workspace:<path>` profile | `<harnessProfiles>/<path>/harness.json` |
 
-A listed file that is missing is PRD032 (PRD004 for base-harness prose, PRD011 for main-harness prose). A schema given as a path is read into its layer before composition, so the effective harness and the UI binding check see the schema object, and two pages never resolve one base path to different files. A `global:` profile is resolved from the files the host's `resolveGlobal` returns for it. A check script is only checked for existence; the runtime runs it in P1.
+A listed file that is missing is PRD032 (PRD004 for base-harness prose, PRD011 for main-harness prose). A schema given as a path is read into its layer before composition, so the effective harness and the UI binding check see the schema object, and two pages never resolve one base path to different files. A `global:` profile is resolved from the files the host's `resolveGlobal` returns for it. A check script is only checked for existence, and only a `check` ending in a script extension is a path.
+
+A criterion's `check` names a check in the host's check registry, and the runtime never imports a workspace `.ts` file. Three forms name one: a script path (`harness/checks/script-present.ts`, folder sources only, and the file must exist) names its base name without the extension, `script-present`; a bare name (`script-present`) needs no file; a `builtin:<kind>?<params>` ref is its own name. `checkNameOf(check)` gives the registry name, `checkRegistry(map)` builds a `WorkspaceCheckRegistry` over a plain map, and `resolveCheck(registry, check)` looks a criterion's check up by that name.
 
 ## Harness composition
 
@@ -373,6 +397,15 @@ Shared files sit under fixed patterns: `shared/instructions/<name>.md`, `shared/
 - `approvals.require`: tool names that must wait for a human.
 - `sandbox.required`: whether code and shell execution must be sandboxed.
 
+### Resolving the shared layer
+
+`resolveSharedContext(workspace, options)` reads a `LoadedWorkspace` and returns `{ instructions, skills, memorySlots, resources }` for one `audience`: a page (`{ page: id }`) or `'main-agent'`. The main agent gets nothing unless `mainAgent.inheritsShared` is true; policy is applied separately.
+
+- Instructions are ordered by file name.
+- Skills are the union of `shared/skills/*/SKILL.md` and the `skills` option. Two skills with one name throw `LOUSHO_SKILL_INVALID` naming both files; `override: true` only lets a skill from the `skills` option replace a shared one.
+- Memory files are never run by the core, so the host passes `createMemory(file)` to build each slot, and a missing one throws `LOUSHO_MEMORY_INVALID`. Pass one `createSharedContextRun()` per workspace run: every page that passes it gets the same shared slot objects. Page-private memory is the attached agent's own `memory`, not part of the shared layer.
+- Files under `shared/knowledge`, `shared/brand` and `shared/resources` come back as frozen handles with a `shared:<path>` ref. A file over `maxResourceBytes` (default 262144) is listed with its size but its text is not inlined.
+
 ### How a workspace policy narrows the host's limit
 
 `narrowPolicy(ceiling, workspace)` is pure. It validates both arguments with `workspacePolicySchema` and throws on invalid input, so a typo in the ceiling fails closed. A workspace can only narrow.
@@ -410,6 +443,51 @@ console.log(effective.tools.allow, effective.secrets, effective.network.allowHos
 
 The result keeps `search_facts`, `API_KEY` and `api.example.com`, and turns the sandbox on. `publish` and `OTHER_KEY` are not in the ceiling and are dropped.
 
+### How the runtime enforces the policy
+
+The runtime enforces the narrowed policy. No harness, `page.json` or `agents.json` key can widen it. The host injects its tools as a `HostToolRegistry`: each entry has a `descriptor`, the `secrets` it reads and the `capabilities` it provides. The runtime never imports a workspace `.ts` file, so **a tool file's name is its tool name**: `tools/search_facts.ts` maps to the host tool named `search_facts`. An agent tool with no host tool of that name is left out and reported as a load warning. A Studio `{ file }` tool ref is named by its file stem too, and other tool refs by the name the model sees (`builtin`, `registry`, ...), not their canvas `id`.
+
+A workspace agent is read from its files and nothing in it is run, so settings it would silently drop are refused at load with `LOUSHO_AGENT_DIR_INVALID`, as hooks are: on a Studio spec `mcpServers`, `guardrails`, `subagents`, `handoffs`, `triggers`, `flow`, `permissionMode`, `approvalTtlMs`, `codeMode`, `toolSearch`, `output` and `promptRef`; on a folder agent `permissionMode`, `projectInstructions`, `approvalTtlMs`, `output` and the `subagents/`, `schedules/` and `channels/` folders. A memory slot's name is its file name.
+
+| What | Rule |
+| --- | --- |
+| Tools | `effectiveToolset(policy, attachment, agentTools, registry)` keeps `agentTools ∩ registry ∩ policy.tools.allow ∩ (attachment.tools.only ?? all)`. `tools.only` is a list of literal names and can only narrow |
+| Permissions | `effectivePermissions(policy, agentPerms)` checks the ceiling, workspace and agent lists first-match each and decides `deny > ask > none > allow`. Only an agent `allow` can allow. An agent `allow`, a name or a pattern such as `*`, that a policy `deny` or `ask` shadows is a load warning |
+| Secrets | A tool gets the secrets it declares that the policy also lists, and nothing else. A page has no secret store |
+| Network and sandbox | The policy's values. An agent's own `network.allowHosts` can only narrow them, and its `sandbox.required` can only turn sandboxing on |
+| Approvals | A tool in `approvals.require` asks for approval every time, in an agent run and in a workflow `toolCall` step, whatever an `allow` rule or the permission mode says. So does a Studio tool ref with `approval: 'always'`. A host tool's own `needsApproval` ask is kept the same way: an agent `allow` never lifts it. A deny still denies |
+| Capabilities | `pagePolicy()` fails page start with `LOUSHO_WORKSPACE_CAPABILITY_MISSING` (`capability-missing`) when `capabilities.require` names something no tool in the page's effective toolsets provides. A tool that a ceiling or workspace rule denies outright provides nothing. A capability never grants a tool |
+
+`agentPolicyOptions(policy, { attachment, agent }, registry)` returns the `createAgent` `tools` and `permissions` for one attachment, or for the main agent when `attachment` is left out. It also returns a `toolRegistry` for a workflow's `toolCall` steps, which pass `flowToolGate`, plus `secrets` by tool, `network`, `sandbox` and `warnings`. It is the only code path under `src/workspaces/runtime` that builds a toolset. `attachmentAgent()` is the only place the page runtime builds a page agent, and `createMainAgent()` the only place it builds the main agent: it takes those options, passes every tool through the host's `bindTool(descriptor, scope)` with the tool's `secrets`, `network.allowHosts` and `sandbox.required`, and the host enforces them. Under `createWorkspaceRuntime` a host without `bindTool` can run only tools whose scope grants no secrets, no hosts and no sandbox; any other tool fails the run with `LOUSHO_WORKSPACE_HOST_INVALID`, so nothing the policy narrows ever runs unenforced (see [The workspace runtime and its host](#the-workspace-runtime-and-its-host)).
+
+```ts
+import { narrowPolicy, pagePolicy, type HostToolRegistry } from 'lousho/workspaces';
+import { defineTool } from 'lousho';
+import { z } from 'zod';
+
+const registry: HostToolRegistry = {
+  render_video: {
+    descriptor: defineTool({ name: 'render_video', description: 'Render a video', input: z.object({ script: z.string() }), execute: () => 'video.mp4' }),
+    capabilities: ['video.render'],
+  },
+};
+
+const policy = narrowPolicy(
+  { permissions: [], tools: { allow: ['*'] }, secrets: [] },
+  { permissions: [], tools: { allow: ['render_video'] }, secrets: [], approvals: { require: ['render_video'] } }
+);
+
+const page = pagePolicy(
+  policy,
+  {
+    capabilities: ['video.render'],
+    attachments: [{ alias: 'video', agentOwned: { tools: ['render_video'] }, pageOwned: {} }],
+  },
+  registry
+);
+console.log(Object.keys(page.attachments.video.tools), page.warnings);
+```
+
 ## The execution contract
 
 Every engine implements one interface, so the main agent, the wire contract and the page UI do not care which type a page runs under. These are plain JSON types.
@@ -417,7 +495,7 @@ Every engine implements one interface, so the main agent, the wire contract and 
 ```ts
 import type { PageEngine, PageInput, PageResult, PageRunContext } from 'lousho/workspaces';
 
-async function runPage(engine: PageEngine, input: PageInput, ctx: PageRunContext): Promise<PageResult> {
+async function runEngine(engine: PageEngine, input: PageInput, ctx: PageRunContext): Promise<PageResult> {
   ctx.emit({ type: 'progress', message: `running ${input.pageId} as ${engine.type}` });
   return engine.run(input, ctx);
 }
@@ -444,6 +522,60 @@ Every engine emits the same labels, and attribution reads only these, never the 
 - `StepKind`, listed in `STEP_KINDS`: `single`, `workflow-step`, `delegate`, `goal-iteration`.
 - `WORK_TYPE_STEP_KINDS` names the kinds each type may emit: `single` emits `single`; `multi-agent` emits `single` and `delegate`; `workflow` emits `workflow-step` and `delegate`; `goal-oriented` emits `goal-iteration` and `delegate`.
 - `PageRunEvent` is one of `started`, `step` (with `phase: "start"` or `"done"`), `artifact`, `approval` (`approvalId`, `kind`, `expiresAt?`), `progress` (`message`, `fraction?`) or `finished` (`status`).
+
+### Running a page
+
+`runPage(workspace, input, ctx)` runs one page of a loaded workspace:
+
+1. It throws `LOUSHO_WORKSPACE_PAGE_UNKNOWN` for a page id the workspace does not list. It validates `input.inputs` against the effective `inputs.schema` with `checkPageInputs`, the same check the page UI runs in the browser (`lousho/workspaces/client`). On a problem it returns `failed` with `error.kind: 'invalid-input'` and every field path (`inputs.report: ...`) before any model call.
+2. It picks the engine for `execution.type` from `ctx.engines`, by default `ENGINES`. `engineFor(type)` throws `LOUSHO_WORKSPACE_ENGINE_UNKNOWN` when the registry has none; `ENGINES` has `single` today.
+3. It resolves the attachments, applies the policy with `pagePolicy()` (each warning prints as a `[lousho] runPage:` console warning), and runs the engine with the run id as its session id, `ctx.signal`, and the page's `execution.limits`.
+4. It validates `output` against `outputs.schema` and checks that every artifact marked `required` was stored.
+5. On an invalid output it gives the engine one repair turn, a revise of the same run whose instruction starts `your output failed:`, then returns `failed` with `invalid-output`.
+
+An empty `task` becomes the page UI's `title`, else the page id. A page gets only the task, its inputs and, for a revise, the earlier run's `PageResult` (`ctx.prior`). It never sees the main agent's conversation or another page's transcript.
+
+The `single` engine runs the page's one attachment in its own session, with structured output (the `output` mode of an AgentSpec) when the harness has an output schema. That mode also makes one repair call inside a turn when a reply does not parse or does not match the output schema, so the runtime's repair turn comes after it. The session carries the page's limits, so turns, cost and duration count across both turns, and running out of `maxDurationMs` ends the run `timed-out` with `error.kind: 'timeout'`.
+
+The host injects a `PageRuntimeHost`: `tools` (a `HostToolRegistry`), the policy `ceiling`, `bindTool`, and optionally `provider(model)`, `exporter`, `globalAgents`, `globalProfiles` and `createMemory(file)`, which builds the slot for a `shared/memory/*.ts` file. `ctx.sharedRun` (a `createSharedContextRun()` object) makes every page of one workspace run, and the main agent, share the same shared memory instances. Every agent the runtime builds gets its step's labels from `labelsFor()` as `lousho.*` attributes on its `invoke_agent` span (`labelAttributes()`, with the workspace id, the harness part hash and a `global:` agent's version and sha256), and the engine puts the same labels on its `step` events.
+
+### The main agent and the page router
+
+`openWorkspaceSession(workspace, ctx)` opens one conversation with a loaded workspace. `ctx` has the `host`, `artifacts(runId)` for each page run's sink, and optionally `newRunId`, `sessionId`, `emit(runId, event)`, `engines`, `mode` and `sharedRun`. `session.run(message, options)` returns a `WorkspaceTurn`:
+
+| Situation | `run(message)` | `run(message, { pageId, inputs })` |
+| --- | --- | --- |
+| `mainAgent: null`, any number of pages | `{ kind: 'error' }` with a `WorkspaceRunError` (`LOUSHO_WORKSPACE_NO_MAIN_AGENT`, `no-main-agent: pass pageId or call runPage`); there is no router | `{ kind: 'page' }`: runs that page directly |
+| A main agent | `{ kind: 'main' }`: the main agent answers in its own thread and may route | `{ kind: 'page' }`: runs that page directly |
+
+The main agent is built from `main-agent/` with the shared policy and its own tools, plus the shared context when `inheritsShared` is true. Its prompt is `assembleMainInstructions()` over `main-agent/` and, when present, the main-agent harness. It gets these router tools:
+
+- `run_page_<id>` for each page, described by `page.description`, with parameters `{ task, inputs? }` where `inputs` is the page's effective `inputs.schema`. When the main harness lists `routes`, only those pages get a tool.
+- `revise_page_run({ runId, instruction })`: runs the page again with the earlier `PageResult` as `prior`. Only runs the main agent made through its router tools can be revised, and only for pages it may route to.
+- `list_page_runs()`: the runs the main agent made, with `runId`, `pageId`, `status` and `revises`. Direct runs (`run(message, { pageId })`) are not listed.
+
+Each tool calls `runPage()` and returns the `summary`, the error and the artifact refs between `<untrusted>` and `</untrusted>`, after a line telling the main agent to treat it as data; any such tags in the page's text are stripped first. Because results land in the main agent's thread, a follow-up ("make a Facebook version") sees them, while the page sees only its own task and inputs.
+
+The runtime, not the prompt, enforces two main-harness settings. `limits.maxConcurrentPages` caps the page runs in flight at once, clamped to `workspace.json`'s `defaults.limits.maxConcurrentPages` (default 3). A page that ends `failed` or `timed-out` is never re-run automatically, except once when `onPageFailure` is `retry-once`; the retry's record names the run it retries in `retries`, and its tool result tells the main agent not to run the page again. Router tools exist only when there is a main agent, so one page whose harness cannot be resolved never blocks direct runs of the others. The main agent's model follows the same rules as a page agent's (its own default, then `defaults.model`), wrapped by `models.provider`.
+
+### The workspace runtime and its host
+
+`createWorkspaceRuntime(source, host)` is the one entry point for the service, the CLI, Forge and tests. It reads the workspace only through `source` and gets everything environmental from `host` (a `WorkspaceHost`); a missing field fails construction with `LOUSHO_WORKSPACE_HOST_INVALID` naming it, such as `host.stores.threads`.
+
+| Host field | What it gives the runtime |
+| --- | --- |
+| `tools` | The `HostToolRegistry`: each tool's descriptor, declared secrets and capabilities |
+| `policyCeiling` | The most the host allows; `shared/policies/policy.json` only narrows it |
+| `providers.resolve(model)` | The provider for each resolved model string; every model, the main agent's too, goes through it, so it is where a host refuses a model |
+| `secrets.resolve(ref)` | Secret values; each tool's binder gets a resolver that answers only the secrets granted to that tool |
+| `stores` | `artifacts`, `threads` (the main agent's transcripts), `runs` (rows stamped with the revision, `threadId` and the parent run), `checkpoints`, and optionally `events` (run event logs) |
+| `globals` | `agents` and `profiles` for `global:` refs |
+| `limits.maxConcurrentRuns` | Workspace and direct page runs executing at once; more wait their turn |
+| `bindTool(descriptor, scope, secrets)` | Enforces each tool's secrets, hosts and sandbox. Optional, but without it only tools whose scope grants no secrets, no hosts and no sandbox run |
+| `checks` | The check registry by name (D1). No runtime path runs criteria yet; the goal engine (P3.6) and check runs (P5.13) read it |
+| `createMemory`, `exporter`, `engines`, `newRunId` | Shared memory slots, spans, engines by type and run ids |
+
+`runtime.run(message, { threadId, pageId?, inputs?, signal?, runId? })` streams `started` (with the pinned revision), each page run's events as `page`, and `finished` with the status, the usage of the main agent plus every page, and each page's usage. `runtime.runPage(pageId, input, { signal?, runId?, threadId?, onEvent? })` runs a page directly; with `threadId` the run is noted in that thread, and the main agent can list and revise it only when it routes to that page. `cancel(runId)` aborts a workspace run, a page it started or a direct run; `explain(pageId)` gives the effective harness and its hash; `close()` aborts every run, waits for them and refuses new ones. Each run loads one revision and keeps it to the end, even when the source is written meanwhile. A `runId` that is already running is refused with `LOUSHO_WORKSPACE_RUN_ACTIVE`. The runtime keeps the page runs of its 256 most recently used threads in memory; the transcripts stay in `stores.threads`.
 
 ### Type switching
 
@@ -507,11 +639,21 @@ console.log(problems);
 
 No catalog component binds an array input; only `schemaForm` on the parent can.
 
+### The default UI
+
+A page with no `ui/page.ui.json` gets `defaultPageUi(effective, type)`: a `schemaForm` bound to `inputs` (when the harness has an input schema), a row with `runButton` and `cancelButton`, `runStatus`, `progress`, one view per output field (`markdown` for a string, `table` for an array, `text` for a number, integer or boolean, `json` for anything else, or one `json` view of `outputs` when the schema is a path, has a `$ref` or lists no fields), and an `artifactGallery` when `outputs.artifacts` is not empty. It is the same for every execution type, so switching a page's type never changes its UI, and it always passes `validateUiBindings`. `reset_page_ui` deletes the file so this default applies again; services and the CLI build it on read, from the page's effective harness. `reviseBox` and `versionList` are not in it.
+
+### Rendering a page UI
+
+`@lousho/workspaces-react` (`packages/workspaces-react`) renders a page UI in any React 18 or later app: `PageApp` takes an `ApiClient`, a workspace id and a page id, loads the UI spec and the effective input schema through the client, and draws the catalog. It never takes a URL, so a host binds the client to its own server-side proxy. Every label, title, placeholder and piece of model output is drawn as a text node; the schema blocklist above is defence in depth. Hosts theme it with the `--lousho-ui-*` CSS variables listed in the package README.
+
 ## Authoring operations
 
 Chat and forms edit a workspace through one closed set of typed operations, not raw files. `applyOps(tree, ops, { validate })` is pure: it applies the operations in order to a tree, writes only known files at their default paths (never `shared/policies/**`), and runs `validate` on the result. With any problem it returns the original tree and every problem, each naming its operation index. `validate` is required so callers pass `validateWorkspace`.
 
-The operations are: `create_workspace`, `set_workspace_field`, `create_page`, `remove_page`, `reorder_pages`, `set_page_field`, `set_harness_field`, `write_harness_prose`, `add_extends`, `remove_extends`, `set_base_harness_field`, `set_main_harness_field`, `add_criterion`, `remove_criterion`, `create_agent`, `write_agent_prose`, `attach_agent`, `detach_agent`, `set_attachment_field`, `set_execution_type`, `set_execution_config`, `write_workflow`, `write_goal`, `write_page_ui`, `reset_page_ui` and `write_shared_instruction`. `AUTHORING_OP_NAMES` lists them. Policy, secrets, the tool catalog and global agents are not in the set. Each operation validates against the file's own schema, so a forbidden key is refused here as well.
+The operations are: `create_workspace`, `set_workspace_field`, `create_page`, `remove_page`, `reorder_pages`, `set_page_field`, `set_harness_field`, `write_harness_prose`, `add_extends`, `remove_extends`, `set_base_harness_field`, `set_main_harness_field`, `add_criterion`, `remove_criterion`, `create_agent`, `write_agent_prose`, `attach_agent`, `detach_agent`, `set_attachment_field`, `set_execution_type`, `set_execution_config`, `write_workflow`, `write_goal`, `write_page_ui`, `reset_page_ui`, `write_shared_instruction`, `set_profile`, `delete_profile`, `set_resource`, `delete_resource` and `set_main_model`. `AUTHORING_OP_NAMES` lists them. Policy, secrets, the tool catalog and global agents are not in the set. Each operation validates against the file's own schema, so a forbidden key is refused here as well.
+
+`set_profile` writes a workspace harness profile (`harness-profiles/<path>/harness.json` and its prose) from a `workspace:<path>` ref. `delete_profile` removes the profile's folder. `set_resource` and `delete_resource` write and remove a text resource (`.md` or `.txt`) of a page or of the base harness; list it in the harness's `context.resources` with `set_harness_field`. `set_main_model` sets the main agent's model. Check scripts, tools, workspace workflows, brand files and the policy have no operation: a criterion's `check` may name a host-registry check by name.
 
 ```ts
 import { applyOps, validateWorkspace } from 'lousho/workspaces';
@@ -588,6 +730,7 @@ This prints PRD022, because `summarize` is listed but has no folder.
 | PRD030 | error | A workflow or goal file is missing or invalid |
 | PRD031 | warning | A main-harness limit was clamped to the workspace's |
 | PRD032 | error | A file a page harness or profile lists as prose, or any harness layer lists as a check script, resource or schema, is missing |
+| PRD033 | error | A goal names only rubric-only criteria; at least one needs an executable check (R19) |
 
 A refused tree is reported once: when a manifest is unreadable or its folders overlap, the cross-file checks do not run.
 
@@ -608,7 +751,7 @@ These are the rules the contracts enforce. The number is the rule's id in the pr
 
 ## The runtime pipeline (P1)
 
-Not built yet. The planned order, from a request to a reply, is: load the workspace from a source, resolve agents and harness layers, resolve shared context, apply policy under the host's limit, run the main agent (when there is one), route to a page, compose the page's harness, run the page's engine, validate the output against `outputs.schema`, and return a `PageResult` to the main agent. Everything the pipeline reads is defined on this page, and a new field lands in its schema, its JSON Schema and this page in the same change as its first reader.
+The page runtime (`runPage`), the main agent and router (`openWorkspaceSession`) and the workspace runtime (`createWorkspaceRuntime`) are built, above. The planned order, from a request to a reply, is: load the workspace from a source, resolve agents and harness layers, resolve shared context, apply policy under the host's limit, run the main agent (when there is one), route to a page, compose the page's harness, run the page's engine, validate the output against `outputs.schema`, and return a `PageResult` to the main agent. Everything the pipeline reads is defined on this page, and a new field lands in its schema, its JSON Schema and this page in the same change as its first reader.
 
 ## JSON Schema export
 
@@ -618,6 +761,7 @@ The structure of each file is exported as JSON Schema (draft 7) in the repositor
 | --- | --- |
 | `lousho.workspace.v1.json` | `workspace.json` |
 | `lousho.page.v1.json` | `page.json` |
+| `lousho.goal.v1.json` | `goal.json` |
 | `lousho.harness.v1.json` | `harness.json` (page, base harness or profile) |
 | `lousho.main-harness.v1.json` | `main-harness.json` |
 | `lousho.agents.v1.json` | `agents.json` |

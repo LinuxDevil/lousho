@@ -91,6 +91,23 @@
   background: var(--accent-solid);
   color: var(--on-accent);
 }
+.nav-workspace {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+}
+.nav-workspace .btn {
+  width: 100%;
+  justify-content: flex-start;
+}
+.nav-workspace .btn > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nav-rail[data-collapsed] .nav-workspace .btn {
+  width: auto;
+  justify-content: center;
+}
 .nav-rail ul {
   list-style: none;
   margin: 0;
@@ -259,6 +276,29 @@
 }
 .nav-rail[data-collapsed] .nav-label {
   display: none;
+}
+/* The Inbox waiting-count badge (R02b): a solid accent pill; the collapsed rail shows only a dot. */
+.nav-badge {
+  margin-left: auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: var(--accent-solid);
+  color: var(--on-accent);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+.nav-badge-dot {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--accent-solid);
 }
 .nav-rail[data-collapsed] .nav-daemon {
   justify-content: center;

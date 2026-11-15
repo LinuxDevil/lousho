@@ -20,7 +20,9 @@ import { errorMessage } from './errorMessage';
 import { RunStatus } from './RunStatus';
 import { useOpenTrace } from './test/useOpenTrace';
 import { ToolbarMoreMenu, type ToolbarMenuItem } from './ToolbarMoreMenu';
+import { PublishPill } from './PublishPill';
 import { navigate } from '../router/router';
+import { usePublishState } from '../state/usePublishState';
 import { useSaveVersionAction } from '../screens/agents/useSaveVersionShortcut';
 
 /** A toolbar button's 16px leading icon. */
@@ -285,6 +287,11 @@ interface TopbarProps {
   narrow?: boolean;
   openPanel?: SidePanel;
   onTogglePanel?: (panel: SidePanel) => void;
+  /**
+   * W11c: the read-only workspace's banner text - Run and Save disable
+   * with it as `title` (the server refuses the writes anyway).
+   */
+  readOnlyTitle?: string;
 }
 
 /** "Agents / <name>" with the unsaved-changes dot; the name truncates, its full text in the tooltip. */
@@ -304,13 +311,39 @@ function Breadcrumb({ showRoot = true }: { showRoot?: boolean }) {
   );
 }
 
-/** Run, or Stop while a run is in flight (the narrow bar shows one at a time). */
-function RunOrStop({ isRunning, onRun, onStop }: { isRunning: boolean; onRun: () => void; onStop: () => void }) {
+/** Run, or Stop while a run is in flight (the narrow bar shows one at a time). Schema errors block Run. */
+function RunOrStop({
+  isRunning,
+  problemErrors,
+  readOnlyTitle,
+  onRun,
+  onStop,
+}: {
+  isRunning: boolean;
+  problemErrors: number;
+  readOnlyTitle?: string;
+  onRun: () => void;
+  onStop: () => void;
+}) {
   return isRunning ? (
     <ToolButton Icon={Square} label="Stop" className="btn btn-danger btn-collapse" onClick={onStop} />
   ) : (
-    <ToolButton Icon={Play} label="Run" className="btn btn-success btn-collapse" onClick={onRun} />
+    <ToolButton
+      Icon={Play}
+      label="Run"
+      className="btn btn-success btn-collapse"
+      onClick={onRun}
+      disabled={problemErrors > 0 || readOnlyTitle !== undefined}
+      title={readOnlyTitle ?? (problemErrors > 0 ? `Fix ${problemErrors} problem${problemErrors === 1 ? '' : 's'} first` : 'Run')}
+    />
   );
+}
+
+/** The number of error-severity `validateGraph` problems - warnings never block Run. */
+function useProblemErrorCount(): number {
+  const { problems } = useAppState();
+  // `?? []`: AppState always provides `problems`; lightweight test doubles may not.
+  return (problems ?? []).reduce((count, problem) => count + (problem.severity === 'error' ? 1 : 0), 0);
 }
 
 /** The narrow "More" menu: Debug, Import, Export, Observe surface and (once known) Open trace. */
@@ -344,9 +377,11 @@ function useNarrowMenuItems(openImport: () => void, exportSpec: () => void): Too
  * Run (or Stop) and Save stay in the bar; Debug, Import, Export and the model
  * badge move into the "More actions" menu.
  */
-function NarrowTopbar({ openPanel, onTogglePanel }: Omit<TopbarProps, 'narrow'>) {
-  const { runStatus } = useAppState();
+function NarrowTopbar({ openPanel, onTogglePanel, readOnlyTitle }: Omit<TopbarProps, 'narrow'>) {
+  const { runStatus, agentId, dirty } = useAppState();
+  const publish = usePublishState(agentId);
   const provider = useModelProvider();
+  const problemErrors = useProblemErrorCount();
   const { actionError, handleRun, handleStop, handleSave, handleImport } = useRunActions();
   const { fileInput, openImport, exportSpec } = useSpecFiles(handleImport);
   const items = useNarrowMenuItems(openImport, exportSpec);
@@ -364,8 +399,17 @@ function NarrowTopbar({ openPanel, onTogglePanel }: Omit<TopbarProps, 'narrow'>)
         <RunStatus showTraceLink={false} />
       </div>
       <RunNotices runStatus={runStatus} actionError={actionError} />
-      <RunOrStop isRunning={runStatus?.status === 'running'} onRun={() => void handleRun()} onStop={() => void handleStop()} />
-      <ToolButton Icon={Save} label="Save" className="btn btn-primary btn-collapse" onClick={() => void handleSave()} />
+      <RunOrStop
+        isRunning={runStatus?.status === 'running'}
+        problemErrors={problemErrors}
+        readOnlyTitle={readOnlyTitle}
+        onRun={() => void handleRun()}
+        onStop={() => void handleStop()}
+      />
+      <ToolButton Icon={Save} label="Save" className="btn btn-primary btn-collapse" onClick={() => void handleSave()} disabled={readOnlyTitle !== undefined} title={readOnlyTitle ?? 'Save'} />
+      {publish.state !== undefined && (
+        <PublishPill agentId={agentId} state={publish.state} dirty={dirty} onPublished={() => void publish.refresh()} />
+      )}
       <ToolbarMoreMenu items={items}>
         {provider && (
           <div className="overflow-menu-env" role="none">
@@ -385,8 +429,12 @@ function NarrowTopbar({ openPanel, onTogglePanel }: Omit<TopbarProps, 'narrow'>)
  * The Build toolbar (Run/Stop/Import/Export/Save/Debug, model badge). Only the
  * Agents screen renders it; every other screen has the shell's ScreenHeader.
  */
-export function Topbar({ narrow = false, openPanel, onTogglePanel }: TopbarProps = {}) {
-  return narrow ? <NarrowTopbar openPanel={openPanel} onTogglePanel={onTogglePanel} /> : <WideTopbar />;
+export function Topbar({ narrow = false, openPanel, onTogglePanel, readOnlyTitle }: TopbarProps = {}) {
+  return narrow ? (
+    <NarrowTopbar openPanel={openPanel} onTogglePanel={onTogglePanel} readOnlyTitle={readOnlyTitle} />
+  ) : (
+    <WideTopbar readOnlyTitle={readOnlyTitle} />
+  );
 }
 
 /**
@@ -394,8 +442,10 @@ export function Topbar({ narrow = false, openPanel, onTogglePanel }: TopbarProps
  * model badge in the centre, and [Debug] [Stop][Run] | [Import][Export] [Save]
  * on the right.
  */
-function WideTopbar() {
-  const { runStatus } = useAppState();
+function WideTopbar({ readOnlyTitle }: { readOnlyTitle?: string }) {
+  const { runStatus, agentId, dirty } = useAppState();
+  const publish = usePublishState(agentId);
+  const problemErrors = useProblemErrorCount();
   const { actionError, handleRun, handleStop, handleSave, handleImport } = useRunActions();
   const { fileInput, openImport, exportSpec } = useSpecFiles(handleImport);
 
@@ -423,12 +473,15 @@ function WideTopbar() {
         */}
         <DebugToggle />
         <ToolButton Icon={Square} label="Stop" className="btn btn-danger collapse-2" onClick={() => void handleStop()} disabled={!isRunning} />
-        <ToolButton Icon={Play} label="Run" className="btn btn-success" onClick={() => void handleRun()} disabled={isRunning} />
+        <ToolButton Icon={Play} label="Run" className="btn btn-success" onClick={() => void handleRun()} disabled={isRunning || problemErrors > 0 || readOnlyTitle !== undefined} title={readOnlyTitle ?? (problemErrors > 0 ? `Fix ${problemErrors} problem${problemErrors === 1 ? '' : 's'} first` : 'Run')} />
         <span className="toolbar-divider" aria-hidden="true" />
         <ToolButton Icon={Upload} label="Import" className="btn btn-ghost collapse-1" onClick={openImport} />
         {fileInput}
         <ToolButton Icon={Download} label="Export" className="btn btn-ghost collapse-1" onClick={exportSpec} />
-        <ToolButton Icon={Save} label="Save" className="btn btn-primary" onClick={() => void handleSave()} />
+        <ToolButton Icon={Save} label="Save" className="btn btn-primary" onClick={() => void handleSave()} disabled={readOnlyTitle !== undefined} title={readOnlyTitle ?? 'Save'} />
+        {publish.state !== undefined && (
+          <PublishPill agentId={agentId} state={publish.state} dirty={dirty} onPublished={() => void publish.refresh()} />
+        )}
       </div>
     </header>
   );

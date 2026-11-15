@@ -92,6 +92,9 @@ export const ERROR_CODES = {
   /** The approvals route got a body without `approved` or `answer` (`400`). */
   LOUSHO_APPROVAL_DECISION_INVALID: "Send a JSON body with 'approved' (true or false, and an optional 'note') or, for a question, 'answer'.",
   LOUSHO_APPROVAL_KIND_MISMATCH: "'answer' decides a question pause only; a tool-call pause takes 'approved' (a question also answers with 'approved' and the answer as 'note').",
+  /** `modelAutoApprover`'s reply carried no usable `{ safety, reason }` verdict. */
+  LOUSHO_AUTO_APPROVAL_INVALID:
+    'Check the auto approver\'s model and prompt: its reply must be a JSON object { "safety": <0..1>, "reason": "<text>" } (prose around it is fine).',
   LOUSHO_SESSION_FORBIDDEN: 'Use a session the route\'s authorizeSession lets this caller read, continue or decide approvals in.',
   /** A session route refused a cross-site POST or a `Host` outside `allowedHosts` (`403`). */
   LOUSHO_REQUEST_FORBIDDEN: "Call from the server's own origin (or add the page's origin to allowedOrigins) and use a Host the server allows (allowedHosts).",
@@ -171,6 +174,24 @@ export const ERROR_CODES = {
   LOUSHO_WORKSPACE_CONTENT_UNSUPPORTED: 'Remove the NUL characters from the file the message names; a database workspace source stores text only.',
   /** A workspace read through a source has validation errors. */
   LOUSHO_WORKSPACE_INVALID: 'Read error.problems: each has a code, a file and a field path. Fix those files and load the workspace again.',
+  /** A page's agent reference names no agent folder, or no global agent version matches it. */
+  LOUSHO_WORKSPACE_AGENT_UNRESOLVED: "Check the ref in the page's agents.json: a workspace or local agent needs its folder, and a global ref needs a globalRegistry with a version in its range.",
+  /** A main harness lists an instruction file for which no text was supplied. */
+  LOUSHO_WORKSPACE_MAIN_HARNESS_TEXT_MISSING: 'Pass the text of every file listed in main-harness.json instructions, keyed by main-agent/harness/<file>, or remove the name from the list.',
+  /** A page requires a capability no tool in its effective toolset provides (`capability-missing`). */
+  LOUSHO_WORKSPACE_CAPABILITY_MISSING: "Give an attached agent a host tool that provides the capability and that the workspace policy and the host ceiling allow, or drop it from the harness's capabilities.require.",
+  /** A page's execution type has no engine in the runtime's engine registry (`engine-unknown`). */
+  /** `runPage` was given a page id the workspace does not list (`page-unknown`). */
+  LOUSHO_WORKSPACE_PAGE_UNKNOWN: "Pass a page id listed in workspace.json pages that has a pages/<id>/page.json.",
+  LOUSHO_WORKSPACE_ENGINE_UNKNOWN: "Set the page's execution.type to a type the runtime has an engine for, or pass an engines registry that has one.",
+  /** `workspace.run` without a `pageId` on a workspace whose `mainAgent` is `null` (`no-main-agent`). */
+  LOUSHO_WORKSPACE_NO_MAIN_AGENT: 'Pass the page to run as pageId, or call runPage; a workspace with mainAgent null has no router.',
+  /** `createWorkspaceRuntime` got a host that misses a dependency, or a tool's secrets, hosts or sandbox need a `bindTool` the host did not give. */
+  LOUSHO_WORKSPACE_HOST_INVALID: 'Give the host the field the message names; pass bindTool when a policy grants a tool secrets or hosts, or requires a sandbox.',
+  /** `run` or `runPage` got a `runId` that is already active in the runtime. */
+  LOUSHO_WORKSPACE_RUN_ACTIVE: 'Pass a run id that is not running, or leave runId out so the runtime makes one.',
+  /** A call on a workspace runtime after `close()`. */
+  LOUSHO_WORKSPACE_RUNTIME_CLOSED: 'Create a new runtime with createWorkspaceRuntime; a closed one takes no runs.',
 } as const;
 
 /** A stable error code, e.g. `'LOUSHO_CONFIG_MISSING_PROVIDER'`. */

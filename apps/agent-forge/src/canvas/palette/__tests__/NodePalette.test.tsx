@@ -61,6 +61,18 @@ describe('NodePalette', () => {
     appState.setSelectedNodeId.mockClear();
   });
 
+  it('renders grouped sections with counts and a search box', () => {
+    const container = mount();
+    const heads = [...container.querySelectorAll('.palette-group-head')];
+    expect(heads.length).toBeGreaterThan(0);
+    expect(heads[0].getAttribute('aria-expanded')).toBe('true');
+    expect(heads[0].querySelector('.palette-group-name')?.textContent).toBe('Start');
+    expect(heads[0].querySelector('.palette-count')?.classList.contains('tabular-nums')).toBe(true);
+    const input = searchInput(container);
+    expect(input.getAttribute('aria-label')).toBe('Search nodes');
+    expect(input.placeholder).toBe('Search nodes');
+  });
+
   it('filters on search, expands matching groups and offers a clear button on no match', () => {
     const container = mount();
     // Collapse Safety first: a search must expand it again while active.
@@ -72,7 +84,7 @@ describe('NodePalette', () => {
 
     typeInto(searchInput(container), 'appr');
     const items = paletteItems(container);
-    expect(items.map((el) => el.getAttribute('aria-label'))).toEqual(['Permission rule']);
+    expect(items.map((el) => el.getAttribute('aria-label'))).toEqual(['Permission rule', 'Ask for approval']);
     expect(safetyHead.getAttribute('aria-expanded')).toBe('true');
 
     typeInto(searchInput(container), 'zzz-no-match');
@@ -144,6 +156,16 @@ describe('NodePalette', () => {
     expect(appState.setGraph).not.toHaveBeenCalled();
   });
 
+  it('drags the entry id under the shared palette MIME type', () => {
+    const container = mount();
+    const item = itemByLabel(container, 'Note');
+    const dataTransfer = { setData: vi.fn(), effectAllowed: '' };
+    const event = new Event('dragstart', { bubbles: true });
+    Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+    act(() => item.dispatchEvent(event));
+    expect(dataTransfer.setData).toHaveBeenCalledWith('application/agent-forge-node-type', 'note');
+  });
+
   it('ArrowDown/ArrowUp in the search box move focus into the item list', () => {
     const container = mount();
     const input = searchInput(container);
@@ -157,6 +179,21 @@ describe('NodePalette', () => {
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
     });
     expect(document.activeElement).toBe(last);
+  });
+
+  it('keeps exactly one tab stop when the first group is collapsed', () => {
+    const container = mount();
+    const startHead = [...container.querySelectorAll<HTMLButtonElement>('.palette-group-head')].find(
+      (h) => h.querySelector('.palette-group-name')?.textContent === 'Start',
+    )!;
+    act(() => startHead.click());
+    const tabbable = [...container.querySelectorAll<HTMLButtonElement>('.node-palette-item')].filter(
+      (el) => el.tabIndex === 0,
+    );
+    expect(tabbable).toHaveLength(1);
+    // The tab stop belongs to a rendered (expanded) item, not the collapsed Start group.
+    expect(tabbable[0].closest('.palette-group-items')).not.toBeNull();
+    expect(tabbable[0].getAttribute('aria-label')).not.toBe('Chat');
   });
 
   it('/ focuses the search box but not from an editable target', () => {

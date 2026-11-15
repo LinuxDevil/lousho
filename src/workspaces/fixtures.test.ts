@@ -1,8 +1,11 @@
-
+import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import type { Check } from '../evals/checks';
 import { flowSpecSchema } from '../spec/v2/flow';
 import { attachmentsSchema } from './contracts/agentRefs';
+import { applyOps } from './contracts/authoringOps';
+import { MARKETING_BUILD_OPS, NOT_WRITABLE, normal } from './contracts/__fixtures__/authoringOps';
 import { baseHarnessLayer, baseHarnessSchema, type HarnessLayer, type WorkspaceTree } from './contracts/baseHarness';
 import { composeHarness, type EffectiveHarness } from './contracts/compose';
 import { hasExecutableCriterion, harnessProfileSchema, harnessSchema, type Harness } from './contracts/harness';
@@ -31,9 +34,13 @@ const ROUTES: [RegExp, Parser][] = [
   [/^pages\/[^/]+\/workflow\.json$/, flowSpecSchema],
 ];
 
+const WITHOUT_SCHEMA: RegExp[] = [/\.md$/, /\.ts$/, /(^|\/)agent\.json$/, /(^|\/)goal\.json$/, /^shared\/brand\/palette\.json$/];
+
 const POSITIVE = ['marketing', 'ops-desk', 'coding'];
 
 const parserFor = (path: string): Parser | undefined => ROUTES.find(([pattern]) => pattern.test(path))?.[1];
+
+const hasNoSchema = (path: string): boolean => WITHOUT_SCHEMA.some((pattern) => pattern.test(path));
 
 interface FileProblem {
   file: string;
@@ -47,6 +54,8 @@ function parseProblems(path: string, value: unknown): FileProblem[] {
 }
 
 const fileProblems = (tree: WorkspaceTree): FileProblem[] => Object.entries(tree).flatMap(([path, value]) => parseProblems(path, value));
+
+const unclassified = (tree: WorkspaceTree): string[] => Object.keys(tree).filter((path) => parserFor(path) === undefined && !hasNoSchema(path));
 
 const asRecord = (value: unknown): Record<string, unknown> => value as Record<string, unknown>;
 
@@ -130,7 +139,18 @@ function integrityProblems(tree: WorkspaceTree): string[] {
   return problems;
 }
 
+function hash(value: unknown): string {
+  return createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
+}
+
 describe('positive fixtures', () => {
+  it('every file in the positive fixtures parses with its schema', () => {
+    for (const name of POSITIVE) {
+      const tree = readFixtureTree(name);
+      expect(fileProblems(tree), name).toEqual([]);
+      expect(unclassified(tree), name).toEqual([]);
+    }
+  });
 
   for (const name of POSITIVE) {
     const tree = readFixtureTree(name);
@@ -148,6 +168,88 @@ describe('positive fixtures', () => {
       expect(integrityProblems(tree)).toEqual([]);
     });
   }
+
+  it('Marketing has a base harness and a main-agent harness that cross-check against workspace.json', () => {
+    const tree = readFixtureTree('marketing');
+    const base = baseHarnessLayer(tree);
+    expect(base?.harness.constraints).toHaveLength(1);
+    expect(base?.harness.evaluation?.criteria.filter((criterion) => criterion.check)).toHaveLength(1);
+    const main = mainHarnessSchema.parse(tree['main-agent/harness/main-harness.json']);
+    expect(crossCheckMainHarness(main, manifestOf(tree))).toEqual({ errors: [], warnings: [] });
+    expect(main.routes?.map((route) => route.page)).toEqual(manifestOf(tree).pages);
+    expect(main.clarify).toBeDefined();
+    expect(main.limits?.maxConcurrentPages).toBeDefined();
+    for (const id of pageIds(tree)) expect(composePage(tree, id).sources[0]).toBe('workspace base');
+  });
+
+  it('Marketing pages cover workflow, multi-agent and goal-oriented, and Instagram keeps inactive blocks', () => {
+    const tree = readFixtureTree('marketing');
+    expect(pageIds(tree).map((id) => pageOf(tree, id).execution.type)).toEqual(['workflow', 'multi-agent', 'goal-oriented']);
+    const instagram = pageOf(tree, 'instagram-videos').execution;
+    expect(instagram.multiAgent).toBeDefined();
+    expect(instagram.goal).toBeDefined();
+    const research = pageOf(tree, 'content-research').execution;
+    expect(research.goal?.lead).toBe('lead');
+    expect(research.goal?.delegates).toEqual(['script']);
+    expect(aliasesOf(tree, 'content-research')).toEqual(['lead', 'script']);
+  });
+
+  it('Marketing policy allows the three tools and puts publish_* behind approvals', () => {
+    const policy = workspacePolicySchema.parse(readFixtureTree('marketing')['shared/policies/policy.json']);
+    expect(policy.tools.allow).toEqual(expect.arrayContaining(['render_video', 'synthesize_voice', 'search_facts']));
+    expect(policy.approvals?.require).toEqual(['publish_*']);
+  });
+
+  it('ops-desk has three pages and no main agent', () => {
+    const tree = readFixtureTree('ops-desk');
+    expect(manifestOf(tree).mainAgent).toBeNull();
+    expect(pageIds(tree)).toHaveLength(3);
+    expect(Object.keys(tree).some((path) => path.startsWith('main-agent/'))).toBe(false);
+  });
+
+  it('coding has investigate, fix, review and a support-triage page in the support domain', () => {
+    const tree = readFixtureTree('coding');
+    expect(pageIds(tree)).toEqual(['investigate', 'fix', 'review', 'support-triage']);
+    expect(pageOf(tree, 'fix').domain).toBe('coding');
+    expect(pageOf(tree, 'support-triage').domain).toBe('support');
+  });
+
+  it('global-agents holds the one global fact-checker that ops-desk references', () => {
+    const tree = readFixtureTree('global-agents');
+    expect(Object.keys(tree).filter((path) => path.endsWith('agent.json'))).toEqual(['fact-checker/agent.json']);
+    expect(asRecord(tree['fact-checker/agent.json']).version).toBe('1.0.0');
+    const refs = attachmentsSchema.parse(readFixtureTree('ops-desk')['pages/reply-drafts/agents.json']).agents.map((agent) => agent.ref);
+    expect(refs).toContain('global:fact-checker@^1.0.0');
+  });
+
+  it('Instagram and Facebook reference the same three agents and no agent file is copied', () => {
+    const tree = readFixtureTree('marketing');
+    const agentPaths = Object.keys(tree).filter((path) => path.startsWith('agents/'));
+    const names = [...new Set(agentPaths.map((path) => path.split('/')[1]))].sort();
+    expect(names).toEqual(['script-maker', 'video-maker', 'voice-maker']);
+    const folderHashes = names.map((name) => hash(agentPaths.filter((path) => path.startsWith(`agents/${name}/`)).map((path) => [path, tree[path]])));
+    expect(new Set(folderHashes).size).toBe(3);
+    const refsOf = (id: string): string[] => attachmentsSchema.parse(tree[`pages/${id}/agents.json`]).agents.map((agent) => agent.ref);
+    expect(refsOf('instagram-videos')).toEqual(names.map((name) => `workspace:${name}`));
+    expect(refsOf('facebook-videos')).toEqual(refsOf('instagram-videos'));
+    const agentFileHashes = new Set(agentPaths.map((path) => hash(tree[path])));
+    const copies = Object.keys(tree).filter((path) => !path.startsWith('agents/') && agentFileHashes.has(hash(tree[path])));
+    expect(copies).toEqual([]);
+    const strays = Object.keys(tree).filter((path) => /\/agents\/(script|video|voice)-maker\//.test(path));
+    expect(strays).toEqual([]);
+  });
+
+  it('the ops-built Marketing tree equals the fixture on every file the operations write', () => {
+    const fixture = readFixtureTree('marketing');
+    const result = applyOps({}, MARKETING_BUILD_OPS, { validate: () => [] });
+    expect(result.problems).toEqual([]);
+    const built = result.tree;
+    expect(Object.keys(built).length).toBeGreaterThan(30);
+    const differing = Object.keys(built).filter((path) => !(path in fixture) || !isDeepStrictEqual(normal(built[path]), normal(fixture[path])));
+    expect(differing).toEqual([]);
+    const onlyInFixture = Object.keys(fixture).filter((path) => !(path in built));
+    expect(onlyInFixture.filter((path) => !NOT_WRITABLE.some((pattern) => pattern.test(path)))).toEqual([]);
+  });
 });
 
 describe('R19 check modules', () => {
@@ -192,6 +294,23 @@ describe('negative fixtures', () => {
     },
   };
 
+  it('there are 23 negatives with distinct names and 23 distinct codes', () => {
+    expect(index.cases).toHaveLength(23);
+    expect(new Set(index.cases.map((item) => item.name)).size).toBe(23);
+    expect(new Set(index.cases.map((item) => item.code)).size).toBe(23);
+    expect(index.cases.every((item) => /^PRD\d{3}$/.test(item.code))).toBe(true);
+    expect(index.cases.find((item) => item.name === 'rubric-only-improvable')?.code).toBe('PRD017');
+    for (const item of index.cases) expect(item.file in treeOf(item), `${item.name} names ${item.file}`).toBe(true);
+  });
+
+  it('the base workspace has no per-file problems and is internally consistent', () => {
+    const tree = readNegativeTree(index.base);
+    expect(fileProblems(tree)).toEqual([]);
+    expect(unclassified(tree)).toEqual([]);
+    expect(integrityProblems(tree)).toEqual([]);
+    expect(composePage(tree, 'main').sources).toEqual(['page']);
+  });
+
   for (const item of only('schema')) {
     it(`${item.name} fails its schema in ${item.file} with the named error`, () => {
       const problems = fileProblems(treeOf(item));
@@ -213,4 +332,18 @@ describe('negative fixtures', () => {
       expect(fileProblems(treeOf(item))).toEqual([]);
     });
   }
+
+  it('the validateWorkspace-only cases are exactly the cross-file negatives P0.10 drives', () => {
+    expect(only('validateWorkspace').map((item) => item.name)).toEqual([
+      'policy-outside-shared',
+      'main-harness-route-missing-page',
+      'goal-check-missing-criterion',
+      'goal-rubric-only',
+      'inactive-block-unknown-alias',
+      'workflow-unknown-alias',
+      'workspace-ref-missing-folder',
+      'page-folder-not-listed',
+      'page-listed-missing-folder',
+    ]);
+  });
 });

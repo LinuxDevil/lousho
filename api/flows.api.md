@@ -28,6 +28,7 @@ interface AgentConfig {
     prompt?: string;
     // (undocumented)
     settings?: AgentSettings;
+    spanAttributes?: Readonly<Record<string, string | number>>;
     // (undocumented)
     tools?: Record<string, ToolConfiguration>;
 }
@@ -301,6 +302,14 @@ export interface EndNode extends NodeRunOptions {
     value?: unknown;
 }
 
+// @public
+export interface EvaluateOptions {
+    readonly bindPlaceholders?: boolean;
+}
+
+// @public
+export function evaluateSafeExpression(expression: string, scope: Scope, options?: EvaluateOptions): unknown;
+
 // @public (undocumented)
 export interface EvaluatorNode {
     // (undocumented)
@@ -311,6 +320,17 @@ export interface EvaluatorNode {
     subFlow: EditorStep;
     // (undocumented)
     type: 'evaluator';
+}
+
+// @public
+export class ExpressionError extends Error {
+    constructor(expression: string, position: number, reason: string);
+    // (undocumented)
+    readonly expression: string;
+    // (undocumented)
+    readonly position: number;
+    // (undocumented)
+    readonly reason: string;
 }
 
 // @public
@@ -1232,6 +1252,9 @@ interface SchemaIssue {
         readonly key: PropertyKey;
     }>;
 }
+
+// @public (undocumented)
+type Scope = Record<string, unknown>;
 
 // @public
 export interface SequenceNode extends NodeRunOptions {

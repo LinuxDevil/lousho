@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Handle, Position } from '@xyflow/react';
-import type { Graph, GraphNode } from '../graph/v2/types';
+import { CircleAlert, Pin, TriangleAlert } from 'lucide-react';
+import type { Graph, GraphNode, Problem } from '../graph/v2/types';
 import { StatusPill } from '../ui/StatusPill';
 import { viewFor } from './kinds';
 
@@ -21,25 +22,38 @@ export interface CanvasNodeData extends Record<string, unknown> {
   hasBreakpoint?: boolean;
   /** This node's status in the current run (see nodeStatus.ts); omitted reads idle. */
   status?: string;
+  /** This node's validation problems (`validateGraph`, C19); omitted or empty draws no badge. */
+  problems?: Problem[];
   /** Opens the node spans sheet for this node (AppState.openNodeSpans); omitted renders the pill inert. */
   onViewSpans?: (nodeId: string) => void;
+  /** True when a tool result is pinned for this node (T04 "run from here"); renders the Pin badge. */
+  pinned?: boolean;
   /** The whole graph, for kind titles that read sibling nodes (the abort listener names its trigger). */
   graph?: Graph;
   /** Group nodes only: how many descendants the group hides while collapsed. */
   insideCount?: number;
+  /** `meta.enabled` of the open agent (R09); false dims non-chat trigger nodes. Absent reads enabled. */
+  agentEnabled?: boolean;
+  /**
+   * True on a canvas that shows a graph it does not own (X06b's code-agent
+   * view): node affordances that would write through `AppState.setGraph`
+   * (the group collapse toggle) render disabled.
+   */
+  readOnly?: boolean;
 }
 
 /** The flag-driven class list of a card or a group container ('rf-node' / 'rf-group' + state flags). */
 export function cardClassName(
   base: 'rf-node' | 'rf-group',
   selected: boolean | undefined,
-  data: Pick<CanvasNodeData, 'highlighted' | 'hasBreakpoint' | 'status' | 'graphNode'>
+  data: Pick<CanvasNodeData, 'highlighted' | 'hasBreakpoint' | 'status' | 'problems' | 'graphNode'>
 ): string {
   const flags: [string, boolean | undefined][] = [
     ['selected', selected],
     ['highlighted', data.highlighted],
     ['has-breakpoint', data.hasBreakpoint],
     ['running', data.status === 'running'],
+    ['has-error', data.problems?.some((p) => p.severity === 'error')],
     ['paused', data.status === 'paused'],
     ['error', data.status === 'error'],
     ['done', data.status === 'done'],
@@ -47,6 +61,34 @@ export function cardClassName(
     [`proposed-${data.graphNode.proposed}`, data.graphNode.proposed !== undefined],
   ];
   return [base, ...flags.filter(([, on]) => on).map(([name]) => name)].join(' ');
+}
+
+/** The worst severity among `problems` (errors outrank warnings). */
+function worstSeverity(problems: readonly Problem[]): Problem['severity'] {
+  return problems.some((p) => p.severity === 'error') ? 'error' : 'warning';
+}
+
+/**
+ * The top-right validation badge (C19): a severity icon and the problem
+ * count. Errors draw `CircleAlert` in `--danger`, warnings-only
+ * `TriangleAlert` in `--warning`; the tooltip is the first message and
+ * the count is the accessible name (`<n> problems`).
+ */
+function ProblemBadge({ problems }: { problems: readonly Problem[] }): JSX.Element | null {
+  if (problems.length === 0) return null;
+  const severity = worstSeverity(problems);
+  const Icon = severity === 'error' ? CircleAlert : TriangleAlert;
+  return (
+    <span
+      className={`node-problem node-problem-${severity}`}
+      role="img"
+      aria-label={`${problems.length} problem${problems.length === 1 ? '' : 's'}`}
+      title={problems[0].message}
+    >
+      <Icon size={14} strokeWidth={1.75} aria-hidden="true" />
+      <span className="node-problem-count">{problems.length}</span>
+    </span>
+  );
 }
 
 function NodeRows({ rows }: { rows: { k: string; v: string }[] }) {
@@ -72,17 +114,22 @@ function NodeRows({ rows }: { rows: { k: string; v: string }[] }) {
 export function NodeCardHead({
   node,
   status,
+  problems,
   className,
   children,
   graph,
   onViewSpans,
+  pinned,
 }: {
   node: GraphNode;
   status?: string;
+  problems?: readonly Problem[];
   className?: string;
   children?: ReactNode;
   graph?: Graph;
   onViewSpans?: (nodeId: string) => void;
+  /** Shows the "Pinned result" badge (T04) - set on tool nodes with a pin. */
+  pinned?: boolean;
 }): JSX.Element {
   const view = viewFor(node.kind);
   const title = view.title(node as never, graph);
@@ -108,12 +155,18 @@ export function NodeCardHead({
     );
   return (
     <div className={['rf-node-head', className].filter(Boolean).join(' ')}>
-      <span className={`node-kind kind-${view.tone}`} aria-hidden="true">
+      <span className={`node-kind kind-${view.toneFor?.(node as never) ?? view.tone}`} aria-hidden="true">
         <Icon size={14} strokeWidth={1.75} />
       </span>
       <span className="rf-node-title" title={title}>
         {title}
       </span>
+      {pinned === true && (
+        <span className="node-pin-badge" role="img" aria-label="Pinned result" title="Pinned result">
+          <Pin size={12} strokeWidth={1.75} aria-hidden="true" />
+        </span>
+      )}
+      {problems !== undefined && <ProblemBadge problems={problems} />}
       {pillOrButton}
       {children}
     </div>
@@ -138,19 +191,33 @@ export function NodeCard({
   headAction?: ReactNode;
   extraChips?: string[];
 }): JSX.Element {
-  const { graphNode, status } = data;
+  const { graphNode, status, problems } = data;
   const view = viewFor(graphNode.kind);
   const chip = view.chip?.(graphNode as never);
   const rows = view.rows(graphNode as never);
   const chips = [...(chip !== undefined ? [chip] : []), ...(extraChips ?? [])];
   // A proposal-edited node carries an "edited" marker chip (C21).
   const edited = graphNode.proposed === 'edit';
+  // R09: a turned-off agent's non-chat trigger nodes dim with the contract tooltip.
+  const triggerOff = data.agentEnabled === false && graphNode.kind === 'trigger' && graphNode.data.item.type !== 'chat';
 
   return (
-    <div className={cardClassName('rf-node', selected, data)} data-node-kind={graphNode.kind} data-node-id={graphNode.id}>
+    <div
+      className={`${cardClassName('rf-node', selected, data)}${triggerOff ? ' node-trigger-off' : ''}`}
+      data-node-kind={graphNode.kind}
+      data-node-id={graphNode.id}
+      title={triggerOff ? 'Off — triggers won\'t fire' : undefined}
+    >
       {view.ports.in && <Handle type="target" position={Position.Left} className="rf-port rf-port-in" />}
       {view.ports.out && <Handle type="source" position={Position.Right} className="rf-port rf-port-out" />}
-      <NodeCardHead node={graphNode} status={status} graph={data.graph} onViewSpans={data.onViewSpans}>
+      <NodeCardHead
+        node={graphNode}
+        status={status}
+        problems={problems}
+        graph={data.graph}
+        onViewSpans={data.onViewSpans}
+        pinned={data.pinned}
+      >
         {headAction}
       </NodeCardHead>
       {(chips.length > 0 || edited) && (

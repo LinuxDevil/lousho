@@ -1,6 +1,6 @@
 {
   "name": "lousho",
-  "version": "1.0.0-alpha.117",
+  "version": "1.0.0-alpha.120",
   "description": "TypeScript AI agent SDK with tools, MCP, durable sessions, human approvals, and OpenTelemetry. Runs in your own Node process.",
   "workspaces": [
     "apps/*",
@@ -183,6 +183,16 @@
         "default": "./dist/improve/index.js"
       }
     },
+    "./goals": {
+      "import": {
+        "types": "./dist/goals/index.d.mts",
+        "default": "./dist/goals/index.mjs"
+      },
+      "require": {
+        "types": "./dist/goals/index.d.ts",
+        "default": "./dist/goals/index.js"
+      }
+    },
     "./workspaces": {
       "import": {
         "types": "./dist/workspaces/index.d.mts",
@@ -252,7 +262,18 @@
         "types": "./dist/svelte/index.d.ts",
         "default": "./dist/svelte/index.js"
       }
-    }
+    },
+    "./observe": {
+      "import": {
+        "types": "./dist/observe/index.d.mts",
+        "default": "./dist/observe/index.mjs"
+      },
+      "require": {
+        "types": "./dist/observe/index.d.ts",
+        "default": "./dist/observe/index.js"
+      }
+    },
+    "./schemas/*": "./schemas/*"
   },
   "typesVersions": {
     "*": {
@@ -315,6 +336,9 @@
       ],
       "svelte": [
         "dist/svelte/index.d.ts"
+      ],
+      "observe": [
+        "dist/observe/index.d.ts"
       ]
     }
   },
@@ -333,10 +357,6 @@
     "bin",
     "registry/dist",
     "templates",
-    "apps/agent-forge/package.json",
-    "apps/agent-forge/dist",
-    "apps/agent-forge/dist-server",
-    "!apps/agent-forge/dist-server/*.map",
     "README.md",
     "llms.txt",
     "docs/*.md",
@@ -394,7 +414,7 @@
     "pipeline:demo:trigger": "tsx examples/ops-pipeline/mocks/sendSyntheticError.ts",
     "build:studio": "npm run build:studio --workspace apps/agent-forge",
     "test:e2e:studio": "npm run test:e2e:studio --workspace apps/agent-forge",
-    "prepublishOnly": "npm run build && npm run build:studio",
+    "prepublishOnly": "npm run build",
     "prepack": "node scripts/prepack-check.mjs",
     "docs:build": "typedoc",
     "docs:ratchet": "tsx scripts/typedoc-ratchet.ts",
@@ -410,6 +430,7 @@
     "example:openrouter": "tsx examples/openrouter/index.ts",
     "size-check": "tsx scripts/size-check.ts",
     "pack-smoke": "tsx scripts/pack-smoke.ts",
+    "pack-smoke:studio": "tsx scripts/pack-smoke-studio.ts",
     "registry:build": "tsx scripts/build-registry.ts",
     "registry:check": "tsx scripts/build-registry.ts --check",
     "workspaces:schema": "tsx scripts/workspaces-schema.ts",
@@ -528,6 +549,7 @@
     "@ai-sdk/openai": "^0.0.42",
     "@earendil-works/pi-ai": "^1.0.3",
     "@earendil-works/pi-coding-agent": "^1.0.2",
+    "@electric-sql/pglite": "^0.5.16",
     "@microsoft/api-extractor": "^7.59.3",
     "@modelcontextprotocol/sdk": "^1.31.0",
     "@opentelemetry/api": "^1.9.1",
@@ -535,6 +557,7 @@
     "@opentelemetry/sdk-trace-node": "^2.11.0",
     "@types/dockerode": "^4.0.1",
     "@types/node": "^20",
+    "@types/pg": "^8.23.1",
     "@types/prompts": "^2.4.9",
     "@types/react": "^18.3.31",
     "@types/react-test-renderer": "^18.3.1",
@@ -547,6 +570,7 @@
     "eslint": "^10.11.0",
     "fallow": "^3.31.0",
     "husky": "^9.1.7",
+    "pg": "^8.23.1",
     "prompts": "^2.4.2",
     "quickjs-emscripten": "^0.32.0",
     "react": "^18.3.1",

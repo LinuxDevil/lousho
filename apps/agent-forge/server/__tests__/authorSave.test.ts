@@ -18,7 +18,9 @@ import type { AuthorTurnRunner } from '../author/turnRunner';
 import type {
   AuthorAssistantMessage,
   AuthorMessage,
+  AuthorSaveResponse,
   AuthorSession,
+  AuthorUserMessage,
   ProposalOutput,
 } from '../../shared/authorWire';
 
@@ -128,6 +130,48 @@ describe('POST /assistant/sessions/:id/save', () => {
     return authed(request(app).post(`/assistant/sessions/${sessionId}/save`)).send({ proposalId });
   }
 
+  it('saves the newest card: 200, files written disabled, transcript ends with the uiEvent message', async () => {
+    const session = await createSession();
+    await seed(session.id, [
+      { id: 'm_u1', role: 'user', text: 'build me a card bot', at: '2026-01-01T00:00:00.000Z' },
+      cardMessage('call_p1', 'proposeAgent', { draft: {} }, card('call_p1')),
+    ]);
+
+    const res = await apply(session.id, 'call_p1');
+    expect(res.status).toBe(200);
+    const body = res.body as AuthorSaveResponse;
+    expect(body).toMatchObject({ ok: true, agentId: 'card-bot', version: 1, name: 'Card bot', enabled: false });
+    expect(body.message).toMatchObject({
+      role: 'user',
+      text: '',
+      uiEvent: { kind: 'save', proposalId: 'call_p1', agentId: 'card-bot', version: 1 },
+    });
+
+    // The write: spec, disabled author-stamped meta, version 1.
+    expect(await repo.readSpec('card-bot')).toEqual(CARD_SPEC);
+    const meta = await repo.readMeta('card-bot');
+    expect(meta.enabled).toBe(false);
+    expect(meta.createdFrom).toEqual({ kind: 'author', ref: session.id });
+
+    // The transcript's last message is the uiEvent the body echoed.
+    const stored = await sessions.get(session.id);
+    const last = stored?.transcript.at(-1) as AuthorUserMessage;
+    expect(last).toMatchObject({
+      role: 'user',
+      text: '',
+      uiEvent: { kind: 'save', proposalId: 'call_p1', agentId: 'card-bot', version: 1 },
+    });
+    expect(last.id).toBe(body.message.id);
+    const version = JSON.parse(
+      fs.readFileSync(path.join(baseDir, '.lousho', 'agents', 'card-bot', 'versions', '000001.json'), 'utf8')
+    ) as { requestText: string | null; authorSessionId: string | null; source: string };
+    expect(version).toMatchObject({
+      source: 'author',
+      requestText: 'build me a card bot',
+      authorSessionId: session.id,
+    });
+  });
+
   it('a second Apply of the same card -> 400 ALREADY_SAVED', async () => {
     const session = await createSession();
     await seed(session.id, [cardMessage('call_p1', 'proposeAgent', { draft: {} }, card('call_p1'))]);
@@ -182,7 +226,35 @@ describe('POST /assistant/sessions/:id/save', () => {
     expect(await repo.readSpec('triage')).toEqual(onDisk);
   });
 
-  it.each([{}, 'text'])(
+  it('an update Apply writes the card spec as an author version', async () => {
+    const saved: AgentSpecV2 = { ...CARD_SPEC, name: 'Triage' };
+    await repo.writeSpec('triage', saved);
+    await repo.writeMeta('triage', { ...defaultMeta('2026-01-01T00:00:00.000Z'), enabled: true });
+    const update = card('call_u1', {
+      kind: 'update',
+      agentId: 'triage',
+      spec: { ...saved, description: 'Card description' },
+      baseSpecHash: specHash(saved),
+      enabled: true,
+    });
+    const session = await createSession();
+    await seed(session.id, [
+      cardMessage('call_u1', 'proposeAgentUpdate', { agentId: 'triage', patch: {} }, update),
+    ]);
+
+    const res = await apply(session.id, 'call_u1');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, agentId: 'triage', version: 1, enabled: true });
+    expect((await repo.readSpec('triage'))?.description).toBe('Card description');
+  });
+
+  it('404 when the session does not exist', async () => {
+    const res = await apply('as_0000000000000000', 'call_p1');
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'Chat not found.', code: 'NOT_FOUND' });
+  });
+
+  it.each([{}, { proposalId: 5 }, { proposalId: '' }, { proposalId: 'x'.repeat(201) }, 'text'])(
     'a malformed body %j -> 400',
     async (body) => {
       const session = await createSession();

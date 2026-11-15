@@ -47,7 +47,7 @@ export function usePaletteActions() {
       .filter((n) => (absolute ? n.owner === null || n.owner === ROOT_AGENT_ID : n.owner === owner))
       .map((n) => n.position);
     const { graph: next, nodeId } = addNode(graph, entry.create(graph, owner), freeSpot(siblings, position), owner);
-    setGraph(() => next);
+    setGraph(() => entry.afterAdd?.(next, nodeId, selectedNodeId) ?? next);
     setSelectedNodeId(nodeId);
     setNotice(`Added ${entry.label} to ${paletteOwnerTitle(graph, owner)}.`);
   }

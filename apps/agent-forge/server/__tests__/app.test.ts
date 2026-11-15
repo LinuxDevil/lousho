@@ -91,6 +91,12 @@ describe('HTTP API', () => {
     fs.rmSync(baseDir, { recursive: true, force: true });
   });
 
+  it('GET /health returns ok', async () => {
+    const res = await request(app).get('/health');
+    expect(res.status).toBe(200);
+    expect(res.text).toBe('ok');
+  });
+
   it('GET /workspace names the served directory; DELETE /agents/:id removes a saved spec', async () => {
     const ws = await request(app).get('/workspace');
     expect(ws.status).toBe(200);
@@ -100,6 +106,12 @@ describe('HTTP API', () => {
     expect((await request(app).get('/agents')).body.map((e: { id: string }) => e.id)).toContain('doomed');
     await request(app).delete('/agents/doomed').expect(204);
     await request(app).get('/agents/doomed').expect(404);
+  });
+
+  it('GET /agents/:id/status returns idle before any run', async () => {
+    const res = await request(app).get('/agents/nope/status');
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('idle');
   });
 
   it('rejects a path-traversal agent id instead of writing outside .lousho/agents', async () => {
@@ -123,6 +135,54 @@ describe('HTTP API', () => {
     const status = await request(app).get(`/agents/${traversalId}/status`);
     expect(status.status).toBe(400);
     expect(status.body.code).toBe('LOUSHO_AGENT_ID_INVALID');
+  });
+
+  it('PUT then GET ?view=legacy round-trips an AgentSpec', async () => {
+    const put = await request(app).put('/agents/foo').send(SPEC);
+    expect(put.status).toBe(204);
+
+    const get = await request(app).get('/agents/foo?view=legacy');
+    expect(get.status).toBe(200);
+    expect(get.body.name).toBe('test-agent');
+  });
+
+  it('PUT /agents/:id rejects a malformed spec', async () => {
+    const res = await request(app).put('/agents/foo').send({ nonsense: true });
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /agents/:id/run starts a run and GET /status reflects it finishing', async () => {
+    const run = await request(app).post('/agents/bar/run').send({ spec: SPEC, input: 'hello' });
+    expect(run.status).toBe(202);
+    expect(['running', 'done']).toContain(run.body.status);
+
+    const final = await waitForStatus(runManager, 'bar', (s) => s.status === 'done');
+    expect(final.resultText).toBeTruthy();
+
+    const status = await request(app).get('/agents/bar/status');
+    expect(status.body.status).toBe('done');
+  });
+
+  it('POST /agents/:id/run without input is rejected', async () => {
+    const res = await request(app).post('/agents/bar/run').send({ spec: SPEC });
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /agents/:id/run rejects malformed pins with 400 LOUSHO_PINS_INVALID', async () => {
+    const res = await request(app)
+      .post('/agents/bar/run')
+      .send({ spec: SPEC, input: 'hi', pins: [{}] });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('LOUSHO_PINS_INVALID');
+  });
+
+  it('POST /agents/:id/run rejects more than 50 pins', async () => {
+    const pins = Array.from({ length: 51 }, (_, i) => ({ nodeId: `tool:t${i}`, toolName: `t${i}`, result: i }));
+    const res = await request(app)
+      .post('/agents/bar/run')
+      .send({ spec: SPEC, input: 'hi', pins });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('LOUSHO_PINS_INVALID');
   });
 
   // The "already running" 409 guard itself is covered deterministically at
@@ -149,6 +209,11 @@ describe('HTTP API', () => {
       .post('/agents/none-pending/approve')
       .send({ approvalId: 'x', approved: true });
     expect(res.status).toBe(409);
+  });
+
+  it('POST /agents/:id/approve with a bad body returns 400', async () => {
+    const res = await request(app).post('/agents/foo/approve').send({ approvalId: 'x' });
+    expect(res.status).toBe(400);
   });
 
   it('POST /agents/:id/steer with an empty or oversized message returns 400 LOUSHO_BODY_INVALID', async () => {
@@ -203,6 +268,28 @@ describe('HTTP API', () => {
     await waitForStatus(runManager, 'steer-http', (s) => s.status === 'done', 10000);
   });
 
+  it('GET /agents/:id/debug reports no breakpoints/not paused for an agent that never ran', async () => {
+    const res = await request(app).get('/agents/never-debugged/debug');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ agentId: 'never-debugged', paused: false, breakpoints: [] });
+  });
+
+  it('PUT /agents/:id/debug/breakpoints sets breakpoints, reflected by GET /agents/:id/debug', async () => {
+    const put = await request(app)
+      .put('/agents/debug-bp/debug/breakpoints')
+      .send({ breakpoints: ['llm:before', 'tool:current-date:after'] });
+    expect(put.status).toBe(200);
+    expect(put.body.breakpoints.sort()).toEqual(['llm:before', 'tool:current-date:after']);
+
+    const get = await request(app).get('/agents/debug-bp/debug');
+    expect(get.body.breakpoints.sort()).toEqual(['llm:before', 'tool:current-date:after']);
+  });
+
+  it('PUT /agents/:id/debug/breakpoints rejects a non-array body', async () => {
+    const res = await request(app).put('/agents/debug-bp/debug/breakpoints').send({ breakpoints: 'nope' });
+    expect(res.status).toBe(400);
+  });
+
   it('a run paused at a breakpoint resumes via POST /agents/:id/debug/continue', async () => {
     await request(app)
       .put('/agents/debug-run/debug/breakpoints')
@@ -246,7 +333,7 @@ describe('settings/secrets HTTP routes', () => {
       loadSpec: (id) => repo.readSpec(id),
       saveSpec: (id, spec) => repo.writeSpec(id, spec),
     });
-    app = createApp({ agentStore, runManager, baseDir });
+    app = createApp({ agentStore, runManager, baseDir, studioHome: path.join(baseDir, '.lousho') });
   });
 
   afterEach(() => {
@@ -278,6 +365,15 @@ describe('settings/secrets HTTP routes', () => {
     expect(JSON.stringify(res.body)).not.toContain('env-key-placeholder');
   });
 
+  it('PUT /settings/providers/:provider refuses an OpenRouter key in the OpenAI field and stores it in its own', async () => {
+    const wrong = await request(app).put('/settings/providers/openai').send({ apiKey: 'sk-or-v1-placeholder' });
+    expect(wrong.status).toBe(400);
+    expect(wrong.body.error).toBe('This looks like an OpenRouter key. Paste it into the OpenRouter API key field instead.');
+    const right = await request(app).put('/settings/providers/openrouter').send({ apiKey: 'sk-or-v1-placeholder' });
+    expect(right.status).toBe(200);
+    expect(right.body).toMatchObject({ provider: 'openrouter', hasKey: true });
+  });
+
   it('PUT /settings/providers/:provider stores a key and never echoes it back', async () => {
     const res = await request(app).put('/settings/providers/openai').send({ apiKey: 'sk-super-secret' });
     expect(res.status).toBe(200);
@@ -288,13 +384,14 @@ describe('settings/secrets HTTP routes', () => {
     expect(raw).not.toContain('sk-super-secret');
   });
 
-  it('PUT /settings/providers/:provider refuses an OpenRouter key in the OpenAI field and stores it in its own', async () => {
-    const wrong = await request(app).put('/settings/providers/openai').send({ apiKey: 'sk-or-v1-placeholder' });
-    expect(wrong.status).toBe(400);
-    expect(wrong.body.error).toBe('This looks like an OpenRouter key. Paste it into the OpenRouter API key field instead.');
-    const right = await request(app).put('/settings/providers/openrouter').send({ apiKey: 'sk-or-v1-placeholder' });
-    expect(right.status).toBe(200);
-    expect(right.body).toMatchObject({ provider: 'openrouter', hasKey: true });
+  it('PUT /settings/providers/:provider rejects an unknown provider', async () => {
+    const res = await request(app).put('/settings/providers/notreal').send({ apiKey: 'sk-abc' });
+    expect(res.status).toBe(400);
+  });
+
+  it('PUT /settings/providers/:provider rejects a missing apiKey', async () => {
+    const res = await request(app).put('/settings/providers/openai').send({});
+    expect(res.status).toBe(400);
   });
 
   it('DELETE /settings/providers/:provider removes a stored key', async () => {
@@ -312,6 +409,12 @@ describe('settings/secrets HTTP routes', () => {
     expect(res.body.profiles.map((p: { id: string }) => p.id)).toEqual(['local', 'staging', 'prod']);
   });
 
+  it('POST /settings/profiles/:id/activate switches the active profile', async () => {
+    const res = await request(app).post('/settings/profiles/staging/activate');
+    expect(res.status).toBe(200);
+    expect(res.body.activeProfileId).toBe('staging');
+  });
+
   it('POST /settings/profiles/:id/activate 400s for an unknown profile', async () => {
     const res = await request(app).post('/settings/profiles/nope/activate');
     expect(res.status).toBe(400);
@@ -326,14 +429,33 @@ describe('settings/secrets HTTP routes', () => {
     expect(updated).toMatchObject({ providerType: 'openai', deployAdapter: 'docker', otelEnabled: true, hookTimeoutMs: 8000 });
   });
 
+  it('PUT /settings/profiles/:id rejects a malformed body', async () => {
+    const res = await request(app).put('/settings/profiles/local').send({ name: 'local' });
+    expect(res.status).toBe(400);
+  });
+
   it('GET /settings/deploy-adapters lists the known deployment targets', async () => {
     const res = await request(app).get('/settings/deploy-adapters');
     expect(res.status).toBe(200);
     expect(res.body).toEqual(['node-server', 'cloudflare-worker', 'docker']);
   });
 
+  it('POST /agents/:id/deploy 404s for an agent that was never saved', async () => {
+    const res = await request(app).post('/agents/never-saved/deploy').send({ adapter: 'node-server' });
+    expect(res.status).toBe(404);
+  });
+
+  it('POST /agents/:id/deploy rejects an unknown adapter', async () => {
+    await request(app).put('/agents/deploy-me').send(SPEC);
+    const res = await request(app).post('/agents/deploy-me/deploy').send({ adapter: 'not-a-real-target' });
+    expect(res.status).toBe(400);
+  });
+
   it('POST /agents/:id/deploy shells out to `lousho build` and reports a non-zero exit when the SDK has not been built', async () => {
     await request(app).put('/agents/deploy-me-2').send(SPEC);
+    // X05: deploy builds the published snapshot, so publish first.
+    const publish = await request(app).post('/agents/deploy-me-2/publish').send({});
+    expect(publish.status).toBe(200);
     const res = await request(app).post('/agents/deploy-me-2/deploy').send({ adapter: 'node-server' });
     // This test environment may or may not have `dist/` built - either way
     // the route must resolve (never hang/throw) and report SOME exit code

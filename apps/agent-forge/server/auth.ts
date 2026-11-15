@@ -52,6 +52,16 @@ function hostnameOf(host: string): string {
   return host.split(':')[0].toLowerCase();
 }
 
+/**
+ * `true` when a `Host` header names a loopback host (`localhost`,
+ * `127.0.0.1`, `[::1]`/`::1`, port allowed). The unsigned-webhook rule
+ * (R08a) uses it: a trigger with no secret accepts only calls that could
+ * have come from this machine.
+ */
+export function isLoopbackHost(host: string | undefined): boolean {
+  return host !== undefined && LOOPBACK_HOSTNAMES.has(hostnameOf(host));
+}
+
 function isAllowedHost(host: string | undefined, allowedHosts: string[]): boolean {
   if (!host) return false;
   const name = hostnameOf(host);
@@ -96,6 +106,20 @@ export function checkHostAndOrigin(req: IncomingMessage, options: StudioAccessOp
   }
   if (!isAllowedOrigin(header(req, 'origin'), host, options.allowedOrigins ?? [])) {
     return { ok: false, status: 403, error: 'Forbidden origin' };
+  }
+  return { ok: true };
+}
+
+/**
+ * The Host half of {@link checkHostAndOrigin} alone (X02a): the `/serve/**`
+ * surface skips the studio token AND the studio-origin rule - external
+ * apps call it with their own bearer token and their own Origin, which
+ * the serve router checks against the agent's `allowedOrigins` instead.
+ */
+export function checkHostOnly(req: IncomingMessage, options: StudioAccessOptions): AccessDecision {
+  const host = header(req, 'host');
+  if (!isAllowedHost(host, options.allowedHosts ?? [])) {
+    return { ok: false, status: 403, error: 'Forbidden host' };
   }
   return { ok: true };
 }

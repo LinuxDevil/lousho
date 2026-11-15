@@ -7,6 +7,24 @@
 import { z } from 'zod';
 
 // @public
+export const abortListenerListSchema: z.ZodType<AbortListenerSpec[]>;
+
+// @public
+export type AbortListenerScope = 'queued' | 'running' | 'both';
+
+// @public
+export interface AbortListenerSpec {
+    id: string;
+    match: string;
+    scope: AbortListenerScope;
+    triggerId: string;
+    when: string;
+}
+
+// @public
+export const abortListenerSpecSchema: z.ZodType<AbortListenerSpec>;
+
+// @public
 export interface AgentFlow {
     agents?: FlowAgentDefinition[];
     code: string;
@@ -71,13 +89,13 @@ interface AgentSpecTrigger {
 
 // @public
 export interface AgentSpecV2 {
-    abortListeners?: never;
+    abortListeners?: AbortListenerSpec[];
     approvalTtlMs?: number;
     askQuestion?: boolean;
     codeMode?: boolean | CodeModeOptions;
     compaction?: boolean | AgentSpecV2Compaction;
     description?: string;
-    evals?: never;
+    evals?: EvalGateSpec[];
     fallbackModels?: string[];
     flow?: AgentFlow;
     guardrails?: GuardrailSpec[];
@@ -175,6 +193,9 @@ interface BestOfAllNode {
 const CHANNEL_KINDS: readonly ["telegram", "slack", "github", "teams", "discord", "http"];
 
 // @public
+export const CHANNEL_SECRET_KEYS: Readonly<Record<ChannelKind, readonly string[]>>;
+
+// @public
 export type ChannelKind = (typeof CHANNEL_KINDS)[number];
 
 // @public
@@ -224,6 +245,42 @@ interface EndNode extends NodeRunOptions {
     value?: unknown;
 }
 
+// @public
+export type EvalGate = {
+    calledTool: string;
+} | {
+    notCalledTool: string;
+} | {
+    maxCostUsd: number;
+} | {
+    maxSteps: number;
+} | {
+    judge: EvalJudgeGate;
+};
+
+// @public
+export const evalGateSchema: z.ZodType<EvalGate>;
+
+// @public
+export interface EvalGateSpec {
+    dataset: string;
+    gates: EvalGate[];
+    minPassRate: number;
+}
+
+// @public
+export const evalGateSpecSchema: z.ZodType<EvalGateSpec>;
+
+// @public
+export interface EvalJudgeGate {
+    minScore: number;
+    model: string;
+    rubric: string;
+}
+
+// @public
+export const evalSpecListSchema: z.ZodType<EvalGateSpec[]>;
+
 // @public (undocumented)
 interface EvaluatorNode {
     // (undocumented)
@@ -235,6 +292,9 @@ interface EvaluatorNode {
     // (undocumented)
     type: 'evaluator';
 }
+
+// @public
+export const EXECUTABLE_TYPES: readonly ["sequence", "parallel", "oneOf", "forEach", "evaluator", "llmCall", "agent", "approval", "toolCall", "setVariable", "return", "end", "throw"];
 
 // @public
 interface ExpressionEvaluatorNode extends NodeRunOptions {
@@ -357,6 +417,9 @@ export interface GuardrailCatalogEntry {
 export type GuardrailSide = 'input' | 'output' | 'tools';
 
 // @public
+export function guardrailSidesOf(entry: Pick<GuardrailSpec, 'on'>): GuardrailSide[];
+
+// @public
 export interface GuardrailSpec {
     id: string;
     name: SpecGuardrailName;
@@ -414,10 +477,22 @@ export interface InlineHookSpec {
 }
 
 // @public
+export const INTEGRATION_CREDENTIALS: Record<IntegrationName, IntegrationCredentialKeys>;
+
+// @public
+interface IntegrationCredentialKeys {
+    optional: readonly string[];
+    required: readonly string[];
+}
+
+// @public
 export type IntegrationName = 'github' | 'jira' | 'slack' | 'email';
 
 // @public
 export function isNodeIdExporter(exporter: TraceExporter | undefined): boolean;
+
+// @public
+export function isSafeRelativePath(rel: string): boolean;
 
 // @public
 export function isSecretRef(value: unknown): value is SecretRef;
@@ -478,6 +553,12 @@ interface LoopNode {
     // (undocumented)
     type: 'loop';
 }
+
+// @public
+export const MAX_APPROVAL_TTL_MS: number;
+
+// @public
+export const MCP_SERVER_NAME: RegExp;
 
 // @public
 type McpApproval = 'annotations' | 'always' | 'never' | ((tool: {
@@ -809,6 +890,9 @@ interface ReturnNode extends NodeRunOptions {
 }
 
 // @public
+export const REWRITABLE_GUARDRAILS: readonly SpecGuardrailName[];
+
+// @public
 interface RunLimits {
     maxCostUsd?: number;
     maxDurationMs?: number;
@@ -848,6 +932,9 @@ interface SchemaIssue {
         readonly key: PropertyKey;
     }>;
 }
+
+// @public
+export const SECRET_CREDENTIALS: Record<IntegrationName, readonly string[]>;
 
 // @public
 export type SecretRef = {
@@ -936,6 +1023,9 @@ export const SPEC_FIELD_DESCRIPTIONS: Readonly<Record<string, string>>;
 
 // @public
 const SPEC_GUARDRAIL_NAMES: readonly ["max-length", "secret-scan", "regex", "deny-topics", "llm-judge", "pii", "secrets", "prompt-injection", "moderation"];
+
+// @public
+export const SPEC_ID_PATTERN: RegExp;
 
 // @public (undocumented)
 type SpecGuardrailName = (typeof SPEC_GUARDRAIL_NAMES)[number];
@@ -1210,6 +1300,9 @@ interface UIComponentNode {
     // (undocumented)
     type: 'uiComponent';
 }
+
+// @public
+export const UNSUPPORTED_PREFIX = "not supported yet: ";
 
 // @public
 export function upgradeSpec(input: unknown): AgentSpecV2;

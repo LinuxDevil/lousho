@@ -96,6 +96,12 @@ export interface AgentRunStatusPayload {
   /** Trace id (root span id) of the latest run, once its first span started - the top bar's "Open trace" link. */
   traceId?: string;
   /**
+   * Why the run was cancelled - set when `status === 'stopped'` (`'user'` for
+   * a Stop click, `'abort_listener:<id>'` for an abort listener, any other
+   * caller-supplied reason). Cleared when the next run launches.
+   */
+  abortReason?: string;
+  /**
    * This run's steer messages (`POST /agents/:id/steer`), oldest first -
    * each one's delivery flips queued -> delivered/undelivered as the run
    * consumes it or ends. Reset to `[]` when the next run launches; the
@@ -103,7 +109,25 @@ export interface AgentRunStatusPayload {
    * pane can keep showing it.
    */
   steering?: SteerInfo[];
+  /**
+   * What started this run (L12): `'trigger'` for runs a trigger launched
+   * (`triggerId` names which), `'manual'`/absent for Run/chat starts. Set
+   * on launch and kept through approve()/resume of the same run; cleared
+   * by the next manual run. The failure-streak pass counts only
+   * `'trigger'` runs.
+   */
+  source?: 'manual' | 'trigger';
+  triggerId?: string;
   updatedAt: string;
+}
+
+/** `POST /agents/:id/abort` body (the body itself is optional). */
+export interface AbortRunRequest {
+  /**
+   * Why the run is being cancelled: 1..200 characters, defaulting to `'user'`.
+   * Abort listeners pass `'abort_listener:<id>'` (PLAN §10).
+   */
+  reason?: string;
 }
 
 /** How far a steered message got: still waiting, joined the transcript, or the run ended first. */
@@ -282,6 +306,35 @@ export interface NodeStatePayload {
 }
 
 /**
+ * One recorded tool result pinned for a "run from here" re-run (T04):
+ * when the pinned run's model calls `toolName` again, the
+ * `studio-pins` preToolCall hook answers with `result` instead of
+ * executing the tool. `nodeId` is the canvas node id (`tool:<key>`,
+ * PLAN §3.3) for display and un-pinning; `args`, when set, restricts the
+ * pin to calls whose arguments stable-stringify-equal it. Pins apply to
+ * that one run only - they are never stored and never sent on chat turns.
+ */
+export interface ToolPin {
+  nodeId: string;
+  /** The called tool name (`gen_ai.tool.name` on the span). */
+  toolName: string;
+  /** When set, only calls with canonical-equal args are pinned. */
+  args?: Record<string, unknown>;
+  /** Returned to the model instead of running the tool. */
+  result: unknown;
+}
+
+/**
+ * The `POST /agents/:id/run` request body: the input to run, an optional
+ * spec override, and optional tool-result pins (T04 "run from here").
+ */
+export interface RunAgentRequest {
+  input: string;
+  spec?: unknown;
+  pins?: ToolPin[];
+}
+
+/**
  * A single WS message pushed to `WS /agents/:id/stream` subscribers.
  * `type: 'status'` carries the full AgentRunStatusPayload (sent on every
  * status transition, and once immediately on connect). `type: 'event'`
@@ -316,7 +369,8 @@ export type StudioEvent =
   | { type: 'version.summary'; agentId: string; version: number; summary: string }
   | { type: 'draft.changed'; agentId: string; draftId: string; status: ChangeDraft['status'] }
   | { type: 'suggestion.new'; agentId: string; suggestionId: string }
-  | { type: 'inbox.count'; count: number };
+  | { type: 'inbox.count'; count: number }
+  | { type: 'host.status'; payload: HostStatus };
 
 /** Masked provider key status. Never carries a real key. */
 export interface ProviderKeyStatus {
@@ -377,6 +431,100 @@ export interface SettingsFile {
   profiles: SettingsProfile[];
   /** Stored partial overrides for the Agent Author's model choices; `readAuthorSettings` merges the defaults under them. */
   author?: Partial<AuthorSettings>;
+  /** Stored partial overrides for the background passes' model choices and per-kind switches; `SettingsStore.passes()` merges the defaults under them. */
+  passes?: PassSettings;
+  /** The collector (observe daemon) Studio reads and reports to; absent `url` means this machine's own daemon. */
+  collector?: { url: string | null };
+}
+
+/**
+ * The background passes' kinds (L06): version summaries, draft reviews,
+ * portability checks, prompt suggestions, auto approvals and eval judges.
+ * Declared here (not in `server/passes/passRunner.ts`) so the Settings
+ * card can enumerate them - one declaration, imported by the server.
+ */
+export type PassKind =
+  | 'version_summary'
+  | 'draft_review'
+  | 'portability_check'
+  | 'prompt_suggestion'
+  | 'auto_approval'
+  | 'eval_judge';
+
+/** Every `PassKind`, in display order. */
+export const PASS_KINDS: readonly PassKind[] = [
+  'version_summary',
+  'draft_review',
+  'portability_check',
+  'prompt_suggestion',
+  'auto_approval',
+  'eval_judge',
+];
+
+/** The Settings card's row label per pass kind. */
+export const PASS_KIND_LABELS: Record<PassKind, string> = {
+  version_summary: 'Version summaries',
+  draft_review: 'Draft reviews',
+  portability_check: 'Portability checks',
+  prompt_suggestion: 'Prompt suggestions',
+  auto_approval: 'Automatic tool approvals',
+  eval_judge: 'Eval judges',
+};
+
+/**
+ * `GET/PUT /settings/passes`'s answer (L06b): which model the passes call,
+ * which model auto-approvals use, and which kinds run at all. Stored
+ * sparsely in `settings.json` under `passes`; `SettingsStore.passes()`
+ * merges stored values over these defaults.
+ */
+export interface PassSettings {
+  /** `provider/model` the pass kinds share; default `anthropic/claude-haiku-5-5`. */
+  model: string;
+  /** `provider/model` auto-approvals score tool calls with; default `anthropic/claude-haiku-5-5`. */
+  autoApprovalModel: string;
+  /** Per-kind on/off; default every kind on. */
+  enabled: Record<PassKind, boolean>;
+}
+
+/** A `PUT /settings/passes` body: any subset of {@link PassSettings}, `enabled` itself sparse per kind. */
+export interface PassSettingsPatch {
+  model?: string;
+  autoApprovalModel?: string;
+  enabled?: Partial<Record<PassKind, boolean>>;
+}
+
+/** The `GET /settings/passes/spend` answer (L06a): this window's totals rolled up per kind. */
+export interface PassSpendSummary {
+  month: string;
+  totalUsd: number;
+  calls: number;
+  byKind: Partial<Record<PassKind, { calls: number; costUsd: number }>>;
+}
+
+/** How the collector the Studio talks to was reached: a daemon already running, one Studio started, a remote one, or none. */
+export type CollectorMode = 'attached' | 'started' | 'remote' | 'down';
+
+/** `GET /settings/collector`'s answer: which collector is in effect and whether it answers. */
+export interface CollectorStatus {
+  mode: CollectorMode;
+  /** The effective base URL, no trailing slash. */
+  url: string;
+  /** `settings.json`'s `collector.url` (`null` = this machine). */
+  configuredUrl: string | null;
+  /** `LOUSHO_OBSERVE_URL` is set in Studio's environment, so the setting is ignored. */
+  lockedByEnv: boolean;
+  /** A bearer token is configured (env `LOUSHO_OBSERVE_TOKEN` or the named secret); the value never crosses the wire. */
+  hasToken: boolean;
+  /** `HealthProbe.version` when the daemon answered, the SDK `VERSION` for a Studio-started one. */
+  daemonVersion: string | null;
+  /** Why `mode` is `'down'`. */
+  error: string | null;
+}
+
+/** `PUT /settings/collector`'s body: `url` null clears the setting; `token` undefined keeps, null removes, a string sets the named secret. */
+export interface CollectorUpdate {
+  url: string | null;
+  token?: string | null;
 }
 
 /** R2: `POST /agents/:id/deploy`'s result - the shelled-out `lousho build` child process's outcome. */
@@ -385,6 +533,8 @@ export interface DeployResult {
   stdout: string;
   stderr: string;
   command: string;
+  /** The published version `lousho build` ran against (X05). */
+  version: number;
 }
 
 /**
@@ -437,6 +587,31 @@ export interface WorkspaceInfo {
 }
 
 /**
+ * One row of `GET /workspace/agent-dirs` (X06a): an agent directory found
+ * under the workspace root - a folder holding an `agent.*` config file.
+ * `path` is relative to the workspace root, POSIX separators, `'.'` for
+ * the root itself; `configKind` says whether the config is data
+ * (`agent.json`/`.yaml`, spec-readable) or code (`agent.ts`/`.js`, listed
+ * but refused by `agentDirToSpec`).
+ */
+export interface CodeAgentDir {
+  path: string;
+  /** Directory basename (`'.'` path → the workspace folder's own name). */
+  name: string;
+  /** The config file found, e.g. 'agent.ts'. */
+  configFile: string;
+  configKind: 'code' | 'data';
+}
+
+/** `GET /workspace/agent-dirs/spec?path=<rel>`'s response (X06a). */
+export interface CodeAgentSpecResponse {
+  path: string;
+  spec: AgentSpecV2;
+  /** What `agentDirToSpec` left out of the spec, as `field: reason` strings. */
+  warnings: string[];
+}
+
+/**
  * One row of `GET /workspaces`: the registry's `WorkspaceRef` plus the
  * per-request facts the route computes (`isLaunch` is a per-process fact,
  * `available`/`agentCount` come from the folder's current state - none of
@@ -449,6 +624,8 @@ export interface WorkspaceListItem extends WorkspaceRef {
   available: boolean;
   /** `.lousho/agents/*.yaml` count; 0 when unavailable. */
   agentCount: number;
+  /** The observe-daemon project this workspace's runs report under (`observeProjectOf(root)`, W09a). */
+  observeProject: string;
 }
 
 /**
@@ -464,6 +641,27 @@ export interface WorkspaceList {
 /** `POST /workspaces`'s body: the folder path goes in the body, never in a URL (it can name a user's home directory). */
 export interface AddWorkspaceRequest {
   root: string;
+}
+
+/** The global-state files a workspace's old project-level `.lousho/` can still hold (W03a's one-time import). */
+export type LegacyImportItem = 'settings' | 'secrets';
+
+/**
+ * `GET /workspaces/:ws/legacy-import`'s response: which old files the
+ * workspace's `.lousho/` still has that the Studio home lacks, and
+ * whether the offer was already handled (`null` while it still can be).
+ */
+export interface LegacyImportStatus {
+  workspaceId: string;
+  found: LegacyImportItem[];
+  handled: 'imported' | 'skipped' | null;
+}
+
+/** `POST /workspaces/:ws/legacy-import`'s response: how many entries were copied (existing home values are never overwritten). */
+export interface LegacyImportResult {
+  profiles: number;
+  providerKeys: number;
+  namedSecrets: number;
 }
 
 /** One `POST /playground/run` message (server/playground.ts; the Playground screen's editor rows). */
@@ -603,6 +801,8 @@ export interface AgentListItem {
   description: string;
   model: string;
   enabled: boolean;
+  /** Why the agent is off (`meta.disabledReason`) - the card's Auto-off pill keys on `'auto_failure_streak'` (L12). */
+  disabledReason?: AgentMeta['disabledReason'];
   labels: string[];
   /** Spec file mtime - what the list sorts and displays as "last edited". */
   updatedAt: string;
@@ -610,6 +810,194 @@ export interface AgentListItem {
   lastRun?: AgentLastRun;
   /** Section sizes the card chips render (A03). */
   counts: { tools: number; mcpServers: number; subagents: number; triggers: number };
+}
+
+/**
+ * One `GET /agents?ws=all` row (W06a): a workspace agent's `AgentListItem`
+ * tagged with the workspace it came from. W07a adds `ObservedAgentItem`
+ * and W08a `CodeAgentItem` to the `AnyAgentItem` union.
+ */
+export interface WorkspaceAgentItem extends AgentListItem {
+  kind: 'workspace';
+  workspaceId: string;
+}
+
+/** An observed agent's rolled-up health (W07a): the best status across its daemon instances. */
+export type ObservedStatus = 'healthy' | 'stale' | 'down' | 'stopped';
+
+/**
+ * One observed agent in `GET /agents?ws=all` (W07a): a daemon-reported
+ * agent that is not one of Studio's own runs, grouped by project+name.
+ * `workspaceId` is the workspace whose project it matched, `null` for
+ * "Elsewhere".
+ */
+export interface ObservedAgentItem {
+  kind: 'observed';
+  /** The newest instance's daemon agent_id; the observed page route key (#/observed/:agentId). */
+  id: string;
+  name: string;
+  project: string | null;
+  workspaceId: string | null;
+  instances: number;
+  status: ObservedStatus;
+  lastSeenAt: string;
+  runsToday: number;
+  errorRateToday: number;
+}
+
+/**
+ * The agent-directory glob patterns a workspace scan uses when it has no
+ * stored `agentDirs` (W08a): `*` matches exactly one directory name,
+ * segments are POSIX, a trailing `/` is optional. Stored per workspace by
+ * `POST /workspaces/:ws/scan`.
+ */
+export const DEFAULT_AGENT_DIRS = ['agents/*/', 'src/agents/*/'] as const;
+
+/**
+ * One code-defined agent in `GET /agents?ws=all` (W08a): an agent
+ * directory found by the workspace's pattern scan - `id` is the
+ * directory's POSIX path relative to the workspace root (the same key
+ * `#/code/:path` routes and `GET /workspace/agent-dirs` list by).
+ */
+export interface CodeAgentItem {
+  kind: 'code';
+  id: string;
+  name: string;
+  workspaceId: string;
+  /** The `agent.*` config file the scan found in the directory. */
+  configFile: string;
+  configKind: 'code' | 'data';
+}
+
+/** Every agent kind the aggregate `GET /agents?ws=all` can return. W08a adds `CodeAgentItem`. */
+export type AnyAgentItem = WorkspaceAgentItem | ObservedAgentItem | CodeAgentItem;
+
+/**
+ * `GET`/`POST /workspaces/:ws/scan`'s response (W08a): the cached-or-fresh
+ * pattern scan of one workspace's agent directories.
+ */
+export interface WorkspaceScanResult {
+  workspaceId: string;
+  /** ISO timestamp of when this scan ran (a cache hit keeps the original). */
+  scannedAt: string;
+  /** The glob patterns the scan ran with (the workspace's stored `agentDirs`, else `DEFAULT_AGENT_DIRS`). */
+  patterns: string[];
+  agents: CodeAgentDir[];
+}
+
+/** `GET /agents?ws=all`'s response: every workspace's agents plus the workspaces that could not be read. */
+export interface AllAgentsResponse {
+  items: AnyAgentItem[];
+  /** Workspaces that could not be read this time (folder missing, unreadable). */
+  skipped: { workspaceId: string; reason: string }[];
+  /** 'ok' when the daemon answered; 'unavailable' when it did not (observed items then absent). */
+  observed: 'ok' | 'unavailable';
+}
+
+/**
+ * Where an agent's publish pointer (L14a) stands: the pinned version, whether
+ * the working copy still hashes to that version's spec, and when it was
+ * pinned. `version: null` means nothing is published.
+ */
+export interface PublishState {
+  version: number | null;
+  /** `specHash(working copy) === published version's specHash`; `false` when `version` is null. */
+  matchesWorkingCopy: boolean;
+  /** `createdAt` of the pinned version record, `null` when `version` is null. */
+  publishedAt: string | null;
+}
+
+/** One dataset example's eval-gate outcome (X01a/X01b). */
+export interface EvalExampleResult {
+  exampleId: string;
+  passed: boolean;
+  /** Plain sentences, one per failed gate; empty when passed. */
+  failures: string[];
+  /** Trace id of the example run when the observe reporter produced one. */
+  traceId?: string;
+}
+
+/** One `spec.evals` entry's outcome over its dataset. */
+export interface EvalGateSetResult {
+  dataset: string;
+  /** 0..1, rounded to 4 decimals; 0 when the dataset is missing or empty. */
+  passRate: number;
+  minPassRate: number;
+  /** `passRate >= minPassRate && examples.length > 0`. */
+  passed: boolean;
+  examples: EvalExampleResult[];
+  /** Set when the whole set could not run. */
+  error?: string;
+}
+
+/** The whole eval gate's outcome: every set passed, the per-set detail, when it ran. */
+export interface EvalGateResult {
+  passed: boolean;
+  gates: EvalGateSetResult[];
+  /** ISO. */
+  ranAt: string;
+}
+
+/** `POST /agents/:id/publish`'s body. */
+export interface PublishRequest {
+  version?: number;
+}
+
+/** `POST /agents/:id/publish`'s 200 body: the pinned version, plus the eval gate's result when the spec has `evals`. */
+export interface PublishResponse {
+  publishedVersion: number;
+  evalResult?: EvalGateResult;
+}
+
+/** `POST /agents/:id/publish`'s 409 eval-gate-failure body (`LOUSHO_EVAL_GATE_FAILED`). */
+export interface PublishGateFailure {
+  error: 'Eval gate failed';
+  code: 'LOUSHO_EVAL_GATE_FAILED';
+  /** The version that was not published - the dialog's `v<n>`. */
+  version: number;
+  details: EvalGateResult;
+}
+
+/**
+ * The serve switch's editable half (X02a): whether `/serve/<id>/*` answers
+ * and which browser origins may call it. The bearer token is never part of
+ * this shape - `GET /agents/:id/serve/token` reveals it on demand.
+ */
+export interface ServeAgentConfig {
+  enabled: boolean;
+  /** Lower-case `scheme://host[:port]` origins, max 10. */
+  allowedOrigins: string[];
+}
+
+/** `GET /agents/:id/serve`'s body: the config plus what the Serve card needs to show. */
+export interface ServeStatus extends ServeAgentConfig {
+  agentId: string;
+  /** The pinned version being served, `null` when nothing is published. */
+  publishedVersion: number | null;
+  /** Masked: first 4 chars + '…' + last 4 - never the raw token. */
+  tokenMasked: string;
+  /** Masked widget key (X04b), `null` until the user creates one - never the raw key. */
+  widgetKeyMasked: string | null;
+  /** `/serve/<id>` - the client prefixes `location.origin`. */
+  baseUrl: string;
+}
+
+/** `GET /agents/:id/serve/token` and `POST .../serve/rotate-token`'s body. */
+export interface ServeTokenReveal {
+  token: string;
+}
+
+/**
+ * `GET/POST/DELETE /agents/:id/serve/mcp`'s body (X03): the agent's MCP
+ * server state. `url`/`port` are `null` while stopped; `version` is the
+ * published version the running server pinned.
+ */
+export interface McpServeStatus {
+  running: boolean;
+  url: string | null;
+  port: number | null;
+  version: number | null;
+  toolName: string | null;
 }
 
 /**
@@ -625,6 +1013,8 @@ export interface AgentRecord {
   updatedAt: string;
   /** Newest version number, `null` when the agent has no versions yet. */
   latestVersion: number | null;
+  /** The publish pointer's state (L14a) - whether the working copy still matches what is published. */
+  publishState: PublishState;
   /**
    * The spec's readiness rows (`computeRequirements`, AA13): what the agent
    * needs before it can run. The header's readiness chips and the Author's
@@ -773,19 +1163,36 @@ export type SpecPatch = { [K in Exclude<keyof AgentSpecV2, 'version'>]?: AgentSp
   labels?: string[] | null;
 };
 
+/** One thing the draft auto-review flagged, grouped by rubric area. */
+export interface DraftConcern {
+  area: 'safety' | 'coherence' | 'trigger_reach';
+  detail: string;
+}
+
 /**
  * The advisory auto-review a pending draft carries once the review pass
  * has looked at it (filled by the pass, never at create time). The
- * `fingerprint` binds the verdict to the exact submission it judged.
+ * `fingerprint` binds the verdict to the exact submission it judged;
+ * `safe` is null whenever no model verdict exists (`unavailable`).
  */
 export interface DraftAutoReview {
-  outcome: 'approved' | 'escalated' | 'unavailable';
-  safe: boolean;
+  outcome: 'clear' | 'escalated' | 'unavailable';
+  safe: boolean | null;
   rationale: string;
-  concerns: { area: 'safety' | 'coherence' | 'trigger_reach'; detail: string }[];
-  modelId: string | null;
-  checkedAt: string;
+  concerns: DraftConcern[];
   fingerprint: string;
+  model: string | null;
+  checkedAt: string;
+}
+
+/**
+ * The draft's changed field paths split by risk class (L11a): `routine`
+ * edits can be reviewed at a glance, `gated` ones always need the user's
+ * click. Paths are `SpecChange.field` values ('tools[web-fetch]').
+ */
+export interface DraftFieldClasses {
+  routine: string[];
+  gated: string[];
 }
 
 /**
@@ -807,11 +1214,25 @@ export interface ChangeDraft {
   /** `specHash()` of the working copy when the draft was made. */
   baseSpecHash: string;
   autoReview: DraftAutoReview | null;
+  /** Routine/gated split of the draft's changed fields; null until the review pass classifies them. */
+  classes: DraftFieldClasses | null;
   /** Reviewer note recorded on approve/reject. */
   note: string | null;
   createdAt: string;
   updatedAt: string;
   respondedAt: string | null;
+}
+
+/**
+ * `GET /agents/:id/draft`'s answer (L11b): the pending draft plus the
+ * diff of its patch over the working copy, computed per request so the
+ * Suggestions tab always shows today's spec, not the draft's base.
+ * `currentVersion` is the latest version number (0 when there are none)
+ * - the drift banner shows when it is greater than `baseVersion`.
+ */
+export interface DraftView extends ChangeDraft {
+  changes: SpecChange[];
+  currentVersion: number;
 }
 
 /** `POST /agents/:id/draft`'s body: the patch plus where it came from and why. */
@@ -838,6 +1259,18 @@ export interface SettleDraftRequest {
 export type SuggestionStatus = 'open' | 'applied' | 'dismissed' | 'conflict';
 
 /**
+ * The five friction classes a prompt suggestion may name (R05): the
+ * single smallest instructions change the pass judged worth a person's
+ * review, picked for the best ratio of waste removed to risk.
+ */
+export type OptimizationClass =
+  | 'Missing operational fact'
+  | 'Missing tool strategy'
+  | 'Ambiguous instruction'
+  | 'Misplaced guidance'
+  | 'Over-broad instruction';
+
+/**
  * One `.lousho/agents/<id>/suggestions/<id>.json` record the prompt
  * optimizer pass writes: an anchored `oldText` → `newText` edit of the
  * instructions. `oldText` occurs exactly once in the instructions and the
@@ -858,7 +1291,7 @@ export interface PromptSuggestion {
   oldText: string;
   newText: string;
   confidence: 'high' | 'low';
-  optimizationClass: string;
+  optimizationClass: OptimizationClass;
   evidence: string;
   expectedSaving: string;
   risk: string;
@@ -866,7 +1299,26 @@ export interface PromptSuggestion {
   status: SuggestionStatus;
   createdAt: string;
   updatedAt: string;
+  /** When the suggestion left `open` (`applied`/`dismissed`/`conflict`); `null` while open. */
+  resolvedAt: string | null;
+  /** The version a landed apply wrote; `null` until `applied`. */
+  appliedVersion: number | null;
 }
+
+/** Where in the spec a portability finding sits (L09a). */
+export type PortabilityLocation = 'instructions' | 'triggers' | 'tools' | 'mcpServers' | 'hooks' | 'other';
+
+/** What kind of owner-specific reference a portability finding is (L09a). */
+export type PortabilityKind =
+  | 'repository'
+  | 'email_address'
+  | 'channel'
+  | 'path'
+  | 'host'
+  | 'secret'
+  | 'person'
+  | 'url'
+  | 'other';
 
 /**
  * One flagged sender-specific reference the portability check pass
@@ -874,8 +1326,8 @@ export interface PromptSuggestion {
  * and the placeholder/edit the recipient should make.
  */
 export interface PortabilityFinding {
-  location: 'instructions' | 'triggers' | 'tools' | 'mcpServers' | 'other';
-  kind: 'repository' | 'email_address' | 'slack_channel' | 'path' | 'url' | 'secret' | 'person' | 'other';
+  location: PortabilityLocation;
+  kind: PortabilityKind;
   quote: string;
   explanation: string;
   suggestion: string;
@@ -886,17 +1338,20 @@ export interface PortabilityFinding {
  * check pass writes on export/copy/import: the findings plus
  * `adaptedInstructions` (the instructions rewritten with `[YOUR …]`
  * placeholders, `null` when nothing needed adapting). Cached by
- * `specHash` - re-run only when the spec changed.
+ * `specHash` - re-run only when the spec changed. `agentId` is `null`
+ * for pasted import text (cached in memory instead of the store).
  */
 export interface PortabilityAnalysis {
   kind: 'portability';
   id: string;
-  agentId: string;
+  agentId: string | null;
   /** `specHash()` of the spec this analysis ran on - the cache key. */
   specHash: string;
   summary: string;
   findings: PortabilityFinding[];
   adaptedInstructions: string | null;
+  /** The `provider/model` the pass ran on; `null` when no model was reached. */
+  model: string | null;
   createdAt: string;
 }
 
@@ -972,3 +1427,188 @@ export interface McpProbeTool {
  * 200, never HTTP errors).
  */
 export type McpProbeResponse = { ok: true; tools: McpProbeTool[] } | { ok: false; error: string };
+
+/**
+ * `GET /agents/:id/export?format=bundle`'s body (L07): the working-copy
+ * spec plus the pieces that live outside the YAML - labels, the prompt
+ * registry text `spec.promptRef` points at, and the eval datasets the
+ * spec gates on. Secret values never appear: the spec only ever holds
+ * `{ env }`/`{ secret }` references.
+ */
+export interface AgentBundle {
+  kind: 'lousho.agent-bundle';
+  version: 1;
+  spec: AgentSpecV2;
+  labels: string[];
+  prompts: Array<{ name: string; version: number; content: string }>;
+  evals?: Array<{ dataset: string; examples: Array<{ input: unknown; expected: unknown | null }> }>;
+  /** ISO time the bundle was built. */
+  exportedAt: string;
+}
+
+/**
+ * How `POST /agents/import` resolves the pasted spec's id (L08a): `new`
+ * takes the first free `<slug>`/`<slug>-N`, `copy` writes `<base>-copy[-N]`
+ * beside `targetId` (or the suggested id), `replace` overwrites `targetId`.
+ */
+export type ImportMode = 'new' | 'replace' | 'copy';
+
+/** `POST /agents/import/preview` and `POST /agents/import` body. */
+export interface ImportRequest {
+  /** Pasted YAML, JSON spec, or `lousho.agent-bundle` text (at most 1 MB). */
+  text: string;
+  mode: ImportMode;
+  /** The agent `replace` overwrites, or the id `copy` derives its name from. */
+  targetId?: string;
+}
+
+/**
+ * `POST /agents/import/preview`'s answer (L08a): the parsed spec after
+ * `upgradeSpec`, what each mode would write it as, and everything the
+ * import sheet shows before committing - the name clash, the readiness
+ * rows, the bundle's prompts and the warnings (bad tags dropped, spec
+ * upgraded, daemon-bound prompts).
+ */
+export interface ImportPreview {
+  format: 'yaml' | 'json' | 'bundle';
+  /** The spec after `upgradeSpec` - what would be written. */
+  spec: AgentSpecV2;
+  /** Bundle labels, normalised; `[]` for a bare spec. */
+  labels: string[];
+  /** `slugifyAgentId(spec.name)` - the id `new` starts from. */
+  suggestedId: string;
+  /** The existing agent `suggestedId` names, or `null` when it is free. */
+  clash: { id: string; name: string } | null;
+  /** The id the requested `mode` would write. */
+  resolvedId: string;
+  /** The spec's readiness rows (`computeRequirements`, AA13). */
+  requirements: Requirement[];
+  /** The bundle's prompts (`{ name, version }` - content stays server-side). */
+  prompts: Array<{ name: string; version: number }>;
+  warnings: string[];
+}
+
+/**
+ * The inbox alert kinds (L12 producers; R04a adds `low_rating` writes).
+ * Declared here - not in server/inbox/alertStore.ts - because the inbox
+ * wire items below carry it and wireTypes must stay isomorphic.
+ */
+export type AlertKind = 'auto_disabled' | 'publish_failed' | 'low_rating';
+
+/** What waits on the user in the Inbox (R02a): a tool approval, an `ask_question`, a pending draft, an open prompt suggestion or an alert. */
+export type InboxItemKind = 'approval' | 'question' | 'draft' | 'suggestion' | 'alert';
+
+export interface InboxItemBase {
+  /** Stable id: `<kind>:<agentId>:<ref>` - approval/question `<approvalId>`, draft `<draftId>`, suggestion `<suggestionId>`, alert `<alertId>`. */
+  id: string;
+  kind: InboxItemKind;
+  agentId: string;
+  /** The workspace the item belongs to (`WorkspaceRef.id`); `?ws=all` merges items across workspaces (W09a). */
+  workspaceId: string;
+  agentName: string;
+  title: string;
+  detail: string | null;
+  /** ISO instant it started waiting. */
+  at: string;
+}
+
+/**
+ * One row of `GET /inbox` (PLAN §10): everything across this workspace's
+ * agents that needs a human. Sorted by `expiresAt` ascending (soonest
+ * deadline first, items without one last), then `at` descending.
+ */
+export type InboxItem =
+  | (InboxItemBase & { kind: 'approval'; approvalId: string; toolName: string; args: Record<string, unknown>; expiresAt: string | null })
+  | (InboxItemBase & { kind: 'question'; approvalId: string; question: string; options: string[]; allowFreeText: boolean; expiresAt: string | null })
+  | (InboxItemBase & { kind: 'draft'; draftId: string; origin: DraftOrigin; gated: boolean })
+  | (InboxItemBase & { kind: 'suggestion'; suggestionId: string; confidence: 'high' | 'low' })
+  | (InboxItemBase & { kind: 'alert'; alertId: string; alertKind: AlertKind; payload: Record<string, unknown> });
+
+/** `GET /inbox?ws=all`'s row (W09a): an `InboxItem` already names its workspace; the alias keeps the aggregate's wire type explicit. */
+export type WorkspaceInboxItem = InboxItem & { workspaceId: string };
+
+/** `GET /inbox/count`'s answer - also the `inbox.count` WS event's payload. */
+export interface InboxCount {
+  count: number;
+}
+
+/**
+ * One frame on `WS /events?ws=all` (W09a): every workspace's `StudioEvent`
+ * tagged with its `workspaceId`, plus the Studio-wide inbox total as
+ * `{ type: 'inbox.count', count, workspaceId: 'all' }` - sent on connect
+ * and whenever the total changed.
+ */
+export type AllEventsFrame =
+  | (StudioEvent & { workspaceId: string })
+  | { type: 'inbox.count'; count: number; workspaceId: 'all' };
+
+/** `POST /agents/:id/rating`'s body (R04a): a 1-5 human score on the run's trace. */
+export interface RatingRequest {
+  traceId: string;
+  value: 1 | 2 | 3 | 4 | 5;
+  /** Optional rationale, at most 2000 chars; the low-rating alert keeps its first 280. */
+  comment?: string;
+}
+
+/** Human-score labels, indexed by `value - 1`. */
+export const RATING_LABELS = ['Poor', 'Fair', 'Good', 'Great', 'Excellent'] as const;
+
+/** Ratings at or below this value raise a `low_rating` inbox alert (R04a). */
+export const LOW_RATING_MAX = 2;
+
+/**
+ * How a workspace's `AgentHost` runs its agents (W11b): Studio's own SDK
+ * in-process, the project's installed SDK over `lousho bridge`, or
+ * read-only because the project's SDK cannot host runs at all.
+ */
+export type HostMode = 'in-process' | 'bridge' | 'read-only';
+
+/** A one-line status banner a host selection surfaces to the UI (W11c renders it). */
+export interface HostBanner {
+  tone: 'info' | 'warning' | 'danger';
+  text: string;
+  /** `'restart'` offers the client a restart action (a crashed bridge). */
+  action?: 'restart';
+}
+
+/** The bridge child's lifecycle as the host status reports it; in-process and read-only workspaces are always `'ready'`. */
+export type HostState = 'starting' | 'ready' | 'restarting' | 'failed';
+
+/**
+ * `GET /workspaces/:ws/host` (W11c): which SDK runs this workspace's agents,
+ * the banner explaining the selection, and the bridge child's state.
+ * `sdkVersion` is the SDK that runs the agents (the handshake's version on
+ * a bridge, Studio's own in-process); `null` when a read-only workspace's
+ * SDK never completed a hello. `recentStderr` appears only on a failed
+ * bridge (last 50 lines).
+ */
+export interface HostStatus {
+  workspaceId: string;
+  mode: HostMode;
+  state: HostState;
+  sdkVersion: string | null;
+  studioSdkVersion: string;
+  banner: HostBanner | null;
+  recentStderr?: string[];
+}
+
+/** `GET /agents/:id/triggers/status` row (R08b): one channel trigger's public URL and mount error. */
+export interface ChannelTriggerStatus {
+  triggerId: string;
+  channel: 'telegram' | 'slack' | 'github' | 'teams' | 'discord' | 'http';
+  /** Path (origin-relative) to paste into the platform's webhook settings. */
+  url: string;
+  /** Mount failure (`Channel <kind> needs <key>`, duplicate kind), `null` when served. */
+  error: string | null;
+}
+
+/**
+ * `POST /agents/:id/eject` (A08b): the agent directory `specToAgentDir`
+ * wrote under `agents/<id>/` in the workspace, and the file paths written.
+ */
+export interface EjectResult {
+  /** The directory, relative to the workspace root (`agents/<id>`). */
+  dir: string;
+  /** Paths of the files written, relative to `dir`, '/'-separated. */
+  files: string[];
+}
