@@ -51,7 +51,7 @@ export interface IntegrationCredentialKeys {
  * unknown by name.
  */
 export const INTEGRATION_CREDENTIALS: Record<IntegrationName, IntegrationCredentialKeys> = {
-  github: { required: ['token', 'owner', 'repo'], optional: [] },
+  github: { required: ['owner', 'repo'], optional: ['token', 'appId', 'privateKey'] },
   jira: { required: ['baseUrl', 'email', 'apiToken'], optional: [] },
   email: { required: ['apiKey'], optional: ['apiUrl', 'defaultFrom'] },
   slack: { required: ['webhookUrl'], optional: [] },
@@ -62,7 +62,7 @@ export const INTEGRATION_CREDENTIALS: Record<IntegrationName, IntegrationCredent
  * the value would land in git and in spec exports, so it must be a SecretRef.
  */
 export const SECRET_CREDENTIALS: Record<IntegrationName, readonly string[]> = {
-  github: ['token'],
+  github: ['token', 'privateKey'],
   jira: ['apiToken'],
   email: ['apiKey'],
   slack: ['webhookUrl'],
@@ -436,6 +436,9 @@ function refineIntegration(entry: Record<string, unknown>, ctx: z.RefinementCtx)
         path: ['credentials', key],
       });
     }
+  }
+  if (integration === 'github' && !('token' in credentials) && !('appId' in credentials && 'privateKey' in credentials)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "'github' needs credentials.token, or credentials.appId and credentials.privateKey", path: ['credentials'] });
   }
 }
 

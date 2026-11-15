@@ -151,7 +151,9 @@ tools:
   `day_name`, `http_request`, `web_fetch`, `todo`); `options` is checked
   against the tool's own schema.
 - `{ integration }` is one of `github`, `jira`, `slack` or `email`; its
-  secret credentials must be SecretRefs, never literal strings.
+  secret credentials must be SecretRefs, never literal strings. `github`
+  takes `owner`, `repo` and either `token` or a GitHub App's `appId` and
+  `privateKey` (PEM; `\n` escapes are accepted).
 - Every ref may also carry `id` (its `tool:<id>` node id; the default is the
   builtin, registry or hosted name, or the file's basename), `approval`
   (`'always'` asks on every call, `'never'` never asks; `'auto'` is not
@@ -187,6 +189,13 @@ SecretRefs are accepted wherever a credential goes: `mcpServers` `env`,
 | `webhook` | an HTTP POST arrives at `path`, verified by `secret` | studio |
 | `channel` | a message arrives on `telegram`, `slack`, `github`, `teams`, `discord` or `http` | studio |
 | `agent` | another agent's run finishes (`after`, `on`) | studio |
+
+A `github` channel needs `secrets.webhookSecret` plus `secrets.token`, or a
+GitHub App's `secrets.appId` and `secrets.privateKey` (optionally
+`secrets.botName`, the App's slug). It answers `@<botName>` mentions; with
+`pullRequests: true` it instead reviews every pull request an owner, member or
+collaborator opens or pushes to, and posts nothing but the agent's own review.
+In Studio the webhook URL is `https://<studio>/hooks/<agent-id>/channel/github`.
 
 The `runsUnder` column is what `listTriggerTypes()` reports for each type.
 `lousho dev` starts a spec's `cron` triggers as

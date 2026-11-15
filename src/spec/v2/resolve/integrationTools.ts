@@ -22,7 +22,13 @@ import { resolveSecretRef, resolveStringOrSecret, type SecretHost } from './secr
  */
 const INTEGRATION_BUILDERS: Record<IntegrationName, (credentials: Record<string, string>) => Record<string, ToolDescriptor>> = {
   github: (credentials) =>
-    createGitHubTools({ token: credentials['token'], owner: credentials['owner'], repo: credentials['repo'] }).getAll(),
+    createGitHubTools({
+      owner: credentials['owner'],
+      repo: credentials['repo'],
+      ...(credentials['appId'] !== undefined && credentials['privateKey'] !== undefined
+        ? { app: { appId: credentials['appId'], privateKey: credentials['privateKey'].replace(/\\n/g, '\n') } }
+        : { token: credentials['token'] }),
+    }).getAll(),
   jira: (credentials) =>
     createJiraTools({
       baseUrl: credentials['baseUrl'],

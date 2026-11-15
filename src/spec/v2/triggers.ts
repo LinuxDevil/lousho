@@ -76,6 +76,8 @@ export type TriggerSpec =
       secrets: Record<string, SecretRef>;
       /** safeExpression an inbound event must pass for a run to start. */
       filter?: string;
+      /** GitHub only: review every pull request opened or pushed by an owner, member or collaborator, instead of answering @mentions. */
+      pullRequests?: boolean;
     }
   | {
       /** Stable id (`trigger:<id>` on the canvas). */
@@ -98,7 +100,7 @@ export type TriggerSpec =
 export const CHANNEL_SECRET_KEYS: Readonly<Record<ChannelKind, readonly string[]>> = {
   telegram: ['botToken', 'secretToken'],
   slack: ['signingSecret', 'botToken'],
-  github: ['webhookSecret', 'token'],
+  github: ['webhookSecret'],
   teams: ['appId', 'appPassword'],
   discord: ['publicKey', 'applicationId', 'botToken'],
   http: [],
@@ -147,6 +149,7 @@ const channelTrigger = z
     channel: z.enum(CHANNEL_KINDS, anyError("must be 'telegram', 'slack', 'github', 'teams', 'discord' or 'http'")),
     secrets: z.record(z.string(), secretRefSchema),
     filter: optionalString,
+    pullRequests: z.boolean().optional(),
   })
   .strict();
 
@@ -198,6 +201,9 @@ function checkChannelSecrets(trigger: { channel: ChannelKind; secrets: Record<st
         path: ['secrets', key],
       });
     }
+  }
+  if (trigger.channel === 'github' && !('token' in trigger.secrets) && !('appId' in trigger.secrets && 'privateKey' in trigger.secrets)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "'github' needs secrets.token, or secrets.appId and secrets.privateKey", path: ['secrets'] });
   }
 }
 

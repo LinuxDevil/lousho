@@ -50,6 +50,8 @@ import type { TriggerHost } from './triggerHost';
 
 export type ChannelKind = Extract<TriggerSpec, { type: 'channel' }>['channel'];
 
+const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+
 /** A `channel` trigger entry. */
 export type ChannelTrigger = Extract<TriggerSpec, { type: 'channel' }>;
 
@@ -66,7 +68,7 @@ export type ChannelTrigger = Extract<TriggerSpec, { type: 'channel' }>;
 export const CHANNEL_SECRET_KEYS: Record<ChannelKind, { required: string[]; optional: string[] }> = {
   telegram: { required: ['botToken', 'secretToken'], optional: ['botUsername'] },
   slack: { required: ['signingSecret', 'botToken'], optional: [] },
-  github: { required: ['webhookSecret', 'token', 'botName'], optional: ['botLogin'] },
+  github: { required: ['webhookSecret', 'botName'], optional: ['token', 'appId', 'privateKey', 'botLogin'] },
   teams: { required: ['appId', 'appPassword'], optional: ['tenantId'] },
   discord: { required: ['publicKey', 'applicationId'], optional: ['botToken'] },
   http: { required: [], optional: [] },
@@ -138,15 +140,25 @@ export function channelFromTrigger(
         };
       case 'slack':
         return { channel: slackChannel({ signingSecret: v('signingSecret'), botToken: v('botToken') }) };
-      case 'github':
+      case 'github': {
+        const app = values.has('appId') && values.has('privateKey') ? { appId: v('appId'), privateKey: v('privateKey').replace(/\\n/g, '\n') } : undefined;
+        if (app === undefined && !values.has('token')) return { error: 'Channel github needs token, or appId and privateKey' };
         return {
           channel: githubChannel({
             webhookSecret: v('webhookSecret'),
             botName: v('botName'),
-            token: v('token'),
+            ...(app !== undefined ? { app } : { token: v('token') }),
             ...opt('botLogin'),
+            ...(trigger.pullRequests === true
+              ? {
+                  pullRequestEvents: ['opened', 'synchronize', 'reopened', 'ready_for_review'] as const,
+                  replyToPullRequest: false,
+                  triggers: ({ association }: { association: string }) => TRUSTED_ASSOCIATIONS.has(association),
+                }
+              : {}),
           }),
         };
+      }
       case 'teams':
         return {
           channel: teamsChannel({ appId: v('appId'), appPassword: v('appPassword'), ...opt('tenantId') }),
