@@ -103,6 +103,14 @@ interface FileContentPart {
     type: 'file';
 }
 
+// @public
+export interface GitHubAppCredentials {
+    // (undocumented)
+    appId: string;
+    installationId?: number;
+    privateKey: string;
+}
+
 // @public (undocumented)
 export interface GitHubBranch {
     // (undocumented)
@@ -113,14 +121,14 @@ export interface GitHubBranch {
     sha: string;
 }
 
-// @public
+// @public (undocumented)
 export interface GitHubConfig {
+    app?: GitHubAppCredentials;
     // (undocumented)
     owner: string;
     // (undocumented)
     repo: string;
-    // (undocumented)
-    token: string;
+    token?: string | (() => string | Promise<string>);
 }
 
 // @public (undocumented)

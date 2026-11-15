@@ -1705,7 +1705,9 @@ interface GitHubChannelOptions {
     fetch?: typeof fetch;
     name?: string;
     onError?: ChannelErrorHandler;
+    pullRequestEvents?: readonly PullRequestAction[];
     pullRequestOpened?: boolean;
+    replyToPullRequest?: boolean;
     token?: string | (() => string | Promise<string>);
     triggers?: GitHubTriggers;
     webhookSecret: string;
@@ -2949,6 +2951,9 @@ interface ProviderUsage {
     // (undocumented)
     totalTokens: number;
 }
+
+// @public
+type PullRequestAction = 'opened' | 'synchronize' | 'reopened' | 'ready_for_review';
 
 // @public
 interface QueuedInput {
