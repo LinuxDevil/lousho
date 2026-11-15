@@ -14,11 +14,10 @@ import { test, expect } from '@playwright/test';
  * key. Assertions use roles and labels, not CSS classes, wherever the UI
  * exposes them.
  */
-const TOKEN = 'e2e-studio-token';
 
 test('create with the Author, edit on canvas, test and publish an agent', async ({ page }) => {
   // 1. The agents list.
-  await page.goto(`/?token=${TOKEN}#/agents`);
+  await page.goto(`/#/agents`);
   await expect(page.getByRole('heading', { level: 1, name: 'Agents' })).toBeVisible();
 
   // 2. The Agent Author dock (Ctrl/Cmd+J).
@@ -84,7 +83,7 @@ test('create with the Author, edit on canvas, test and publish an agent', async 
   // 10. Versions: at least two entries, the pin carries the Published badge.
   const agentId = /#\/agents\/([^/]+)\//.exec(page.url())?.[1] ?? '';
   expect(agentId).not.toBe('');
-  await page.goto(`/?token=${TOKEN}#/agents/${agentId}/versions`);
+  await page.goto(`/#/agents/${agentId}/versions`);
   const items = page.locator('li.version-item');
   await expect(items.first()).toBeVisible();
   expect(await items.count()).toBeGreaterThanOrEqual(2);

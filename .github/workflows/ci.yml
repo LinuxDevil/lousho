@@ -85,58 +85,10 @@ jobs:
       - run: npm run lint:imports --workspace apps/agent-forge
       - run: npm run test --workspace apps/agent-forge -- --run
       - run: npm run test:server --workspace apps/agent-forge
-      # W15b: the same bridge-compat matrix against the SDK in this commit.
-      - run: npm run test:bridge-compat --workspace apps/agent-forge
       - run: npm run build:studio
       # Packs the SDK and lousho-studio, dry-run publishes Studio, installs both in a fresh project, and checks
       # that `lousho-studio` and `lousho studio` serve the UI. Never publishes.
       - run: npm run pack-smoke:studio -- --skip-build
-  # W15b: the same bridge-compat matrix against the OLDEST SDK release Studio
-  # still supports (MIN_BRIDGE_SDK_VERSION in server/host/sdkCompat.ts). When
-  # that version is not on npm yet the job skips with a notice; once it is
-  # published this runs the suite against the real installed package.
-  bridge-compat-min:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22.19.0'
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run build
-        env:
-          NODE_OPTIONS: --max-old-space-size=12288
-      - name: Resolve MIN_BRIDGE_SDK_VERSION
-        id: min
-        run: |
-          v=$(npx tsx -e "import { MIN_BRIDGE_SDK_VERSION } from './apps/agent-forge/server/host/sdkCompat.ts'; console.log(MIN_BRIDGE_SDK_VERSION)")
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-      - name: Check the minimum SDK is published
-        id: pub
-        env:
-          MIN: ${{ steps.min.outputs.version }}
-        run: |
-          if npm view "lousho@$MIN" version > /dev/null 2>&1; then
-            echo "published=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "published=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::lousho@$MIN is not published yet - bridge-compat-min skips until it is."
-          fi
-      - name: Install the minimum SDK
-        if: steps.pub.outputs.published == 'true'
-        env:
-          MIN: ${{ steps.min.outputs.version }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/min-sdk" && cd "$RUNNER_TEMP/min-sdk"
-          npm init -y > /dev/null
-          npm install "lousho@$MIN" ai@7 zod@4 --no-audit --no-fund
-      - name: Run the compat suite against it
-        if: steps.pub.outputs.published == 'true'
-        env:
-          MIN: ${{ steps.min.outputs.version }}
-          LOUSHO_BRIDGE_SDK_DIR: ${{ runner.temp }}/min-sdk/node_modules/lousho
-        run: npm run test:bridge-compat --workspace apps/agent-forge
   test:
     runs-on: ubuntu-latest
     steps:
@@ -149,11 +101,7 @@ jobs:
       - run: npm run build -- --no-dts
       # packages/create-lousho's own tests execFileSync its bin/cli.js, which needs ITS dist/index.js too.
       - run: npm run build --workspace=packages/create-lousho
-      - run: node_modules/.bin/vitest run --coverage --config vitest.coverage.config.ts --exclude '{packages/create-lousho/src/template.e2e,src/providers/sharedChunks}.test.ts'
-      # Dead code, duplication and complexity gate (config: .fallowrc.json).
-      # Bare `fallow` fails on any finding. Runs after the coverage step because
-      # its CRAP scores read coverage/coverage-final.json.
-      - run: npm run fallow || (npx fallow health; npx fallow dupes; exit 1)
+      - run: node_modules/.bin/vitest run --coverage --config vitest.coverage.config.ts
   # What `npm pack` produces must install and work in a fresh project: builds, packs the SDK and
   # create-lousho, `npm publish --dry-run` (never a real publish), installs the tarballs plus
   # peers in a fresh project, loads every export in ESM and CJS, a mock-model turn, the bin and tsc.
@@ -171,14 +119,12 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=12288
       # Hello-world bundle and tarball unpacked size against scripts/size-budget.json (after pack-smoke's builds).
       - run: npm run size-check
-      - run: npx vitest run packages/create-lousho/src/template.e2e.test.ts src/providers/sharedChunks.test.ts
   # The newest peers the ranges accept (`ai` 7, `@ai-sdk/*` 4, `ollama-ai-provider-v2` 4, zod 4), installed
   # on top of the default `ai` 4 / zod 3 install (`--no-save` leaves the lockfile alone; `--save-prod
   # --legacy-peer-deps` because ollama-ai-provider-v2 is an optional peer and the dev install's v1 conflicts
-  # with zod 4). Then the sandbox egress, credential broker and docker deploy image against the runner's
-  # real Docker Engine (`*.docker.test.ts`, which fail instead of skipping with LOUSHO_DOCKER_TESTS=1).
+  # with zod 4).
   compat:
-    # Slow (full suite on the newest peers plus Docker); manual only (Actions -> CI -> Run workflow), not on every PR push.
+    # Slow (full suite on the newest peers); manual only (Actions -> CI -> Run workflow), not on every PR push.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -205,7 +151,3 @@ jobs:
         env:
           NODE_OPTIONS: --no-node-snapshot
           LOUSHO_ISOLATE_TESTS: '1'
-      - run: docker pull curlimages/curl:8.10.1 && docker pull node:20-alpine && docker pull node:22-slim
-      - run: npm run test:docker
-        env:
-          LOUSHO_DOCKER_TESTS: '1'

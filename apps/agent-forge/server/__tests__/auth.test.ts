@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { WebSocket } from 'ws';
 import { startStudioServer, type StudioServerHandle } from '../index';
-import { allowedHostsFor, STUDIO_TOKEN_HEADER } from '../auth';
+import { allowedHostsFor } from '../auth';
 
 /**
  * The studio API used to answer any origin
@@ -12,7 +12,6 @@ import { allowedHostsFor, STUDIO_TOKEN_HEADER } from '../auth';
  * keys, starts runs and executes hook code.
  */
 describe('studio access control', () => {
-  const TOKEN = 'test-token-0123456789';
   let baseDir: string;
   let staticDir: string;
   let handle: StudioServerHandle;
@@ -22,7 +21,7 @@ describe('studio access control', () => {
     baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-auth-test-'));
     staticDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-auth-static-'));
     fs.writeFileSync(path.join(staticDir, 'index.html'), '<!doctype html><title>forge</title>');
-    handle = await startStudioServer({ baseDir, port: 0, staticDir, token: TOKEN, observe: false });
+    handle = await startStudioServer({ baseDir, port: 0, staticDir, observe: false });
     origin = `http://127.0.0.1:${handle.port}`;
   });
 
@@ -34,7 +33,7 @@ describe('studio access control', () => {
 
   it('sends no wildcard CORS header and refuses a foreign Origin', async () => {
     const res = await fetch(`${origin}/agents`, {
-      headers: { Origin: 'https://example.com', [STUDIO_TOKEN_HEADER]: TOKEN },
+      headers: { Origin: 'https://example.com' },
     });
     expect(res.status).toBe(403);
     expect(res.headers.get('access-control-allow-origin')).toBeNull();
@@ -52,15 +51,8 @@ describe('studio access control', () => {
     expect(res.status).toBe(403);
   });
 
-  it('requires the token on API routes', async () => {
-    expect((await fetch(`${origin}/agents`)).status).toBe(401);
-    expect((await fetch(`${origin}/settings/providers`)).status).toBe(401);
-    expect((await fetch(`${origin}/agents`, { headers: { [STUDIO_TOKEN_HEADER]: 'wrong' } })).status).toBe(401);
-    expect((await fetch(`${origin}/agents`, { headers: { [STUDIO_TOKEN_HEADER]: TOKEN } })).status).toBe(200);
-    expect((await fetch(`${origin}/agents?token=${TOKEN}`)).status).toBe(200);
-  });
-
-  it('serves the static client and /health without the token', async () => {
+  it('serves the API, the static client and /health with no token', async () => {
+    expect((await fetch(`${origin}/agents`)).status).toBe(200);
     expect((await fetch(`${origin}/`)).status).toBe(200);
     expect((await fetch(`${origin}/health`)).status).toBe(200);
   });
@@ -69,7 +61,7 @@ describe('studio access control', () => {
     const http = await import('node:http');
     const status = await new Promise<number>((resolve, reject) => {
       const req = http.request(
-        { host: '127.0.0.1', port: handle.port, path: `/agents?token=${TOKEN}`, headers: { Host: 'evil.example' } },
+        { host: '127.0.0.1', port: handle.port, path: '/agents', headers: { Host: 'evil.example' } },
         (res) => {
           res.resume();
           resolve(res.statusCode ?? 0);
@@ -93,12 +85,11 @@ describe('studio access control', () => {
     });
   }
 
-  it('requires the token and a same/no Origin on the WebSocket', async () => {
+  it('requires a same/no Origin on the WebSocket', async () => {
     const wsBase = `ws://127.0.0.1:${handle.port}/agents/a1/stream`;
-    expect(await openWs(wsBase)).toBe(401);
-    expect(await openWs(`${wsBase}?token=${TOKEN}`, { Origin: 'https://example.com' })).toBe(403);
-    expect(await openWs(`${wsBase}?token=${TOKEN}`)).toBe('open');
-    expect(await openWs(`${wsBase}?token=${TOKEN}`, { Origin: origin })).toBe('open');
+    expect(await openWs(wsBase, { Origin: 'https://example.com' })).toBe(403);
+    expect(await openWs(wsBase)).toBe('open');
+    expect(await openWs(wsBase, { Origin: origin })).toBe('open');
   });
 });
 

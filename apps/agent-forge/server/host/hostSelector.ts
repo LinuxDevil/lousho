@@ -11,8 +11,8 @@
  *
  * `LOUSHO_OBSERVE_PROJECT = ref.id` in the child env makes the project's
  * runs group under this workspace on the observe daemon (the daemon's
- * default project is the package name, which would not match); the studio
- * token and listener vars are stripped so project code never sees them.
+ * default project is the package name, which would not match); the
+ * listener vars are stripped so project code never sees them.
  */
 import type { WorkspaceRef } from '../../shared/workspace';
 import { BRIDGE_PROTOCOL_VERSION } from 'lousho';
@@ -100,7 +100,7 @@ function bridgeEnv(ref: WorkspaceRef, collector: { url: string; token?: string }
   };
   if (collector.token) env.LOUSHO_OBSERVE_TOKEN = collector.token;
   else delete env.LOUSHO_OBSERVE_TOKEN;
-  for (const key of ['LOUSHO_STUDIO_TOKEN', 'LOUSHO_STUDIO_ALLOWED_ORIGINS', 'PORT', 'HOST', 'BASE_DIR', 'NO_STATIC', 'STATIC_DIR']) {
+  for (const key of ['LOUSHO_STUDIO_ALLOWED_ORIGINS', 'PORT', 'HOST', 'BASE_DIR', 'NO_STATIC', 'STATIC_DIR']) {
     delete env[key];
   }
   return { ...env, ...extra };

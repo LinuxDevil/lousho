@@ -3279,7 +3279,9 @@ export interface GitHubChannelOptions {
     fetch?: typeof fetch;
     name?: string;
     onError?: ChannelErrorHandler;
+    pullRequestEvents?: readonly PullRequestAction[];
     pullRequestOpened?: boolean;
+    replyToPullRequest?: boolean;
     token?: string | (() => string | Promise<string>);
     triggers?: GitHubTriggers;
     webhookSecret: string;
@@ -3316,6 +3318,7 @@ export interface GitHubTarget {
     // (undocumented)
     repo: string;
     reviewCommentId?: number;
+    silent?: boolean;
 }
 
 // @public
@@ -5760,6 +5763,9 @@ export interface ProviderUsage {
 
 // @public
 export function pruneToolResultsStrategy(): CompactionStrategy;
+
+// @public
+export type PullRequestAction = 'opened' | 'synchronize' | 'reopened' | 'ready_for_review';
 
 // @public
 interface QueuedInput {

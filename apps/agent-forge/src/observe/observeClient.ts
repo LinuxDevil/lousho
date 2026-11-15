@@ -9,7 +9,6 @@
  * at runtime - points the client straight at a collector (the hosted path the
  * spec leaves open); CORS is then the collector's job.
  */
-import { STUDIO_TOKEN_HEADER, loadStudioToken } from '../runtime/studioToken';
 import type {
   EvaluatorPatch,
   NewEvaluator,
@@ -201,12 +200,6 @@ export class ObserveClient {
     opts: { query?: Record<string, string | number | undefined>; method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; body?: unknown } = {}
   ): Promise<T> {
     const headers = new Headers({ accept: 'application/json' });
-    // The studio token only travels same-origin (to the studio server's
-    // proxy, which requires it); a configured remote collector gets no header.
-    if (this.baseUrl.startsWith('/')) {
-      const token = loadStudioToken();
-      if (token) headers.set(STUDIO_TOKEN_HEADER, token);
-    }
     const init: RequestInit = { headers };
     if (opts.method && opts.method !== 'GET') init.method = opts.method;
     if (opts.body !== undefined) {

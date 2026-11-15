@@ -8,38 +8,26 @@
  *      `Host: evil.example`);
  *   2. carries no `Origin`, or the studio's own origin - the browser sets
  *      `Origin` on every cross-origin fetch and on every WebSocket upgrade,
- *      so another site (or another local port) can't drive the API;
- *   3. (everything except a GET/HEAD of `/health` or the static client - see
- *      needsToken() in app.ts - and every WebSocket upgrade) presents the
- *      per-launch token `lousho studio` mints and prints in the studio URL,
- *      as the `x-lousho-studio-token` header or a `token` query parameter
- *      (the WebSocket can't set headers).
+ *      so another site (or another local port) can't drive the API.
+ *
+ * A Studio bound to a non-loopback host accepts any Host, so put it behind
+ * a login (a reverse proxy with basic auth, for example) before exposing it.
  *
  * There is no CORS middleware: the client is served by this same server
  * (or proxied same-origin by Vite in dev mode), so it never needs one.
  */
-import { randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 
-export const STUDIO_TOKEN_HEADER = 'x-lousho-studio-token';
-export const STUDIO_TOKEN_ENV = 'LOUSHO_STUDIO_TOKEN';
 /** Comma-separated extra origins to accept (dev mode: the Vite dev server's). */
 export const STUDIO_ALLOWED_ORIGINS_ENV = 'LOUSHO_STUDIO_ALLOWED_ORIGINS';
 
 const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 
-/** A fresh, unguessable per-launch token. */
-export function mintStudioToken(): string {
-  return randomBytes(24).toString('base64url');
-}
-
 export interface StudioAccessOptions {
-  /** The per-launch token; required on API and WebSocket requests. */
-  token: string;
   /**
    * Extra hostnames accepted in `Host` besides loopback - the `--host` the
    * server was bound to. `'*'` (a wildcard bind, `0.0.0.0` / `::`) accepts
-   * any host; the token is then the only gate.
+   * any host.
    */
   allowedHosts?: string[];
   /** Extra exact origins accepted besides the studio's own (`http://<Host>`). */
@@ -78,27 +66,14 @@ function isAllowedOrigin(origin: string | undefined, host: string | undefined, a
   return o === `http://${h}` || o === `https://${h}`;
 }
 
-function tokenMatches(presented: string | undefined, expected: string): boolean {
-  if (!presented) return false;
-  const a = Buffer.from(presented);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
 function header(req: IncomingMessage, name: string): string | undefined {
   const value = req.headers[name];
   return Array.isArray(value) ? value[0] : value;
 }
 
-function presentedToken(req: IncomingMessage): string | undefined {
-  const fromHeader = header(req, STUDIO_TOKEN_HEADER);
-  if (fromHeader) return fromHeader;
-  return new URL(req.url ?? '/', 'http://localhost').searchParams.get('token') ?? undefined;
-}
+export type AccessDecision = { ok: true } | { ok: false; status: 403; error: string };
 
-export type AccessDecision = { ok: true } | { ok: false; status: 401 | 403; error: string };
-
-/** Host + Origin check, applied to every request (static client included). */
+/** Host + Origin check, applied to every request and WebSocket upgrade. */
 export function checkHostAndOrigin(req: IncomingMessage, options: StudioAccessOptions): AccessDecision {
   const host = header(req, 'host');
   if (!isAllowedHost(host, options.allowedHosts ?? [])) {
@@ -112,7 +87,7 @@ export function checkHostAndOrigin(req: IncomingMessage, options: StudioAccessOp
 
 /**
  * The Host half of {@link checkHostAndOrigin} alone (X02a): the `/serve/**`
- * surface skips the studio token AND the studio-origin rule - external
+ * surface skips the studio-origin rule - external
  * apps call it with their own bearer token and their own Origin, which
  * the serve router checks against the agent's `allowedOrigins` instead.
  */
@@ -120,20 +95,6 @@ export function checkHostOnly(req: IncomingMessage, options: StudioAccessOptions
   const host = header(req, 'host');
   if (!isAllowedHost(host, options.allowedHosts ?? [])) {
     return { ok: false, status: 403, error: 'Forbidden host' };
-  }
-  return { ok: true };
-}
-
-/** Host + Origin + token, for the API routes and the WebSocket upgrade. */
-export function checkApiAccess(req: IncomingMessage, options: StudioAccessOptions): AccessDecision {
-  const base = checkHostAndOrigin(req, options);
-  if (!base.ok) return base;
-  if (!tokenMatches(presentedToken(req), options.token)) {
-    return {
-      ok: false,
-      status: 401,
-      error: 'Missing or invalid studio token - open the URL `lousho studio` printed (it ends in ?token=...)',
-    };
   }
   return { ok: true };
 }

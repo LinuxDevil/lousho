@@ -3,7 +3,7 @@
  *
  * Bundled by `server/tsup.config.ts` to `dist-server/cli.cjs` (the package's
  * `bin`), it parses its flags, starts the same `startStudioServer()` the
- * `lousho studio` launcher spawns, prints the tokened URL and shuts down
+ * `lousho studio` launcher spawns, prints its URL and shuts down
  * cleanly on SIGINT/SIGTERM.
  *
  *   Usage: lousho-studio [--workspace <dir>] [--port N] [--host H]
@@ -23,7 +23,7 @@ import { shutdownOnSignals, startStudioServer } from './index';
 
 export const USAGE = `Usage: lousho-studio [--workspace <dir>] [--port N] [--host H]
 
-Opens Lousho Studio. It prints a URL with a per-launch token; every API and WebSocket request needs that token.
+Opens Lousho Studio and prints its URL. Bound to a non-loopback --host, put it behind a login first.
 
 Options:
   --workspace <dir>  a project folder to open (default: the current folder); it is added to your workspaces

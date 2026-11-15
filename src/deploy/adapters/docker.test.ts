@@ -4,10 +4,6 @@
  * Always runs: Dockerfile content checks, and spy assertions proving
  * scaffold()/build() delegate to NodeServerAdapter rather than duplicating
  * its logic.
- *
- * The real `docker build` + `docker run` integration test needs a running
- * Docker daemon; it lives in docker.docker.test.ts and runs in the Linux
- * Docker CI job (`npm run test:docker`).
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import fs from 'node:fs';

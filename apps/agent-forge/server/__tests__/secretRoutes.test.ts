@@ -4,7 +4,6 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import request from 'supertest';
 import { createApp } from '../app';
-import { STUDIO_TOKEN_HEADER } from '../auth';
 import { RunManager } from '../runRegistry';
 import { newTestHost } from './testHost';
 import { FileCheckpointStore } from '../checkpointStore';
@@ -14,7 +13,6 @@ import { createFsAgentStore } from '../../src/persistence/fsAgentStore';
 import { AgentRepo } from '../storage/agentRepo';
 import type { LegacyAgentStore } from '../../src/persistence/AgentStore';
 
-const TOKEN = 'secret-routes-token-0123456789';
 const NAME_ERROR = {
   error: 'Secret names use letters, digits and underscores, and start with a letter or underscore.',
   code: 'LOUSHO_SECRET_NAME_INVALID',
@@ -57,7 +55,7 @@ describe('secret routes', () => {
   });
 
   const app = () => createApp({ agentStore, runManager, baseDir, secretsStore: secrets });
-  const gatedApp = () => createApp({ agentStore, runManager, baseDir, secretsStore: secrets, access: { token: TOKEN } });
+  const gatedApp = () => createApp({ agentStore, runManager, baseDir, secretsStore: secrets, access: {} });
   const secretsFile = () => path.join(baseDir, '.lousho', 'secrets.json');
 
   it('GET /settings/secrets/:name reports masked status, hasValue: false when unset', async () => {
@@ -124,14 +122,12 @@ describe('secret routes', () => {
     expect(secretsList.body.map((s: { name: string }) => s.name)).toEqual(['GITHUB_TOKEN']);
   });
 
-  it('every /settings/secrets route needs the studio token', async () => {
+  it('every /settings/secrets route refuses a foreign Origin', async () => {
     const gated = gatedApp();
-    expect((await request(gated).get('/settings/secrets')).status).toBe(401);
-    expect((await request(gated).get('/settings/secrets/GITHUB_TOKEN')).status).toBe(401);
-    expect((await request(gated).put('/settings/secrets/GITHUB_TOKEN').send({ value: 'x' })).status).toBe(401);
-    expect((await request(gated).delete('/settings/secrets/GITHUB_TOKEN')).status).toBe(401);
-    // With the token the same routes reach their handlers.
-    const ok = await request(gated).get('/settings/secrets').set(STUDIO_TOKEN_HEADER, TOKEN);
-    expect(ok.status).toBe(200);
+    const evil = 'https://evil.example';
+    expect((await request(gated).get('/settings/secrets').set('Origin', evil)).status).toBe(403);
+    expect((await request(gated).put('/settings/secrets/GITHUB_TOKEN').set('Origin', evil).send({ value: 'x' })).status).toBe(403);
+    expect((await request(gated).delete('/settings/secrets/GITHUB_TOKEN').set('Origin', evil)).status).toBe(403);
+    expect((await request(gated).get('/settings/secrets')).status).toBe(200);
   });
 });

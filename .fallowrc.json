@@ -57,15 +57,6 @@
       ]
     },
     {
-      "file": "packages/workspaces-react/src/__tests__/render.tsx",
-      "exports": [
-        "cleanup",
-        "typeInto",
-        "click",
-        "buttonNamed"
-      ]
-    },
-    {
       "file": "packages/workspaces-react/src/components/outputs.tsx",
       "exports": [
         "outputValue",
