@@ -10,7 +10,7 @@ export default defineConfig({
   plugins: [react()],
   define: { __LOUSHO_VERSION__: JSON.stringify(LOUSHO_VERSION) },
   server: {
-    // `lousho studio --dev` prints http://localhost:5173/?token=...
+    // `lousho studio --dev` prints http://localhost:5173/
     // and tells the API server to accept this origin, so the port is fixed.
     port: 5173,
     strictPort: true,
@@ -66,7 +66,7 @@ export default defineConfig({
     environment: 'jsdom',
     // jsdom throws for `window.localStorage`/`sessionStorage` on an opaque
     // (about:blank) origin, which is the environment's default when no url
-    // is given - the studio token and draft cache need a real http(s) origin.
+    // is given - the draft cache needs a real http(s) origin.
     environmentOptions: {
       jsdom: { url: 'http://localhost' },
     },

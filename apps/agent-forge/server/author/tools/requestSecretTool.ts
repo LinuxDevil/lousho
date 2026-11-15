@@ -8,7 +8,7 @@
  * secrets store (D13) and starts a continuation turn. A name that already
  * holds a value answers `'exists'` with no card at all.
  *
- * Provider keys and the Studio token are refused: they are configured in
+ * Provider keys are refused: they are configured in
  * Settings, and letting the Author store a second copy under a named
  * secret would silently shadow the Settings value.
  */
@@ -19,7 +19,7 @@ import { guardedToolCall, toolFailure } from './failure';
 import type { AuthorToolFactory } from './index';
 
 /**
- * Names `requestSecret` refuses: the provider keys and the Studio token,
+ * Names `requestSecret` refuses: the provider keys,
  * which Settings owns (`/settings`), not the named-secrets store.
  */
 const RESERVED_SECRET_NAMES: ReadonlySet<string> = new Set([
@@ -27,7 +27,6 @@ const RESERVED_SECRET_NAMES: ReadonlySet<string> = new Set([
   'OPENAI_API_KEY',
   'OPENROUTER_API_KEY',
   'GOOGLE_GENERATIVE_AI_API_KEY',
-  'LOUSHO_STUDIO_TOKEN',
 ]);
 
 /** AA14's client-answered card tool; the value never crosses it. */

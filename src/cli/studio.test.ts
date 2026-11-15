@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
-import { findStudio, runStudio, startStudio, STUDIO_MISSING, STUDIO_PACKAGE, studioUrl } from './studio';
+import { findStudio, runStudio, startStudio, STUDIO_MISSING, STUDIO_PACKAGE } from './studio';
 
 const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-studio-test-')));
 
@@ -165,11 +165,10 @@ describe('startStudio', () => {
     try {
       expect(handle.mode).toBe('dev');
       expect(handle.viteProcess).toBeDefined();
-      expect(handle.token).toMatch(/^[A-Za-z0-9_-]{32}$/);
       expect(calls).toHaveLength(2);
       const apiEnv = (calls[0].opts as { env: Record<string, string> }).env;
       expect(apiEnv.BASE_DIR).toBe(repoRoot);
-      expect(apiEnv.LOUSHO_STUDIO_TOKEN).toBe(handle.token);
+      expect(apiEnv.LOUSHO_STUDIO_TOKEN).toBeUndefined();
       expect(apiEnv.NO_STATIC).toBe('1');
     } finally {
       handle.stop();
@@ -225,12 +224,5 @@ describe('lousho studio --help', () => {
     } finally {
       log.mockRestore();
     }
-  });
-});
-
-describe('studioUrl', () => {
-  it('formats host, port and token', () => {
-    expect(studioUrl('0.0.0.0', 4750, 'abc')).toBe('http://127.0.0.1:4750/?token=abc');
-    expect(studioUrl('127.0.0.1', 5000, 'a+b')).toBe('http://127.0.0.1:5000/?token=a%2Bb');
   });
 });

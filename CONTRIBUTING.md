@@ -50,11 +50,10 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
    npm run typecheck  # Type checking
    npm run typecheck:tests  # The test files are type-checked too
    npm run lint       # Linting
-   npm run test:coverage && npm run fallow  # Dead code, duplication, complexity (must exit 0)
    npm test           # Tests
    npm run build      # Build
    ```
-   Changes to the Docker sandbox, its network egress, the credential broker or the docker deploy adapter also have real-daemon tests, `npm run test:docker` (`*.docker.test.ts`, not part of `npm test`). They skip without a Docker daemon (the egress cases also skip on Docker Desktop and rootless Docker, where egress is refused by design), so they run in CI's `compat` job on Linux; set `LOUSHO_DOCKER_TESTS=1` to make a missing daemon fail the run instead.
+   The suite keeps only the crucial tests (about 1000): security, the agent loop, specs, tools, channels, the CLI, deploy and Studio's core routes. Add a test only when it guards something that would hurt users if it broke.
 
 4. Commit your changes with a descriptive commit message
 

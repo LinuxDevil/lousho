@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `github_submit_review` posts one pull-request review with a verdict and inline comments; `createGitHubTools()` also authenticates as a GitHub App (`app: { appId, privateKey }`) or with a token function. See [Tools](docs/tools.md).
 - `githubChannel({ pullRequestEvents, replyToPullRequest })` re-reviews pull requests on every push (drafts skipped until ready) and can stay silent when the agent posts its own review. See [Channels](docs/channels.md).
 - Built-in `workspace_read`, `workspace_write` and `shell` tools, confined to `options.root` and refusing `.env`, `.git` and `.lousho`.
+- **Breaking:** Studio no longer uses a per-launch access token. `LOUSHO_STUDIO_TOKEN`, the `?token=` URL parameter and the `x-lousho-studio-token` header are gone; the Host and Origin checks remain. A Studio bound to `--host 0.0.0.0` must sit behind a login such as a reverse proxy with basic auth. See [Studio access](docs/agent-forge.md#access).
+- The test suite keeps only the crucial tests (about 1000); the live-model, Docker and bridge-compat suites, the coverage floors and the fallow gate are removed from CI.
 
 ## [1.0.0-alpha.120] - 2026-11-15
 

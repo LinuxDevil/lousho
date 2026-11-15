@@ -89,7 +89,6 @@ import type {
   WorkspaceScanResult,
 } from '../../shared/wireTypes';
 import { ALL_WORKSPACES, WORKSPACE_HEADER, WORKSPACE_QUERY } from '../../shared/workspace';
-import { STUDIO_TOKEN_HEADER, loadStudioToken } from './studioToken';
 import { activeWorkspace } from '../workspace/activeWorkspace';
 import {
   AUTHOR_STREAM_PATH,
@@ -110,8 +109,6 @@ const DEFAULT_BASE_URL = '';
 
 interface RuntimeClientOptions {
   baseUrl?: string;
-  /** The per-launch API token; defaults to the one in the page URL (see studioToken.ts). */
-  token?: string;
   /**
    * The workspace this client is bound to (W04a): when set, every request
    * carries `x-lousho-workspace: <id>` and every socket `?ws=<id>`
@@ -154,23 +151,21 @@ export interface StreamConnectionHandlers {
 
 class RuntimeClient implements AgentApi {
   private readonly baseUrl: string;
-  private readonly token: string | undefined;
   private readonly workspaceId: string | undefined;
 
   constructor(options: RuntimeClientOptions = {}) {
     this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
-    this.token = options.token ?? loadStudioToken();
     this.workspaceId = options.workspaceId;
   }
 
   /**
-   * A client bound to workspace `id` (W04a): same base URL and token, but
+   * A client bound to workspace `id` (W04a): same base URL, but
    * the `x-lousho-workspace` header (and the sockets' `?ws=`) is always
    * `id` - for code that must talk to a workspace other than the one the
    * URL names, like the all-agents list (W06a).
    */
   forWorkspace(id: string): RuntimeClient {
-    return new RuntimeClient({ baseUrl: this.baseUrl, token: this.token, workspaceId: id });
+    return new RuntimeClient({ baseUrl: this.baseUrl, workspaceId: id });
   }
 
   /** The workspace this request/socket targets: the bound id, else the URL's/launch workspace (`undefined` before `GET /workspaces` answers). */
@@ -178,10 +173,9 @@ class RuntimeClient implements AgentApi {
     return this.workspaceId ?? activeWorkspace();
   }
 
-  /** `fetch` against the studio API, carrying the per-launch token and the active workspace's `x-lousho-workspace` header. */
+  /** `fetch` against the studio API, carrying the active workspace's `x-lousho-workspace` header. */
   private fetch(path: string, init?: RequestInit): Promise<Response> {
     const headers = new Headers(init?.headers);
-    if (this.token) headers.set(STUDIO_TOKEN_HEADER, this.token);
     const ws = this.targetWorkspace();
     if (ws) headers.set(WORKSPACE_HEADER, ws);
     return fetch(`${this.baseUrl}${path}`, { ...init, headers });
@@ -202,7 +196,6 @@ class RuntimeClient implements AgentApi {
     onError?: (event: Event) => void
   ): () => void {
     const params = new URLSearchParams();
-    if (this.token) params.set('token', this.token);
     const ws = this.targetWorkspace();
     if (ws) params.set(WORKSPACE_QUERY, ws);
     const query = params.size > 0 ? `?${params}` : '';
@@ -1204,12 +1197,11 @@ class RuntimeClient implements AgentApi {
   }
 
   /**
-   * `WS /assistant/stream?session=<id>&token=<token>` - the raw socket
+   * `WS /assistant/stream?session=<id>` - the raw socket
    * `connectAuthorStream` (src/author/authorStream.ts) wraps with reconnects.
    */
   openAuthorSocket(sessionId: string): WebSocket {
     const query = new URLSearchParams({ session: sessionId });
-    if (this.token) query.set('token', this.token);
     return new WebSocket(`${this.wsBaseUrl()}${AUTHOR_STREAM_PATH}?${query}`);
   }
 

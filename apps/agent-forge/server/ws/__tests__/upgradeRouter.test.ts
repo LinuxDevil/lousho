@@ -9,10 +9,9 @@ import { createUpgradeRouter } from '../upgradeRouter';
  * The single `upgrade` listener every WS endpoint registers on
  * (server/ws/upgradeRouter.ts): exact-path and RegExp routing in
  * registration order, duplicate registrations rejected, unmatched paths
- * destroyed, and the shared Host/Origin/token gate run before any handler.
+ * destroyed, and the shared Host/Origin gate run before any handler.
  */
 describe('createUpgradeRouter', () => {
-  const TOKEN = 'router-token-0123456789';
   let server: http.Server;
   let port: number;
 
@@ -75,24 +74,12 @@ describe('createUpgradeRouter', () => {
     expect(() => router.register(/^\/events$/, () => {})).not.toThrow();
   });
 
-  it('rejects with 401 before any handler runs when the token is missing', async () => {
-    const router = createUpgradeRouter(server, { token: TOKEN });
-    const seen: string[] = [];
-    router.register('/events', recording(seen));
-    router.register(/^\//, recording(seen)); // catch-all: only routing can be skipped, not the gate
-    expect(await attempt('/events')).toBe(401);
-    expect(await attempt('/events?token=wrong')).toBe(401);
-    expect(seen).toEqual([]);
-    expect(await attempt(`/events?token=${TOKEN}`)).toBe('error');
-    expect(seen).toEqual(['/events']);
-  });
-
   it('rejects a foreign Origin with 403 before any handler runs', async () => {
-    const router = createUpgradeRouter(server, { token: TOKEN });
+    const router = createUpgradeRouter(server, {});
     const seen: string[] = [];
     router.register(/^\//, recording(seen));
     const status = await new Promise<number>((resolve) => {
-      const ws = new WebSocket(`ws://127.0.0.1:${port}/events?token=${TOKEN}`, {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/events`, {
         headers: { Origin: 'https://example.com' },
       });
       ws.on('unexpected-response', (_req, res) => resolve(res.statusCode ?? 0));

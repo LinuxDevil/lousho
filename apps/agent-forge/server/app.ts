@@ -26,9 +26,9 @@
  *   GET  /inbox/count                -> InboxCount
  *   POST /inbox/alerts/:alertId/dismiss -> 204 | 404
  *   POST /hooks/:agentId/<path>       -> webhook trigger fire (triggers/webhookRoute.ts, R08a);
- *                                        public - HMAC or loopback-only, no studio token
+ *                                        public - HMAC or loopback-only
  *   ALL  /hooks/:agentId/channel/<kind> -> channel trigger (triggers/channelTriggers.ts, R08b);
- *                                        public - platform-signed, no studio token
+ *                                        public - platform-signed
  *   ANY  /serve/:id/*                 -> the published agent's SDK chat API (serve/serveRoutes.ts, X02a);
  *                                        host-only at the gate, bearer + allowedOrigins inside
  *   GET/PUT /agents/:id/serve         -> ServeStatus - the serve switch + masked token (serve/serveRoutes.ts)
@@ -127,7 +127,7 @@ import {
   traceDirExists,
 } from './traceStore';
 import { DEPLOY_ADAPTERS, isDeployAdapter, runDeploy, writePublishedSpec } from './deployRunner';
-import { checkApiAccess, checkHostAndOrigin, checkHostOnly, type StudioAccessOptions } from './auth';
+import { checkHostAndOrigin, checkHostOnly, type StudioAccessOptions } from './auth';
 import { registerObserveProxy } from './observeProxy';
 import { CollectorManager } from './collector';
 import { registerCollectorRoutes } from './routes/collectorRoutes';
@@ -250,10 +250,7 @@ interface CreateAppBaseOptions {
    */
   widgetDir?: string;
   /**
-   * The per-launch token (and extra allowed hosts) every API
-   * request must present - see auth.ts. `startStudioServer()` always passes
-   * one; omitting it (in-process tests only) skips the token check, while
-   * the Host/Origin check still applies.
+   * Extra allowed hosts and origins for the Host/Origin check - see auth.ts.
    */
   access?: StudioAccessOptions;
   /** Observe reporter overrides for `POST /playground/run` (tests); see playground.ts. */
@@ -367,27 +364,8 @@ type CreateAppWorkspaceOptions =
  */
 export type CreateAppOptions = CreateAppBaseOptions & CreateAppWorkspaceOptions;
 
-/** Path prefixes of the API (everything except `/health` and the static client). */
-const API_PREFIXES = [
-  '/agents',
-  '/runs',
-  '/settings',
-  '/workspace',
-  '/workspaces',
-  '/observe',
-  '/playground',
-  '/catalog',
-  '/assistant',
-  '/templates',
-  '/events',
-  '/inbox',
-];
-
-/** The only methods served without the token, and only off the API (`/health`, the static client). */
-const PUBLIC_METHODS = new Set(['GET', 'HEAD']);
-
 /**
- * `pathname` as the token gate compares it: percent-decoded to a fixed point,
+ * `pathname` as the gate compares it: percent-decoded to a fixed point,
  * runs of `/` or `\` collapsed to one `/`, lower-cased - a superset of every
  * spelling Express could route to an API handler (`/PLAYGROUND/run`,
  * `//playground/run`, `/%70layground/run`, `/observe%2Fapi/...`).
@@ -408,27 +386,12 @@ function gatePath(pathname: string): string | undefined {
   return undefined;
 }
 
-function isApiPath(pathname: string): boolean {
-  const normalised = gatePath(pathname);
-  if (normalised === undefined) return true;
-  return API_PREFIXES.some((prefix) => normalised === prefix || normalised.startsWith(`${prefix}/`));
-}
-
-/**
- * Deny by default: every request needs the token except a GET/HEAD off the
- * API (`/health`, static files, the SPA fallback). `req.path` is the pathname
- * Express routes on (an absolute-form request line's included).
- */
-function needsToken(req: Request): boolean {
-  return !PUBLIC_METHODS.has(req.method) || isApiPath(req.path);
-}
-
 /**
  * `POST /hooks/**` is the public webhook surface (R08a): external callers
- * carry no studio token and may come from non-loopback hosts, so the
- * global Host/Origin + token gate must not touch it - the webhook route
+ * may come from non-loopback hosts and other origins, so the
+ * global Host/Origin gate must not touch it - the webhook route
  * applies its own rule (HMAC signature, or loopback-only when the
- * trigger has no secret). `gatePath` normalizes the same way the token
+ * trigger has no secret). `gatePath` normalizes the same way the
  * gate compares, so encoded/case-folded spellings can't slip past.
  */
 function isWebhookPost(req: Request): boolean {
@@ -442,7 +405,7 @@ function isWebhookPost(req: Request): boolean {
  * with the agent's own bearer token and their own `Origin`, so the global
  * gate applies the Host check alone here - the serve router enforces the
  * bearer and the agent's `allowedOrigins` itself. `gatePath` normalizes
- * the same way the token gate compares.
+ * the same way the gate compares.
  */
 function isServePath(req: Request): boolean {
   const normalised = gatePath(req.path);
@@ -1403,8 +1366,7 @@ export function createApp(options: CreateAppOptions): Express {
   app.set('case sensitive routing', true);
   // No CORS middleware - the client is same-origin (served by
   // this server, or proxied by Vite in dev). Every request must name a
-  // loopback Host and carry no foreign Origin; everything except a GET/HEAD of
-  // `/health` or the static client also needs the token (see needsToken()).
+  // allowed Host and carry no foreign Origin.
   app.use((req, res, next) => {
     // Webhook posts skip the whole gate - the route does its own auth.
     if (isWebhookPost(req)) {
@@ -1414,7 +1376,7 @@ export function createApp(options: CreateAppOptions): Express {
     // `/serve/**` callers are external apps, not Studio tabs: host-only at
     // this layer (the serve router applies the agent bearer + allowedOrigins).
     if (isServePath(req)) {
-      const decision = access ? checkHostOnly(req, access) : checkHostOnly(req, { token: '' });
+      const decision = checkHostOnly(req, access ?? {});
       if (!decision.ok) {
         res.status(decision.status).json({ error: decision.error });
         return;
@@ -1422,11 +1384,7 @@ export function createApp(options: CreateAppOptions): Express {
       next();
       return;
     }
-    const decision = access
-      ? needsToken(req)
-        ? checkApiAccess(req, access)
-        : checkHostAndOrigin(req, access)
-      : checkHostAndOrigin(req, { token: '' });
+    const decision = checkHostAndOrigin(req, access ?? {});
     if (!decision.ok) {
       res.status(decision.status).json({ error: decision.error });
       return;
@@ -1446,7 +1404,7 @@ export function createApp(options: CreateAppOptions): Express {
   // handlers, which read the raw request stream for platform signature
   // checks - so this route MUST sit before the `express.raw` mount on
   // `/hooks` (and before express.json). Channel requests carry the
-  // platform's signature, not a studio token; the /hooks gate exemption
+  // platform's signature; the /hooks gate exemption
   // already covers them.
   app.all('/hooks/:agentId/channel/*splat', (req, res, next) => {
     workspaceOf(req).channels.handler()(req, res, next);

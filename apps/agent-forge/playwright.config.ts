@@ -21,8 +21,6 @@ import { fileURLToPath } from 'node:url';
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-forge-e2e-'));
 const port = Number(process.env.LOUSHO_STUDIO_E2E_PORT ?? 4799);
-/** The API needs the per-launch token; pin one so the spec can open `/?token=...`. */
-const E2E_STUDIO_TOKEN = 'e2e-studio-token';
 /**
  * Builder and playground runs report to the observe daemon: point them at a
  * closed loopback port so e2e runs never reach a real daemon on this machine
@@ -54,7 +52,6 @@ export default defineConfig({
       PORT: String(port),
       HOST: '127.0.0.1',
       BASE_DIR: baseDir,
-      LOUSHO_STUDIO_TOKEN: E2E_STUDIO_TOKEN,
       LOUSHO_OBSERVE_URL: E2E_OBSERVE_URL,
       // No daemon here: the collector probes the stub URL but never starts one (collector.ts).
       LOUSHO_STUDIO_COLLECTOR: '0',

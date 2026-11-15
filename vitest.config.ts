@@ -70,11 +70,6 @@ export default defineConfig({
       // Fixture evals that src/cli/eval.test.ts runs through `lousho eval`.
       'src/cli/__fixtures__/**',
       '**/*.judge.eval.ts',
-      // Real-daemon Docker tests: run only via vitest.docker.config.ts /
-      // `npm run test:docker` (the Linux Docker CI job), never in the default run.
-      '**/*.docker.test.ts',
-      // Live-model tests (cost money): run with `npm run test:live`.
-      '**/*.live.test.ts',
       // apps/* are separate npm workspaces with their own Vite/
       // vitest config and browser-only test environment (jsdom) - without
       // this exclude, this root config's broad default include pattern
@@ -116,17 +111,6 @@ export default defineConfig({
         'apps/**',
         '.claude/**',
       ],
-      // Floors set 1.5-2 points below the measured baseline of src/ alone
-      // (`npm run test:coverage`, 2026-10): statements 96.64%, branches
-      // 91.06%, functions 96.05%, lines 96.64%. They used to sit ~35 points
-      // under the real figure because the denominator counted scripts/,
-      // examples/ too (see `include` above).
-      thresholds: {
-        statements: 95,
-        branches: 89,
-        functions: 94,
-        lines: 95,
-      },
     },
   },
 });

@@ -20,7 +20,7 @@ import { SettingsStore } from './settingsStore';
 import { startJudgeLoop, type JudgeLoopOptions } from './judge';
 import { CollectorManager } from './collector';
 import type { IdleVersioner } from './storage/idleVersioner';
-import { STUDIO_ALLOWED_ORIGINS_ENV, STUDIO_TOKEN_ENV, allowedHostsFor, mintStudioToken } from './auth';
+import { STUDIO_ALLOWED_ORIGINS_ENV, allowedHostsFor } from './auth';
 import { createWorkspaceContext, type WorkspaceContext, type WorkspaceServices } from './workspace/context';
 import { WorkspaceManager } from './workspace/workspaceManager';
 import { configureStudioHome, defaultStudioHome, studioPaths } from './workspace/studioPaths';
@@ -52,9 +52,7 @@ export interface StudioServerHandle {
    * stream) call `upgradeRouter.register(...)` on it.
    */
   upgradeRouter: UpgradeRouter;
-  /** The per-launch token every API/WebSocket request must carry. */
-  token: string;
-  /** The URL to open: the studio's own origin with `?token=` appended. */
+  /** The URL to open: the studio's own origin. */
   url: string;
   /** The app's collector (collector.ts): `close()` already stopped a Studio-started daemon. */
   collector: CollectorManager;
@@ -77,12 +75,6 @@ export interface StartStudioServerOptions {
    * itself serves the UI).
    */
   staticDir?: string | false;
-  /**
-   * The per-launch API token. Defaults to the
-   * `LOUSHO_STUDIO_TOKEN` env var (set by `lousho studio`), else a freshly
-   * minted random one.
-   */
-  token?: string;
   /**
    * Report builder runs to the observe daemon (`LOUSHO_OBSERVE_URL`, see
    * server/observeReporting.ts) so the top bar's "Open trace" resolves.
@@ -269,9 +261,8 @@ export async function startStudioServer(
     collector,
   });
 
-  const token = options.token ?? (process.env[STUDIO_TOKEN_ENV] || mintStudioToken());
   const allowedOrigins = (process.env[STUDIO_ALLOWED_ORIGINS_ENV] ?? '').split(',').filter(Boolean);
-  const access = { token, allowedHosts: allowedHostsFor(host), allowedOrigins };
+  const access = { allowedHosts: allowedHostsFor(host), allowedOrigins };
   const docsDir = resolveDocsDir(moduleDir);
   // The Author's session store, template catalog and turn runner are built
   // here - not inside createApp - because `WS /assistant/stream` needs the
@@ -379,8 +370,7 @@ export async function startStudioServer(
     port: boundPort,
     runManager: workspace.runs,
     upgradeRouter,
-    token,
-    url: `http://${urlHost}:${boundPort}/?token=${encodeURIComponent(token)}`,
+    url: `http://${urlHost}:${boundPort}/`,
     collector,
     close: async () => {
       judgeLoop?.stop();
@@ -457,8 +447,7 @@ if (isMainModule) {
       } else {
         console.log(`[lousho studio] Collector: not reachable (${collector.error ?? 'unknown'})`);
       }
-      // `lousho studio` mints the token itself and prints this URL; only print it when launched directly.
-      if (!process.env[STUDIO_TOKEN_ENV]) console.log(`[lousho studio] Agent Forge: ${handle.url}`);
+      console.log(`[lousho studio] Agent Forge: ${handle.url}`);
       shutdownOnSignals(handle);
     })
     .catch((error) => {

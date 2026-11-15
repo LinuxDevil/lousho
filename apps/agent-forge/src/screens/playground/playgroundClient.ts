@@ -1,9 +1,7 @@
 /**
  * Streams `POST /playground/run` from the Studio server (not the observe
- * daemon, so a run works with the daemon down). Carries the per-launch
- * Studio token like runtimeClient.ts.
+ * daemon, so a run works with the daemon down).
  */
-import { STUDIO_TOKEN_HEADER, loadStudioToken } from '../../runtime/studioToken';
 import { createSseParser } from './sse';
 import type { PlaygroundEvent, PlaygroundRunBody } from './types';
 
@@ -39,8 +37,6 @@ export async function streamPlaygroundRun(
   signal?: AbortSignal
 ): Promise<void> {
   const headers = new Headers({ 'content-type': 'application/json', accept: 'text/event-stream' });
-  const token = loadStudioToken();
-  if (token) headers.set(STUDIO_TOKEN_HEADER, token);
   try {
     const res = await fetch('/playground/run', { method: 'POST', headers, body: JSON.stringify(body), signal });
     if (!res.ok || !res.body) return onEvent(await errorEventOf(res));

@@ -6,14 +6,14 @@
  * the other's paths. Instead, `createUpgradeRouter` owns the single
  * listener; every WS endpoint (`/agents/:id/stream`, `/events`, later
  * `/assistant/stream`) registers a route on it. On each upgrade the
- * router runs the shared Host/Origin/token gate (the same checks the HTTP
+ * router runs the shared Host/Origin gate (the same checks the HTTP
  * API applies - see auth.ts) before any handler, parses the URL once,
  * then dispatches by pathname to the first registered route that matches
  * (registration order). An unmatched path's socket is destroyed.
  */
 import type { Server as HttpServer, IncomingMessage } from 'node:http';
 import type { Socket } from 'node:net';
-import { checkApiAccess, checkHostAndOrigin, type StudioAccessOptions } from '../auth';
+import { checkHostAndOrigin, type StudioAccessOptions } from '../auth';
 
 /** One WS endpoint's upgrade handler: completes the upgrade itself (its own `WebSocketServer({ noServer: true })`) or destroys the socket. */
 export type UpgradeHandler = (req: IncomingMessage, socket: Socket, head: Buffer, url: URL) => void;
@@ -36,17 +36,16 @@ interface UpgradeRoute {
 }
 
 /**
- * The shared Host/Origin/token gate as the HTTP API applies it (see
- * auth.ts); omitted `access` skips only the token. Writes the HTTP
+ * The shared Host/Origin gate as the HTTP API applies it (see
+ * auth.ts). Writes the HTTP
  * rejection straight to the socket and answers `true` when the upgrade
  * must go no further.
  */
 function rejectUpgrade(req: IncomingMessage, socket: Socket, access: StudioAccessOptions | undefined): boolean {
-  const decision = access ? checkApiAccess(req, access) : checkHostAndOrigin(req, { token: '' });
+  const decision = checkHostAndOrigin(req, access ?? {});
   if (decision.ok) return false;
-  const reason = decision.status === 401 ? 'Unauthorized' : 'Forbidden';
   const CRLF = '\r\n';
-  socket.end(`HTTP/1.1 ${decision.status} ${reason}${CRLF}Connection: close${CRLF}Content-Length: 0${CRLF}${CRLF}`);
+  socket.end(`HTTP/1.1 ${decision.status} Forbidden${CRLF}Connection: close${CRLF}Content-Length: 0${CRLF}${CRLF}`);
   return true;
 }
 

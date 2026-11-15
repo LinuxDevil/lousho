@@ -12,8 +12,7 @@
  *     contributor modes:
  *
  *       - **prod**: `dist-server/cli.cjs --workspace <cwd> --port <p>
- *         --host <h>` - one process serving the built UI and API (the
- *         Studio CLI mints and prints its own per-launch token).
+ *         --host <h>` - one process serving the built UI and API.
  *       - **dev**: the API server via `tsx` plus the Vite dev server
  *         (HMR), exactly as before; only meaningful with the app's
  *         devDependencies installed.
@@ -30,7 +29,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { exitCodeFor, parseCommand, portValue, stringValue, usageError, type CommandSpec } from './args';
 import { ConfigurationError } from '../execution/errors';
@@ -78,29 +76,11 @@ export interface StudioOptions {
   spawnFn?: typeof spawn;
 }
 
-/**
- * Env var carrying the per-launch API token to the studio server in dev
- * mode (and to Vite's proxy). Mirrors `STUDIO_TOKEN_ENV` in
- * `apps/agent-forge/server/auth.ts`.
- */
-const STUDIO_TOKEN_ENV = 'LOUSHO_STUDIO_TOKEN';
 /** Extra origins the API accepts - in dev mode, the Vite dev server's (vite.config.ts pins port 5173). */
 const STUDIO_ALLOWED_ORIGINS_ENV = 'LOUSHO_STUDIO_ALLOWED_ORIGINS';
 const VITE_DEV_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173'];
 
-/** The URL to open: the studio's origin plus the per-launch token. */
-export function studioUrl(apiHost: string, apiPort: number, token: string): string {
-  const host = apiHost === '0.0.0.0' || apiHost === '::' ? '127.0.0.1' : apiHost.includes(':') ? `[${apiHost}]` : apiHost;
-  return `http://${host}:${apiPort}/?token=${encodeURIComponent(token)}`;
-}
-
 export interface StudioHandle {
-  /**
-   * The per-launch token every API/WebSocket request must carry. Only known
-   * in checkout dev mode - prod and installed launches let the Studio CLI
-   * mint and print its own.
-   */
-  token?: string;
   /** The studio server process (dev mode: the API server; viteProcess is the UI). */
   apiProcess: ChildProcess;
   /** The Vite dev server. Only present in checkout dev mode. */
@@ -234,9 +214,7 @@ export function startStudio(options: StudioOptions = {}): StudioHandle {
 
   const mode = resolveMode(target.appDir, requested);
   if (mode === 'prod') return startProdStudio(target.appDir, repoRoot, apiPort, apiHost, spawnImpl);
-  const fixed = process.env[STUDIO_TOKEN_ENV];
-  const token = fixed !== undefined && fixed.length >= 24 ? fixed : randomBytes(24).toString('base64url');
-  return startDevStudio(target.appDir, repoRoot, apiPort, apiHost, token, spawnImpl);
+  return startDevStudio(target.appDir, repoRoot, apiPort, apiHost, spawnImpl);
 }
 
 /** Logs a child process's non-zero exit (a null code means it was killed by a signal). */
@@ -293,7 +271,6 @@ function startProdStudio(
 
   console.log(`[lousho studio] starting production server (port ${apiPort})...`);
 
-  // cli.cjs mints and prints its own per-launch token; no BASE_DIR/token env.
   const apiProcess = spawnImpl(
     process.execPath,
     [entry, '--workspace', repoRoot, '--port', String(apiPort), '--host', apiHost],
@@ -324,7 +301,6 @@ function startDevStudio(
   repoRoot: string,
   apiPort: number,
   apiHost: string,
-  token: string,
   spawnImpl: typeof spawn
 ): StudioHandle {
   assertDevSourcePresent(appDir);
@@ -344,7 +320,6 @@ function startDevStudio(
       // with HMR - even if a stale apps/agent-forge/dist build happens to
       // exist on disk from a previous `build:studio` run.
       NO_STATIC: '1',
-      [STUDIO_TOKEN_ENV]: token,
       // The browser's Origin is Vite's, proxied through to this server.
       [STUDIO_ALLOWED_ORIGINS_ENV]: VITE_DEV_ORIGINS.join(','),
     },
@@ -377,9 +352,9 @@ function startDevStudio(
   });
 
   console.log(`[lousho studio] API server:  http://${apiHost}:${apiPort}`);
-  console.log(`[lousho studio] Studio UI: ${VITE_DEV_ORIGINS[0]}/?token=${encodeURIComponent(token)}`);
+  console.log(`[lousho studio] Studio UI: ${VITE_DEV_ORIGINS[0]}/`);
 
-  return { apiProcess, viteProcess, mode: 'dev', token, stop };
+  return { apiProcess, viteProcess, mode: 'dev', stop };
 }
 
 const USAGE = 'Usage: lousho studio [--port N] [--host H]';

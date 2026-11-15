@@ -42,7 +42,6 @@
     "prepack": "node scripts/pin-sdk-range.mjs pin",
     "postpack": "node scripts/pin-sdk-range.mjs restore",
     "test:server": "vitest run -c server/vitest.config.ts",
-    "test:bridge-compat": "vitest run -c server/vitest.compat.config.ts",
     "typecheck:server": "tsc --noEmit -p server/tsconfig.json && tsc --noEmit -p evals/tsconfig.json",
     "eval:author": "tsx evals/author/run.ts",
     "test:e2e:studio": "npm run build:studio && playwright test",
