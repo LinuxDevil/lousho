@@ -79,7 +79,11 @@ function traefikLabels(config: DeployConfig, service: string, port: number, auth
   if (auth) {
     labels.push(
       `traefik.http.routers.${router}.middlewares: ${router}-auth`,
-      `traefik.http.middlewares.${router}-auth.basicauth.users: \${STUDIO_BASIC_AUTH}`
+      `traefik.http.middlewares.${router}-auth.basicauth.users: \${STUDIO_BASIC_AUTH}`,
+      `traefik.http.routers.${router}-hooks.rule: Host(\`${hostFor(config, service)}\`) && PathPrefix(\`/hooks/\`)`,
+      `traefik.http.routers.${router}-hooks.entrypoints: websecure`,
+      `traefik.http.routers.${router}-hooks.tls.certresolver: letsencrypt`,
+      `traefik.http.routers.${router}-hooks.service: ${router}`
     );
   }
   return labels;
@@ -154,7 +158,7 @@ export function renderCaddyfile(config: DeployConfig): string {
   const blocks: string[] = [];
   if (config.studio) {
     blocks.push(
-      `${hostFor(config, 'studio')} {\n  basic_auth {\n    {$STUDIO_USER} {$STUDIO_HASH}\n  }\n  reverse_proxy studio:${STUDIO_PORT}\n}`
+      `${hostFor(config, 'studio')} {\n  handle /hooks/* {\n    reverse_proxy studio:${STUDIO_PORT}\n  }\n  handle {\n    basic_auth {\n      {$STUDIO_USER} {$STUDIO_HASH}\n    }\n    reverse_proxy studio:${STUDIO_PORT}\n  }\n}`
     );
   }
   for (const agent of config.agents) {

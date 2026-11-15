@@ -54,20 +54,27 @@ after any change; it asks nothing the second time.
 
 ## GitHub App agents
 
-An agent with a GitHub channel (the PR reviewer, for example) needs a GitHub
-App. After the first deploy:
+An agent with a GitHub channel (a PR reviewer, for example) needs a GitHub
+App. It can be a deployed agent folder or an agent inside Studio:
 
 ```bash
-npx lousho deploy github-app --agent reviewer
+npx lousho deploy github-app --agent reviewer --prefix REVIEWER_
 npx lousho deploy
 ```
 
 The first command opens GitHub's App creation page with the permissions and
-the webhook URL `https://reviewer.<domain>/channels/github` filled in, saves
-the App's id, private key, webhook secret and name as `REVIEWER_APP_ID`,
-`REVIEWER_APP_PRIVATE_KEY`, `REVIEWER_WEBHOOK_SECRET` and `REVIEWER_BOT_NAME`,
-and links to the install page. Each later deploy points the App's webhook at
-the agent again.
+the webhook URL filled in, saves the App's id, private key, webhook secret and
+name as `REVIEWER_APP_ID`, `REVIEWER_APP_PRIVATE_KEY`,
+`REVIEWER_WEBHOOK_SECRET` and `REVIEWER_BOT_NAME`, and links to the install
+page. The second deploy hands them to the containers. Each later deploy points
+the App's webhook at the agent again:
+
+- a deployed folder: `https://<agent>.<domain>/channels/github`;
+- a Studio agent (any `--agent` that is not a deployed folder):
+  `https://studio.<domain>/hooks/<agent-id>/channel/github`. Studio's
+  `/hooks/*` paths skip the login; each channel checks its platform's
+  signature instead. In the agent's spec, reference the variables as
+  SecretRefs, for example `appId: { env: REVIEWER_APP_ID }`.
 
 ## Notes
 

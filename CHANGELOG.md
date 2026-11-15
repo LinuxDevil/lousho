@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Specs and Studio: the `github` integration and `github` channel trigger accept a GitHub App (`appId`, `privateKey`) instead of a token, and a channel trigger's `pullRequests: true` reviews every pull request from owners, members and collaborators. `lousho deploy` serves Studio's `/hooks/*` past its login so platform webhooks (checked by their own signatures) reach Studio-hosted agents, and `lousho deploy github-app --agent <studio-agent-id>` points an App at one.
 - `lousho deploy` puts Studio and agent folders on your own server over SSH: Docker Compose behind HTTPS (Caddy, or the server's Traefik), Studio behind a username and password, each agent at `https://<agent>.<domain>` (default `<ip>.sslip.io`). A wizard asks for anything missing and remembers it in `lousho.deploy.json`, with secrets in `~/.config/lousho/deploy-<name>.env`. `lousho deploy github-app` creates a GitHub App for an agent and wires its webhook. Studio's Serve card shows the command. See [Deploying to your own server](docs/hostinger-vps.md).
 - `examples/hostinger-deploy/deploy.mjs` is removed; use `lousho deploy`.
 - `github_submit_review` posts one pull-request review with a verdict and inline comments; `createGitHubTools()` also authenticates as a GitHub App (`app: { appId, privateKey }`) or with a token function. See [Tools](docs/tools.md).

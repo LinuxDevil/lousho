@@ -48,8 +48,26 @@ export function ChannelForm({
         // Blank suggestion rows never reach the spec; the item's values are SecretRefs.
         onChange={(next) => patch({ secrets: rows.onChange(next) as ChannelItem['secrets'] })}
         error={missing.length > 0 ? `Add ${missing.join(', ')}` : undefined}
-        help={required.length > 0 ? `Required: ${required.join(', ')}` : 'This channel needs no secrets.'}
+        help={
+          item.channel === 'github'
+            ? 'Required: webhookSecret, plus token or appId and privateKey (a GitHub App).'
+            : required.length > 0
+              ? `Required: ${required.join(', ')}`
+              : 'This channel needs no secrets.'
+        }
       />
+      {item.channel === 'github' ? (
+        <ChoiceField
+          id="node-trigger-github-mode"
+          label="Starts on"
+          value={item.pullRequests === true ? 'pullRequests' : 'mentions'}
+          options={[
+            { value: 'mentions', label: '@mentions in comments' },
+            { value: 'pullRequests', label: 'Every pull request (review mode)' },
+          ]}
+          onChange={(mode) => patch({ pullRequests: mode === 'pullRequests' ? true : undefined })}
+        />
+      ) : null}
       <Field id="node-trigger-filter" label="Filter">
         <Input
           className="input-mono"

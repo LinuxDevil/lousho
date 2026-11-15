@@ -19,6 +19,18 @@ describe('parseAgentSpecV2', () => {
     expect(parseAgentSpecV2(base)).toEqual(base);
   });
 
+  it('takes a GitHub App or a token for the github channel and integration, never neither', () => {
+    const app = { appId: { env: 'APP_ID' }, privateKey: { env: 'APP_KEY' } };
+    const spec = {
+      ...base,
+      tools: [{ integration: 'github', credentials: { owner: 'o', repo: 'r', ...app } }],
+      triggers: [{ id: 'gh', type: 'channel', channel: 'github', pullRequests: true, secrets: { webhookSecret: { env: 'S' }, ...app } }],
+    };
+    expect(parseAgentSpecV2(spec).triggers?.[0]).toMatchObject({ pullRequests: true });
+    expect(thrown({ ...base, triggers: [{ id: 'gh', type: 'channel', channel: 'github', secrets: { webhookSecret: { env: 'S' } } }] }).message).toMatch(/secrets\.token, or secrets\.appId/);
+    expect(thrown({ ...base, tools: [{ integration: 'github', credentials: { owner: 'o', repo: 'r', appId: { env: 'A' } } }] }).message).toMatch(/credentials\.token, or credentials\.appId/);
+  });
+
   it('accepts instructions as a file reference', () => {
     const spec = { ...base, instructions: { file: 'prompts/main.md' } };
     expect(parseAgentSpecV2(spec)).toEqual(spec);

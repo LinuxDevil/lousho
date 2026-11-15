@@ -8113,6 +8113,7 @@ type TriggerSpec = {
     channel: ChannelKind;
     secrets: Record<string, SecretRef>;
     filter?: string;
+    pullRequests?: boolean;
 } | {
     id: string;
     type: 'agent';

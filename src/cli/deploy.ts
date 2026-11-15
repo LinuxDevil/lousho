@@ -324,19 +324,26 @@ async function waitHealthy(url: string, headers: Record<string, string>): Promis
   return false;
 }
 
+function webhookUrl(config: DeployConfig, agent: string): string {
+  return config.agents.some((a) => a.name === agent)
+    ? `https://${hostFor(config, agent)}/channels/github`
+    : `https://${hostFor(config, 'studio')}/hooks/${agent}/channel/github`;
+}
+
 async function setWebhook(config: DeployConfig, secrets: Map<string, string>): Promise<void> {
   const app = config.githubApp;
   if (!app) return;
   const appId = secrets.get(`${app.prefix}APP_ID`);
   const key = secrets.get(`${app.prefix}APP_PRIVATE_KEY`)?.replace(/\\n/g, '\n');
   if (!appId || !key) return;
+  const url = webhookUrl(config, app.agent);
   const jwt = await signAppJwt(appId, key);
   const res = await fetch('https://api.github.com/app/hook/config', {
     method: 'PATCH',
     headers: { authorization: `Bearer ${jwt}`, accept: 'application/vnd.github+json', 'user-agent': 'lousho-deploy' },
-    body: JSON.stringify({ url: `https://${hostFor(config, app.agent)}/channels/github`, content_type: 'json' }),
+    body: JSON.stringify({ url, content_type: 'json' }),
   });
-  console.log(res.ok ? `GitHub App webhook -> https://${hostFor(config, app.agent)}/channels/github` : `GitHub App webhook update failed: HTTP ${res.status}`);
+  console.log(res.ok ? `GitHub App webhook -> ${url}` : `GitHub App webhook update failed: HTTP ${res.status}`);
 }
 
 async function deploy(flags: Flags): Promise<void> {
@@ -391,16 +398,18 @@ async function githubApp(argv: string[]): Promise<void> {
   const config = readJson<DeployConfig>(CONFIG_FILE);
   if (!config) throw new DeployError(`run lousho deploy once first, so ${CONFIG_FILE} knows the domain`);
   const agent = values.agent ?? config.agents[0]?.name;
-  if (!agent || !config.agents.some((a) => a.name === agent)) throw new DeployError('--agent must name a deployed agent');
+  if (!agent || !/^[a-z0-9][a-z0-9-]*$/.test(agent)) throw new DeployError('--agent must name a deployed agent or a Studio agent id');
+  if (!config.agents.some((a) => a.name === agent) && !config.studio) throw new DeployError(`'${agent}' is not deployed and there is no Studio to host it`);
+  const hookUrl = webhookUrl(config, agent);
   const prefix = values.prefix ?? `${agent.toUpperCase().replace(/-/g, '_')}_`;
   const port = 4820;
   const state = randomBytes(16).toString('hex');
   const manifest = {
     name: values['app-name'] ?? `${config.name}-${agent}`,
-    url: values.repo ? `https://github.com/${values.repo}` : `https://${hostFor(config, agent)}`,
+    url: values.repo ? `https://github.com/${values.repo}` : new URL(hookUrl).origin,
     public: false,
     redirect_url: `http://127.0.0.1:${port}/callback`,
-    hook_attributes: { url: `https://${hostFor(config, agent)}/channels/github`, active: true },
+    hook_attributes: { url: hookUrl, active: true },
     default_permissions: { pull_requests: 'write', contents: 'read', issues: 'write', metadata: 'read' },
     default_events: ['pull_request', 'issue_comment', 'pull_request_review_comment'],
   };
