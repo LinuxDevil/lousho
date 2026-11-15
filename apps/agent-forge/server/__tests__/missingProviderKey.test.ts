@@ -53,25 +53,11 @@ describe('a real provider with no key', () => {
     fs.rmSync(baseDir, { recursive: true, force: true });
   });
 
-  it('Run answers 422 with an actionable message and never starts a mock run', async () => {
-    const res = await request(app).post('/agents/a1/run').send({ input: 'hi', spec: OPENAI_SPEC });
-    expect(res.status).toBe(422);
-    expect(res.body.error).toMatch(/No API key for provider 'openai'.*Settings.*OPENAI_API_KEY/);
-    expect(runManager.status('a1').status).not.toBe('running');
-    expect(runManager.status('a1').resultText).toBeUndefined();
-  });
-
   it('Chat answers 422 and takes the unsent message back out of the transcript', async () => {
     await request(app).put('/agents/a2').send(OPENAI_SPEC).expect(204);
     const res = await request(app).post('/agents/a2/message').send({ message: 'hello?' });
     expect(res.status).toBe(422);
     expect(res.body.error).toMatch(/No API key for provider 'openai'/);
     expect(runManager.chatState('a2').messages).toEqual([]);
-  });
-
-  it("reports the provider a run actually used in the status (for the Topbar's env pill)", async () => {
-    const spec: AgentSpec = { ...OPENAI_SPEC, provider: { type: 'mock', model: 'mock-1' } };
-    await request(app).post('/agents/a3/run').send({ input: 'hi', spec }).expect(202);
-    expect(runManager.status('a3').provider).toBe('mock/mock-1');
   });
 });

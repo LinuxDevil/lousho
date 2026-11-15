@@ -752,8 +752,16 @@ function useToolbarActions(
  * `graph` is `undefined` while a proposal overlay shows, so the layout
  * never writes proposal nodes into the real graph.
  */
-export function useLayoutUnplaced(agentId: string, graph: Graph | undefined, measured: MeasuredSizes, setGraph: SetGraph) {
+export function useLayoutUnplaced(
+  agentId: string,
+  graph: Graph | undefined,
+  measured: MeasuredSizes,
+  setGraph: SetGraph,
+  onLaidOut?: () => void
+) {
   const toast = useToast();
+  const laidOutRef = useRef(onLaidOut);
+  laidOutRef.current = onLaidOut;
   // The agent on screen NOW: guards the async write against an agent
   // switch that lands while elkjs is still running.
   const latestAgentId = useRef(agentId);
@@ -791,6 +799,7 @@ export function useLayoutUnplaced(agentId: string, graph: Graph | undefined, mea
         // Merge the moved positions onto the LATEST graph: edits made
         // while elkjs ran are kept, only positions change.
         setGraph((current) => applyLayoutResult(graph, laidOut, current), { dirty: false, history: false });
+        if (laidOutRef.current !== undefined) window.requestAnimationFrame(() => laidOutRef.current?.());
       },
       () => {
         if (runRef.current === run) runRef.current = null;
@@ -1310,7 +1319,8 @@ function CanvasInner({ inspectorCollapsed, onToggleInspector, proposalId, onShow
   useFitViewOnResize();
   useKeepSelectionInView(selectedNodeId);
   const fitting = useFitViewOnLoad(agentId, displayGraph, measured);
-  useLayoutUnplaced(agentId, layoutGraph, measured, setGraph);
+  const refitAfterLayout = useLegibleFit();
+  useLayoutUnplaced(agentId, layoutGraph, measured, setGraph, refitAfterLayout);
   useUndoRedoShortcuts(undo, redo);
 
   const onNodeClick = useProposalNodeClick(onShowProposal);

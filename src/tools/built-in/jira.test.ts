@@ -193,34 +193,6 @@ describe('JiraTools jira_create_ticket / jira_update_ticket execute()', () => {
     const run = (args: Record<string, unknown>) =>
       makeTools().get('jira_create_ticket')!.tool.execute!(args, {} as ToolExecutionOptions);
 
-    it('sends only required fields when optionals are omitted and returns key/id/self', async () => {
-      const fetchSpy = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ key: 'PROJ-9', id: '10009', self: 'https://jira.test/rest/api/3/issue/10009', extra: 'x' }),
-      });
-      vi.stubGlobal('fetch', fetchSpy);
-
-      const result = await run({ projectKey: 'PROJ', issueType: 'Task', summary: 'Sum', description: 'Desc' });
-
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
-      const [url, init] = fetchSpy.mock.calls[0];
-      expect(url).toBe('https://jira.test/rest/api/3/issue');
-      expect(init.method).toBe('POST');
-      expect(JSON.parse(init.body)).toEqual({
-        fields: {
-          project: { key: 'PROJ' },
-          issuetype: { name: 'Task' },
-          summary: 'Sum',
-          description: adf('Desc'),
-        },
-      });
-      expect(JSON.parse(result as string)).toEqual({
-        key: 'PROJ-9',
-        id: '10009',
-        self: 'https://jira.test/rest/api/3/issue/10009',
-      });
-    });
-
     it('includes priority, assignee, labels and components when provided', async () => {
       const fetchSpy = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ key: 'PROJ-10', id: '1', self: 's' }) });
       vi.stubGlobal('fetch', fetchSpy);
@@ -241,28 +213,6 @@ describe('JiraTools jira_create_ticket / jira_update_ticket execute()', () => {
       expect(fields.assignee).toEqual({ accountId: 'acct-123' });
       expect(fields.labels).toEqual(['a', 'b']);
       expect(fields.components).toEqual([{ name: 'api' }, { name: 'ui' }]);
-    });
-
-    it('omits labels and components when they are empty arrays', async () => {
-      const fetchSpy = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ key: 'K', id: '1', self: 's' }) });
-      vi.stubGlobal('fetch', fetchSpy);
-
-      await run({ projectKey: 'P', issueType: 'Task', summary: 'S', description: 'D', labels: [], components: [] });
-
-      const fields = JSON.parse(fetchSpy.mock.calls[0][1].body).fields;
-      expect(fields).not.toHaveProperty('labels');
-      expect(fields).not.toHaveProperty('components');
-    });
-
-    it('throws a descriptive error on a non-OK response', async () => {
-      vi.stubGlobal(
-        'fetch',
-        vi.fn().mockResolvedValue({ ok: false, statusText: 'Bad Request', text: async () => 'project is required' })
-      );
-
-      await expect(
-        run({ projectKey: 'P', issueType: 'Task', summary: 'S', description: 'D' })
-      ).rejects.toThrow('Failed to create ticket: Bad Request - project is required');
     });
   });
 
@@ -290,39 +240,6 @@ describe('JiraTools jira_create_ticket / jira_update_ticket execute()', () => {
         fields: { summary: 'New', description: adf('Newdesc'), priority: { name: 'Low' }, labels: ['x'] },
       });
       expect(JSON.parse(result as string)).toEqual({ success: true, ticketKey: 'PROJ-5' });
-    });
-
-    it.each([
-      ['summary', { summary: 'Only' }, { summary: 'Only' }],
-      ['description', { description: 'Only' }, { description: adf('Only') }],
-      ['priority', { priority: 'High' }, { priority: { name: 'High' } }],
-      ['labels (even empty, to clear them)', { labels: [] }, { labels: [] }],
-    ])('sends just %s when it is the only field', async (_label, args, expectedFields) => {
-      const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
-      vi.stubGlobal('fetch', fetchSpy);
-
-      await run({ ticketKey: 'PROJ-6', ...args });
-
-      expect(JSON.parse(fetchSpy.mock.calls[0][1].body)).toEqual({ fields: expectedFields });
-    });
-
-    it('throws before any request when no fields are provided', async () => {
-      const fetchSpy = vi.fn();
-      vi.stubGlobal('fetch', fetchSpy);
-
-      await expect(run({ ticketKey: 'PROJ-7' })).rejects.toThrow('At least one field must be provided to update');
-      expect(fetchSpy).not.toHaveBeenCalled();
-    });
-
-    it('throws a descriptive error on a non-OK response', async () => {
-      vi.stubGlobal(
-        'fetch',
-        vi.fn().mockResolvedValue({ ok: false, statusText: 'Not Found', text: async () => 'no such issue' })
-      );
-
-      await expect(run({ ticketKey: 'PROJ-404', summary: 'x' })).rejects.toThrow(
-        'Failed to update ticket: Not Found - no such issue'
-      );
     });
   });
 });

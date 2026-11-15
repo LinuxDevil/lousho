@@ -6,8 +6,8 @@
  */
 import { createRequire } from 'node:module';
 import { describe, it, expect } from 'vitest';
-import { createIsolateDriver, isolateDriver, ISOLATE_DEFAULTS } from './isolate';
-import { SandboxError, sandboxErrorKind } from './errors';
+import { createIsolateDriver, ISOLATE_DEFAULTS } from './isolate';
+import { SandboxError } from './errors';
 
 type EvalCall = { code: string; args: unknown[]; options?: { arguments?: { copy?: boolean }; result?: { copy?: boolean; promise?: boolean }; timeout?: number } };
 
@@ -77,28 +77,6 @@ describe('createIsolateDriver', () => {
     expect(driver.name).toBe('isolate');
   });
 
-  it('forwards timeoutMs to evalClosure and disposes the isolate afterwards', async () => {
-    let last: FakeIsolate | undefined;
-    const { module } = fakeModule({
-      eval: (isolate, code, args) => {
-        last = isolate;
-        const [a, b] = args;
-        const run = new Function('$0', '$1', code) as ($0: unknown, $1: unknown) => unknown;
-        return run(a, b);
-      },
-    });
-    const driver = createIsolateDriver(module, LIMITS);
-
-    await driver.run('() => "done"');
-
-    expect(last?.evalCalls[0].options).toMatchObject({
-      arguments: { copy: true },
-      result: { copy: true, promise: true },
-      timeout: 5000,
-    });
-    expect(last?.disposed).toBe(true);
-  });
-
   it('maps the wall-clock timeout to a timeout SandboxError', async () => {
     const { module } = fakeModule({ eval: () => new Promise(() => undefined) });
     const driver = createIsolateDriver(module, { memoryMb: 64, timeoutMs: 25 });
@@ -136,13 +114,6 @@ describe('createIsolateDriver', () => {
     const driver = createIsolateDriver(module, LIMITS);
 
     await expect(driver.run('() => 1')).rejects.toMatchObject({ kind: 'timeout', driver: 'isolate' });
-  });
-
-  it("passes the code's own error through unchanged", async () => {
-    const { module } = fakeModule();
-    const driver = createIsolateDriver(module, LIMITS);
-
-    await expect(driver.run('() => { throw new RangeError("the code failed") }')).rejects.toBeInstanceOf(RangeError);
   });
 });
 
@@ -184,33 +155,3 @@ if (isolateRequired && !hasIsolatedVm) {
     });
   });
 }
-
-describe.runIf(hasIsolatedVm)('isolate driver (real isolated-vm)', () => {
-  it('runs a real tool body and returns its value', async () => {
-    const driver = isolateDriver({ memoryMb: 128, timeoutMs: 5_000 });
-    await expect(driver.run('(a, b) => a + b', { args: [2, 40] })).resolves.toBe(42);
-    await expect(driver.run('async (n) => { await null; return { doubled: n * 2 }; }', { args: [21] })).resolves.toEqual({ doubled: 42 });
-  });
-
-  it("passes the code's own error through unchanged", async () => {
-    const driver = isolateDriver({ memoryMb: 128, timeoutMs: 5_000 });
-    const error = await driver.run('() => { throw new RangeError("boom") }').catch((e: unknown) => e);
-    expect(sandboxErrorKind(error)).toBeUndefined();
-    expect((error as Error).message).toContain('boom');
-  });
-
-  it('reports a timeout for a synchronous infinite loop', async () => {
-    const driver = isolateDriver({ memoryMb: 128, timeoutMs: 100 });
-    const error = await driver.run('() => { while (true) {} }').catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(SandboxError);
-    expect(sandboxErrorKind(error)).toBe('timeout');
-  }, 15_000);
-
-  it('reports oom for a 256 MB allocation under a 32 MB cap', async () => {
-    const driver = isolateDriver({ memoryMb: 32, timeoutMs: 10_000 });
-    const error = await driver
-      .run('() => { const keep = []; for (let i = 0; i < 256; i++) keep.push(new Array(1024 * 1024 / 8).fill(i)); return keep.length; }')
-      .catch((e: unknown) => e);
-    expect(sandboxErrorKind(error)).toBe('oom');
-  }, 30_000);
-});

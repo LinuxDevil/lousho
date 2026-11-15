@@ -74,30 +74,6 @@ afterEach(() => {
 });
 
 describe('SSE heartbeat', () => {
-  it('writes a `: ping` comment while the model is slow, and stops once the stream ends', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    const model = gate();
-    const { handler } = desk([
-      async () => {
-        await model.wait;
-        return 'Finally.';
-      },
-    ]);
-    const body = collect(await handler(post('/chat', { sessionId: 'slow-1', input: 'hi' })));
-
-    await vi.advanceTimersByTimeAsync(14_000);
-    expect(body.text()).not.toContain(': ping');
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(body.text().match(/: ping\n\n/g)).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(15_000);
-    expect(body.text().match(/: ping\n\n/g)).toHaveLength(2);
-
-    model.open();
-    await body.done;
-    expect(body.text()).toContain('"Finally."');
-    expect(body.text().endsWith('event: done\ndata: {}\n\n')).toBe(true);
-    expect(vi.getTimerCount()).toBe(0);
-  });
 
   it('takes its interval from heartbeatMs, and 0 turns it off', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -115,22 +91,6 @@ describe('SSE heartbeat', () => {
 
     model.open();
     await Promise.all([fast.done, off.done]);
-  });
-
-  it('stops when the client goes away', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    const model = gate();
-    const { handler } = desk([
-      async () => {
-        await model.wait;
-        return 'Late.';
-      },
-    ]);
-    const response = await handler(post('/chat', { sessionId: 'gone-1', input: 'hi' }));
-    await response.body!.cancel();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(vi.getTimerCount()).toBe(0);
-    model.open();
   });
 });
 

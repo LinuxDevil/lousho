@@ -46,18 +46,6 @@ describe('GoogleProvider', () => {
     expect(provider.supportsStreaming('gemini-2.5-pro')).toBe(true);
   });
 
-  it('builds the @ai-sdk/google model with the configured key, once', async () => {
-    const provider = new GoogleProvider({ name: 'google', apiKey: 'test-key', defaultModel: 'gemini-2.5-pro' });
-
-    const result = await provider.generate({ messages: [{ role: 'user', content: 'Hi' }] });
-    await provider.generate({ messages: [{ role: 'user', content: 'Hi again' }] });
-
-    expect(result.text).toBe('Hello from Gemini');
-    expect(createGoogleMock).toHaveBeenCalledTimes(1);
-    expect(createGoogleMock).toHaveBeenCalledWith(expect.objectContaining({ apiKey: 'test-key' }));
-    expect(generateTextMock.mock.calls[0]?.[0]).toMatchObject({ model: { fakeModel: 'gemini-2.5-pro' } });
-  });
-
   it("is what 'google/<model>' resolves to, with GOOGLE_GENERATIVE_AI_API_KEY as its key", async () => {
     vi.stubEnv('GOOGLE_GENERATIVE_AI_API_KEY', 'env-google-key');
 

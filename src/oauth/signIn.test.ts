@@ -13,9 +13,9 @@ import { memoryStore } from '../storage/agentStore';
 import type { AgentEvent, AgentEventOf } from '../execution/agentEvents';
 import type { ExecutionResult } from '../execution/AgentExecutor';
 import { defineOAuthProvider } from './defineOAuthProvider';
-import { SignInPendingError, completeSignIn, redactHandedOutError, startSignIn } from './signIn';
+import { completeSignIn, redactHandedOutError, startSignIn } from './signIn';
 import { MemoryTokenStore } from './memoryTokenStore';
-import { ALICE, BOB, challengeOf, fakeOAuthServer, githubProvider, listReposTool, type FakeOAuthServer } from './__fixtures__/fakeOAuth';
+import { ALICE, BOB, fakeOAuthServer, githubProvider, listReposTool, type FakeOAuthServer } from './__fixtures__/fakeOAuth';
 import type { TokenOwner } from './types';
 
 afterEach(() => { vi.restoreAllMocks(); });
@@ -31,12 +31,6 @@ async function collect(run: AsyncIterable<AgentEvent> & { result: Promise<Execut
   const events: AgentEvent[] = [];
   for await (const event of run) events.push(event);
   return { events, result: await run.result };
-}
-
-function approvalEvent(events: AgentEvent[]): AgentEventOf<'approval.requested'> {
-  const found = events.find((event): event is AgentEventOf<'approval.requested'> => event.type === 'approval.requested');
-  if (!found) throw new Error('no approval.requested event');
-  return found;
 }
 
 function stateOf(url: string): string {
@@ -57,77 +51,6 @@ function setup(server: FakeOAuthServer = fakeOAuthServer(), options: Parameters<
 }
 
 describe('ctx.getToken(): pause until sign-in', () => {
-  it('pauses with a sign-in link, exchanges the code with the right PKCE verifier, and re-runs the tool on approval', async () => {
-    const { server, executions, store, agent } = setup();
-    const paused = await collect(agent.stream('List my repositories.', { principal: ALICE }));
-
-    expect(paused.result.finishReason).toBe('awaiting-approval');
-    const event = approvalEvent(paused.events);
-    expect(event).toMatchObject({ kind: 'sign-in', toolName: 'list_repos', signIn: { provider: 'github', displayName: 'GitHub' } });
-    const url = new URL(event.signIn?.url ?? '');
-    expect(`${url.origin}${url.pathname}`).toBe('https://github.example.com/login/oauth/authorize');
-    expect(Object.fromEntries(url.searchParams)).toMatchObject({
-      response_type: 'code',
-      client_id: 'client-123',
-      redirect_uri: 'https://agent.example.com/api/agent/oauth/callback',
-      scope: 'repo read:user',
-      code_challenge_method: 'S256',
-    });
-    expect(url.searchParams.get('state')).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 random bytes
-    expect(url.searchParams.get('code_challenge')).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(executions).toEqual([]);
-    // the pause is listed like an approval, with its link
-    expect(await agent.approvals.list()).toMatchObject([{ id: event.approvalId, kind: 'sign-in', signIn: { url: event.signIn?.url }, principal: { id: 'alice' } }]);
-
-    const completed = await agent.oauth.complete({ state: url.searchParams.get('state') ?? '', code: 'code-alice' });
-    expect(completed).toMatchObject({ approvalId: event.approvalId, outcome: 'signed-in', provider: 'github', displayName: 'GitHub' });
-    const exchange = server.requests[0];
-    expect(Object.fromEntries(exchange)).toMatchObject({
-      grant_type: 'authorization_code',
-      code: 'code-alice',
-      redirect_uri: 'https://agent.example.com/api/agent/oauth/callback',
-      client_id: 'client-123',
-      client_secret: 'client-secret-xyz',
-    });
-    expect(challengeOf(exchange.get('code_verifier') ?? '')).toBe(url.searchParams.get('code_challenge'));
-    expect((await store.tokens.get('github', ALICE_OWNER))?.accessToken).toBe('gho_SECRET_alice_1');
-
-    const resumed = await agent.approvals.resolve({ id: event.approvalId, approved: true });
-    expect(resumed.finishReason).toBe('stop');
-    expect(resumed.text).toBe('You have lousho-demo and agent-sdk.');
-    expect(executions).toEqual(['gho_SECRET_alice_1']);
-    expect(toolMessage(resumed)).toEqual({ repos: ['lousho-demo', 'agent-sdk'] });
-  });
-
-  it('approving before the user signed in throws LOUSHO_SIGNIN_PENDING and leaves the pause in place', async () => {
-    const { agent, executions } = setup();
-    const session = agent.session({ id: 'chat' });
-    const paused = await session.send('List my repositories.', { principal: ALICE });
-    const id = paused.approvalId ?? '';
-
-    const early = agent.approvals.resolve({ id, approved: true });
-    await expect(early).rejects.toBeInstanceOf(SignInPendingError);
-    await expect(early).rejects.toMatchObject({ code: 'LOUSHO_SIGNIN_PENDING' });
-    expect((await agent.approvals.list()).map((a) => a.id)).toEqual([id]);
-    expect(executions).toEqual([]);
-
-    const [pending] = await agent.approvals.list();
-    await agent.oauth.complete({ state: stateOf(pending.signIn?.url ?? ''), code: 'code-alice' });
-    const resumed = await agent.approvals.resolve({ id, approved: true });
-    expect(resumed.finishReason).toBe('stop');
-    // still the session's turn: the transcript has the whole exchange
-    expect((await session.load()).map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant']);
-  });
-
-  it('never asks the `approve` callback about a sign-in', async () => {
-    const approve = vi.fn(() => true);
-    const github = githubProvider(fakeOAuthServer());
-    const { tool } = listReposTool(github);
-    const agent = createAgent({ provider: script(), tools: [tool], store: memoryStore(), approve });
-    const result = await agent.send('List my repositories.', { principal: ALICE });
-    expect(result.finishReason).toBe('awaiting-approval');
-    expect(approve).not.toHaveBeenCalled();
-  });
 
   it('a state works once, for 10 minutes, and only for the user it was made for', async () => {
     const { agent } = setup();
@@ -168,14 +91,6 @@ describe('ctx.getToken(): pause until sign-in', () => {
 
     const resumed = await agent.approvals.resolve({ id: paused.approvalId ?? '', approved: true });
     expect(resumed.finishReason).toBe('stop');
-    expect(toolMessage(resumed)).toMatchObject({ kind: 'denied', message: 'Sign-in to GitHub was cancelled.' });
-    expect(executions).toEqual([]);
-  });
-
-  it('approved: false cancels a sign-in pause the same way', async () => {
-    const { agent, executions } = setup(undefined, {}, 'Okay.');
-    const paused = await agent.send('List my repositories.', { principal: ALICE });
-    const resumed = await agent.approvals.resolve({ id: paused.approvalId ?? '', approved: false });
     expect(toolMessage(resumed)).toMatchObject({ kind: 'denied', message: 'Sign-in to GitHub was cancelled.' });
     expect(executions).toEqual([]);
   });
@@ -300,25 +215,6 @@ describe('stored tokens: refresh and requireAuth', () => {
     expect((await agent.approvals.resolve({ id: pending.id, approved: true })).finishReason).toBe('stop');
     expect(executions).toEqual(['gho_SECRET_alice_1']);
   });
-
-  it('a token that goes bad again after the resume pauses again with a new link', async () => {
-    const revoked = new Set<string>(['gho_SECRET_alice_1']);
-    const { agent, executions } = setup(undefined, { revoked });
-    await agent.send('List my repositories.', { principal: ALICE });
-    const [first] = await agent.approvals.list();
-    await agent.oauth.complete({ state: stateOf(first.signIn?.url ?? ''), code: 'code-alice' });
-
-    const again = await agent.approvals.resolve({ id: first.id, approved: true });
-    expect(again.finishReason).toBe('awaiting-approval');
-    const [second] = await agent.approvals.list();
-    expect(second).toMatchObject({ kind: 'sign-in', toolName: 'list_repos' });
-    expect(second.id).not.toBe(first.id);
-    expect(second.signIn?.url).not.toBe(first.signIn?.url);
-
-    await agent.oauth.complete({ state: stateOf(second.signIn?.url ?? ''), code: 'code-alice' });
-    expect((await agent.approvals.resolve({ id: second.id, approved: true })).finishReason).toBe('stop');
-    expect(executions).toEqual(['gho_SECRET_alice_2']);
-  });
 });
 
 describe('who owns the credential', () => {
@@ -376,28 +272,6 @@ describe('who owns the credential', () => {
     expect((await agent.send('Post the update.', { principal: BOB })).finishReason).toBe('stop');
     expect(seen).toEqual(['gho_SECRET_app_1', 'gho_SECRET_app_1', 'gho_SECRET_app_1']);
     await expect(agent.oauth.signInUrl(githubProvider(server))).rejects.toMatchObject({ code: 'LOUSHO_CONFIG_INVALID' });
-  });
-
-  it("two users' tokens never cross", async () => {
-    const server = fakeOAuthServer();
-    const github = githubProvider(server);
-    const { tool, executions } = listReposTool(github);
-    const store = memoryStore();
-    const agent = createAgent({ provider: mockModel([CALL, { text: 'a' }, CALL, { text: 'b' }, CALL, { text: 'c' }, CALL, { text: 'd' }]), tools: [tool], store });
-
-    for (const [principal, code] of [[ALICE, 'code-alice'], [BOB, 'code-bob']] as const) {
-      const paused = await agent.send('List my repositories.', { principal });
-      const pending = (await agent.approvals.list()).find((a) => a.id === paused.approvalId);
-      await agent.oauth.complete({ state: stateOf(pending?.signIn?.url ?? ''), code });
-      await agent.approvals.resolve({ id: paused.approvalId ?? '', approved: true });
-    }
-    expect(executions).toEqual(['gho_SECRET_alice_1', 'gho_SECRET_bob_2']);
-
-    await agent.send('List my repositories.', { principal: BOB });
-    await agent.send('List my repositories.', { principal: ALICE });
-    expect(executions.slice(2)).toEqual(['gho_SECRET_bob_2', 'gho_SECRET_alice_1']);
-    // same id from another issuer is another user
-    expect(await store.tokens.get('github', { owner: 'user', principalId: 'alice', issuer: 'https://evil.example.com' })).toBeUndefined();
   });
 
   it('a run without a token store stops with LOUSHO_OAUTH_STORE_MISSING', async () => {

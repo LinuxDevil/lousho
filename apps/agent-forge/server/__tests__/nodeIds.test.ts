@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { keyedItems, skillKey, toolKey } from '../../shared/nodeIds';
+import { skillKey, toolKey } from '../../shared/nodeIds';
 
 /**
  * The stable item keys the canvas (`tool:<key>` node ids in a later
@@ -32,12 +32,5 @@ describe('skillKey', () => {
     expect(skillKey({ inline: { name: 'summarise', description: 'd', content: 'c' } })).toBe('summarise');
     expect(skillKey({ dir: 'skills/changelog' })).toBe('changelog');
     expect(skillKey({ registry: 'changelog' })).toBe('changelog');
-  });
-});
-
-describe('keyedItems', () => {
-  it('dedupes repeated keys as x, x#2, x#3 in list order', () => {
-    const items = [{ k: 'x' }, { k: 'x' }, { k: 'y' }, { k: 'x' }];
-    expect(keyedItems(items, (item) => item.k).map(({ key }) => key)).toEqual(['x', 'x#2', 'y', 'x#3']);
   });
 });

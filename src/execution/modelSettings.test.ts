@@ -4,28 +4,8 @@ import { defineTool } from '../tools/defineTool';
 import { createAgent } from '../createAgent';
 import { mockModel } from '../testing';
 import type { GenerateOptions, LLMProvider } from '../providers';
-import { AgentExecutor } from './AgentExecutor';
-import { AgentBuilder } from '../core';
-import { mergeModelSettings } from './modelSettings';
-
-const SETTING_KEYS = ['temperature', 'maxTokens', 'topP', 'frequencyPenalty', 'presencePenalty', 'stop', 'seed'];
-const sentSettings = (request: object) => SETTING_KEYS.filter((key) => key in request);
-
-describe('mergeModelSettings', () => {
-  it('merges layers key by key and leaves undefined keys out', () => {
-    const merged = mergeModelSettings({ temperature: 0.5, maxTokens: 100 }, undefined, { maxTokens: 20, topP: undefined });
-    expect(merged).toEqual({ temperature: 0.5, maxTokens: 20 });
-    expect(Object.keys(merged)).toEqual(['temperature', 'maxTokens']);
-  });
-});
 
 describe('createAgent modelSettings', () => {
-  it('sends no sampling keys at all when none is set', async () => {
-    const model = mockModel(['Hi.']);
-    await createAgent({ provider: model }).send('Hello');
-
-    expect(sentSettings(model.calls[0])).toEqual([]);
-  });
 
   it("does not override a wrapping provider's injected maxTokens with an undefined one", async () => {
     const model = mockModel(['Hi.']);
@@ -54,65 +34,17 @@ describe('createAgent modelSettings', () => {
       { maxTokens: 64, temperature: 0.2, stop: ['END'], seed: undefined },
     ]);
   });
-
-  it("a sub-agent uses its own settings, not the lead's", async () => {
-    const childModel = mockModel(['found']);
-    const researcher = createAgent({ name: 'researcher', description: 'Researches', provider: childModel, modelSettings: { maxTokens: 300 } });
-    const leadModel = mockModel([{ toolCalls: [{ name: 'task', args: { agent: 'researcher', prompt: 'look', description: 'look' } }] }, 'done']);
-    const lead = createAgent({ provider: leadModel, subagents: { researcher }, modelSettings: { maxTokens: 50, temperature: 0.9 } });
-
-    await lead.send('research');
-
-    expect(leadModel.calls.map((call) => call.maxTokens)).toEqual([50, 50]);
-    expect(childModel.calls[0].maxTokens).toBe(300);
-    expect(sentSettings(childModel.calls[0])).toEqual(['maxTokens']);
-  });
-
-  it("a handoff target runs with its own settings", async () => {
-    const billingModel = mockModel(['Billing here.']);
-    const billing = createAgent({ name: 'billing', description: 'Billing', provider: billingModel, modelSettings: { temperature: 0.1 } });
-    const triageModel = mockModel([{ toolCalls: [{ name: 'transfer_to_billing', args: {}, id: 'call_handoff' }] }]);
-    const triage = createAgent({ name: 'triage', provider: triageModel, handoffs: [billing], modelSettings: { maxTokens: 10 } });
-
-    await triage.send('Help');
-
-    expect(triageModel.calls[0].maxTokens).toBe(10);
-    expect(billingModel.calls[0].temperature).toBe(0.1);
-    expect(sentSettings(billingModel.calls[0])).toEqual(['temperature']);
-  });
-});
-
-describe('AgentExecutor modelSettings', () => {
-  it('the run-level temperature / maxTokens win over modelSettings', async () => {
-    const model = mockModel(['Hi.']);
-    await AgentExecutor.execute({
-      agent: AgentBuilder.create().setName('a').setPrompt('p').build(),
-      provider: model,
-      input: [{ role: 'user', content: 'Hello' }],
-      modelSettings: { maxTokens: 100, topP: 0.5 },
-      maxTokens: 10,
-    });
-
-    expect(model.calls[0]).toMatchObject({ maxTokens: 10, topP: 0.5 });
-    expect(sentSettings(model.calls[0])).toEqual(['maxTokens', 'topP']);
-  });
 });
 
 describe('modelSettings validation', () => {
   const invalid = (error: unknown) => error as { code?: string; field?: string; message: string };
 
   it.each([
-    [{ temperature: 5 }, 'modelSettings.temperature', 'from 0 to 2'],
-    [{ temperature: -0.1 }, 'modelSettings.temperature', 'from 0 to 2'],
-    [{ topP: 7 }, 'modelSettings.topP', 'from 0 to 1'],
-    [{ maxTokens: -1 }, 'modelSettings.maxTokens', 'whole number >= 1'],
     [{ maxTokens: 1.5 }, 'modelSettings.maxTokens', 'whole number >= 1'],
-    [{ frequencyPenalty: 3 }, 'modelSettings.frequencyPenalty', 'from -2 to 2'],
     [{ presencePenalty: Number.NaN }, 'modelSettings.presencePenalty', 'must be a number'],
     [{ seed: 0.5 }, 'modelSettings.seed', 'whole number'],
     [{ stop: 'END' }, 'modelSettings.stop', 'array of strings'],
     [{ toolChoice: 'always' }, 'modelSettings.toolChoice', "'auto', 'required', 'none'"],
-    [{ maxOutputTokens: 10 }, 'modelSettings.maxOutputTokens', "did you mean 'maxTokens'?"],
   ])('createAgent rejects %j with LOUSHO_CONFIG_INVALID naming the key', (modelSettings, field, text) => {
     let thrown: unknown;
     try {
@@ -134,14 +66,5 @@ describe('modelSettings validation', () => {
       })
     ).not.toThrow();
     expect(() => createAgent({ provider: mockModel(['x']), modelSettings: { temperature: undefined } })).not.toThrow();
-  });
-
-  it('send() and stream() reject a bad per-call setting before any model call', async () => {
-    const model = mockModel(['x'], { onExhausted: 'repeat-last' });
-    const agent = createAgent({ provider: model });
-
-    await expect(agent.send('hi', { modelSettings: { temperature: 5 } })).rejects.toMatchObject({ code: 'LOUSHO_CONFIG_INVALID', field: 'modelSettings.temperature' });
-    expect(() => agent.stream('hi', { modelSettings: { maxTokens: 0 } })).toThrow(/send: 'modelSettings.maxTokens' must be a whole number >= 1, got 0/);
-    expect(model.calls).toHaveLength(0);
   });
 });

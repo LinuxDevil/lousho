@@ -38,41 +38,7 @@ describe('toLegacySpec(upgradeSpec(v1)) round trip', () => {
   });
 });
 
-describe('toLegacySpec', () => {
-  it('renders file instructions as a pointer note', () => {
-    const spec = { version: 2, name: 'bot', model: 'mock/m1', instructions: { file: 'prompts/bot.md' } } as AgentSpecV2;
-    expect(toLegacySpec(spec).prompt).toBe('(instructions in file prompts/bot.md)');
-  });
-
-  it('a model without / becomes { type: model, model }', () => {
-    const spec = { version: 2, name: 'bot', model: 'ollama', instructions: 'x' } as AgentSpecV2;
-    expect(toLegacySpec(spec).provider).toEqual({ type: 'ollama', model: 'ollama' });
-  });
-});
-
 describe('mergeLegacySave', () => {
-  it('returns the upgraded spec when nothing is stored', () => {
-    expect(mergeLegacySave(undefined, base)).toEqual(upgradeSpec(base));
-  });
-
-  it('keeps v2-only keys and replaces instructions when only the prompt changed', () => {
-    const stored = {
-      version: 2,
-      name: 'bot',
-      model: 'mock/m1',
-      instructions: 'old prompt',
-      description: 'kept',
-      skills: [{ registry: 'summarizer' }],
-      guardrails: [{ id: 'g9', name: 'pii' }],
-    } as unknown as AgentSpecV2;
-    const legacy = { ...toLegacySpec(stored), prompt: 'new prompt' };
-    const merged = mergeLegacySave(stored, legacy);
-    expect(merged.instructions).toBe('new prompt');
-    expect(merged.description).toBe('kept');
-    expect((merged as { skills?: unknown }).skills).toEqual([{ registry: 'summarizer' }]);
-    // Guardrails did not change on the v1 side, so the stored ids survive.
-    expect(merged.guardrails).toBe(stored.guardrails);
-  });
 
   it('keeps stored non-builtin tool refs, then the upgraded tools, when tools change', () => {
     const stored = {

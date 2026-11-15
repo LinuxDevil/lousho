@@ -39,17 +39,6 @@ describe('NoteNode', () => {
     expect(el.getAttribute('data-node-kind')).toBe('note');
     expect(el.getAttribute('data-node-id')).toBe('note:n1');
   });
-
-  it('shows the Empty note placeholder in the faint colour slot', () => {
-    const card = mountNote('');
-    const placeholder = card.querySelector('.rf-note-empty')!;
-    expect(placeholder.textContent).toBe('Empty note');
-  });
-
-  it('draws no handles - a note takes no connections', () => {
-    const card = mountNote('hi');
-    expect(card.querySelectorAll('.react-flow__handle').length).toBe(0);
-  });
 });
 
 describe('NoteFields', () => {

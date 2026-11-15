@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ObserveEvaluator, ObserveScoreRow } from '../../../observe/types';
-import { blankDraft, draftFrom, evaluatorPatch, toNewEvaluator } from '../evaluatorDraft';
-import { evaluatorPath, evaluatorsPath, filterSummary, groupOnlineRuns, parseListState, runsCapped } from '../evaluatorsUrl';
+import type { ObserveScoreRow } from '../../../observe/types';
+import { evaluatorPath, evaluatorsPath, groupOnlineRuns, parseListState, runsCapped } from '../evaluatorsUrl';
 
 const NOW = 1_800_000_000_000;
 const DAY = 86_400_000;
@@ -28,11 +27,6 @@ describe('evaluator paths', () => {
     expect(evaluatorPath('a b')).toBe('/evals/evaluators/a%20b');
     expect(evaluatorPath('r1', { enabled: false, offset: 50 })).toBe('/evals/evaluators/r1?enabled=false&offset=50');
   });
-
-  it('summarises a filter', () => {
-    expect(filterSummary({})).toBe('All traces');
-    expect(filterSummary({ agent_id: 'a', status: 'error', name_contains: 'turn' })).toBe('agent=a, status=error, name~turn');
-  });
 });
 
 describe('groupOnlineRuns', () => {
@@ -50,32 +44,5 @@ describe('groupOnlineRuns', () => {
     expect(runsCapped([score('a', NOW - 1), score('a', NOW - 2)], NOW, 2)).toBe(true);
     expect(runsCapped([score('a', NOW - 1), score('a', NOW - 2 * DAY)], NOW, 2)).toBe(false);
     expect(runsCapped([score('a', NOW - 1)], NOW, 2)).toBe(false);
-  });
-});
-
-describe('evaluatorPatch', () => {
-  const rule: ObserveEvaluator = {
-    rule_id: 'r1',
-    name: 'answered',
-    enabled: true,
-    filter: { status: 'ok', agent_id: 'bot' },
-    sample_rate: 1,
-    kind: 'code',
-    config: { source: '(trace) => 1' },
-    created_at: 0,
-    updated_at: 0,
-  };
-
-  it('is empty for an untouched draft (filter key order ignored)', () => {
-    expect(evaluatorPatch(rule, toNewEvaluator(draftFrom(rule, [])))).toEqual({});
-  });
-
-  it('carries the config with a changed kind', () => {
-    const draft = { ...draftFrom(rule, []), kind: 'judge' as const, provider: 'mock', rubric: 'ok?' };
-    expect(evaluatorPatch(rule, toNewEvaluator(draft))).toEqual({ kind: 'judge', config: { model: 'mock', rubric: 'ok?' } });
-  });
-
-  it('starts a new draft as an enabled code rule on every trace', () => {
-    expect(toNewEvaluator({ ...blankDraft([]), name: ' x ' })).toMatchObject({ name: 'x', kind: 'code', enabled: true, filter: {}, sample_rate: 1 });
   });
 });

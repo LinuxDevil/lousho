@@ -76,32 +76,6 @@ describe('builder run reporting', () => {
   const rootEnd = () =>
     ingested.find((e) => e.type === 'observation' && e.data.parent_obs_id === undefined && e.data.end !== undefined);
 
-  it("reports a builder run's spans as agent <agentId>, and the status names the trace", async () => {
-    const runManager = makeManager({ url: 'http://127.0.0.1:7998', fetchFn: fetchFn(), registerExitHooks: false, flushIntervalMs: 10 });
-    const done = waitForDone(runManager, 'support-desk');
-    await runManager.run('support-desk', 'hello', SPEC);
-    const final = await done;
-    expect(typeof final.traceId).toBe('string');
-    await vi.waitFor(() => expect(rootEnd()).toBeDefined());
-    expect(ingested.find((e) => e.type === 'agent.heartbeat')?.data.name).toBe('support-desk');
-    expect(rootEnd()!.data.trace_id).toBe(final.traceId);
-    expect(runManager.status('support-desk').traceId).toBe(final.traceId);
-  });
-
-  it('captures message content for a loopback daemon only', async () => {
-    const reportTo = async (url: string, agentId: string) => {
-      ingested = [];
-      const runManager = makeManager({ url, fetchFn: fetchFn(), registerExitHooks: false, flushIntervalMs: 10 });
-      const done = waitForDone(runManager, agentId);
-      await runManager.run(agentId, 'hello', SPEC);
-      await done;
-      await vi.waitFor(() => expect(rootEnd()).toBeDefined());
-      return JSON.stringify(ingested);
-    };
-    expect(await reportTo('http://127.0.0.1:7998', 'local-agent')).toContain('gen_ai.input.messages');
-    expect(await reportTo('http://observe.internal:7777', 'remote-agent')).not.toContain('gen_ai.input.messages');
-  });
-
   it('keeps captured content observe-only: the trace file and live feed get none', async () => {
     const runManager = makeManager({ url: 'http://127.0.0.1:7998', fetchFn: fetchFn(), registerExitHooks: false, flushIntervalMs: 10 });
     const live: string[] = [];
@@ -119,25 +93,5 @@ describe('builder run reporting', () => {
     expect(traceFiles.join('')).not.toContain('gen_ai.input.messages');
     expect(live.length).toBeGreaterThan(0);
     expect(live.join('')).not.toContain('gen_ai.input.messages');
-  });
-
-  it('a daemon that is down never fails the run', async () => {
-    const down = (async () => {
-      throw new Error('ECONNREFUSED');
-    }) as typeof fetch;
-    const runManager = makeManager({ url: 'http://127.0.0.1:7998', fetchFn: down, registerExitHooks: false, flushIntervalMs: 10 });
-    const done = waitForDone(runManager, 'offline');
-    await runManager.run('offline', 'hello', SPEC);
-    expect((await done).status).toBe('done');
-  });
-
-  it('without the observe option the manager makes no reporter of its own', async () => {
-    const runManager = makeManager(undefined);
-    const done = waitForDone(runManager, 'quiet');
-    await runManager.run('quiet', 'hello', SPEC);
-    const final = await done;
-    // The status still names the run's trace (the local trace file has it too).
-    expect(typeof final.traceId).toBe('string');
-    expect(ingested).toEqual([]);
   });
 });

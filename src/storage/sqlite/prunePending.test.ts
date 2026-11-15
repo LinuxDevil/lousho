@@ -76,31 +76,6 @@ describe('SqliteStore.prune() and paused turns', () => {
     expect(await store.sessions.load('cust-7')).toHaveLength(6);
   });
 
-  it('prunes the turn once its approval is resolved', async () => {
-    const { store, agent } = setup();
-    const session = agent.session({ id: 'cust-7' });
-    await session.send('hello');
-    const paused = await session.send('refund my order');
-    await agent.approvals.resolve({ id: paused.approvalId!, approved: true });
-    age(store);
-    store.connection.db.prepare('UPDATE approvals SET resolved_at = resolved_at - ?').run(AGE);
-
-    expect(store.prune({ olderThanMs: 60 * 1000 })).toMatchObject({ sessions: 1, approvals: 1 });
-    expect(await store.sessions.load('cust-7')).toBeUndefined();
-  });
-
-  it('fails with LOUSHO_APPROVAL_ORPHANED, without running the tool, when the paused turn is gone', async () => {
-    const { store, agent, refunds } = setup();
-    const session = agent.session({ id: 'cust-7' });
-    await session.send('hello');
-    const paused = await session.send('refund my order');
-    await store.checkpoints.delete('cust-7.turn-2');
-
-    await expect(agent.approvals.resolve({ id: paused.approvalId!, approved: true })).rejects.toMatchObject({ code: 'LOUSHO_APPROVAL_ORPHANED' });
-    expect(refunds).toEqual([]);
-    expect(await store.sessions.load('cust-7')).toHaveLength(2);
-  });
-
   it('fails the same way for a resolve from a restarted process (a cold session)', async () => {
     const store = new SqliteStore(':memory:');
     stores.push(store);

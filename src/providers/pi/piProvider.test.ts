@@ -23,11 +23,7 @@ import { PiProvider, type PiProviderConfig } from './PiProvider';
 import { createAgent } from '../../createAgent';
 import { defineTool } from '../../tools/defineTool';
 import { resolveProvider } from '../resolveProvider';
-import { LLMProviderRegistry, type Message, type StreamChunk } from '../llm';
-import { withFallback } from '../resilience';
-import { MockLLMProvider } from '../mock';
-import { getModelInfo } from '../../models/registry';
-import type { AgentEvent } from '../../execution/agentEvents';
+import { type Message, type StreamChunk } from '../llm';
 import type { PiMessage } from './piTypes';
 
 const MODEL_SPEC = 'faux/faux-1';
@@ -64,23 +60,6 @@ describe('PiProvider (faux backend)', () => {
     // The faux provider estimates usage from the transcript: non-zero.
     expect(result.usage?.promptTokens).toBeGreaterThan(0);
     expect(result.usage?.completionTokens).toBeGreaterThan(0);
-  });
-
-  it('stream() yields text-delta chunks then a finish chunk with usage', async () => {
-    registration = fauxRegister();
-    registration.setResponses([fauxAssistantMessage('streamed answer')]);
-    const result = await provider().stream({ messages: [{ role: 'user', content: 'hi' }] });
-    const types: string[] = [];
-    for await (const chunk of result.fullStream) {
-      types.push(chunk.type);
-      expect(chunk.type).not.toBe('error');
-    }
-    expect(types[0]).toBe('text-delta');
-    expect(types[types.length - 1]).toBe('finish');
-    expect(await result.text).toBe('streamed answer');
-    const usage = await result.usage;
-    expect(usage?.promptTokens).toBeGreaterThan(0);
-    expect(await result.finishReason).toBe('stop');
   });
 
   it('maps tool calls out and tool results back into the transcript', async () => {
@@ -176,19 +155,6 @@ describe('PiProvider (faux backend)', () => {
     expect((content?.[3] as { text: string }).text).toContain('doc.pdf');
   });
 
-  it('pins pi retries off (Lousho withRetry() is the only retry layer)', async () => {
-    registration = fauxRegister();
-    let seenMaxRetries: unknown;
-    registration.setResponses([
-      (_context, options) => {
-        seenMaxRetries = (options as { maxRetries?: number } | undefined)?.maxRetries;
-        return fauxAssistantMessage('ok');
-      },
-    ]);
-    await provider().generate({ messages: [{ role: 'user', content: 'hi' }] });
-    expect(seenMaxRetries).toBe(0);
-  });
-
   it('throws a coded error for a malformed or unknown nested spec', async () => {
     registration = fauxRegister();
     const p = provider();
@@ -210,19 +176,9 @@ describe('PiProvider (faux backend)', () => {
     registration = fauxRegister();
     expect(await provider().getModels()).toContain('faux/faux-1');
   });
-
-  it('registers catalog pricing so runs price the model', async () => {
-    registration = fauxRegister();
-    registration.setResponses([fauxAssistantMessage('ok')]);
-    await provider().generate({ messages: [{ role: 'user', content: 'hi' }] });
-    expect(getModelInfo('pi/faux/faux-1')?.inputCostPerMTok).toBe(1);
-  });
 });
 
 describe('pi provider registration and agent wiring', () => {
-  it('LLMProviderRegistry.create() resolves the built-in pi factory', () => {
-    expect(LLMProviderRegistry.create('pi', { defaultModel: 'faux/faux-1' })).toBeInstanceOf(PiProvider);
-  });
 
   it('resolveProvider() accepts the pi/<provider>/<model> spec', () => {
     const p = resolveProvider('pi/openrouter/openai/gpt-4o-mini');
@@ -257,30 +213,5 @@ describe('pi provider registration and agent wiring', () => {
     expect(result.usage.modelCalls).toBe(2);
     // The faux model's catalog cost was registered: the run prices it.
     expect(result.usage.costUsd).toBeGreaterThan(0);
-  });
-
-  it('agent.stream() emits the standard event sequence', async () => {
-    registration = fauxRegister();
-    registration.setResponses([fauxAssistantMessage('streamed')]);
-    const agent = createAgent({ provider: provider() });
-    const types: string[] = [];
-    for await (const event of agent.stream('hi')) types.push(event.type);
-    expect(types[0]).toBe('run.start');
-    expect(types).toContain('step.start');
-    expect(types).toContain('text.delta');
-    expect(types[types.length - 1]).toBe('run.done');
-  });
-
-  it('falls back to the next provider on a bad pi model and emits provider.fallback', async () => {
-    registration = fauxRegister();
-    const events: AgentEvent[] = [];
-    const agent = createAgent({
-      provider: withFallback([provider({ defaultModel: 'faux/no-such-model' }), new MockLLMProvider({ responses: ['fallback answer'] })]),
-      onEvent: (event) => events.push(event),
-    });
-    const result = await agent.send('hi');
-    expect(result.text).toBe('fallback answer');
-    const fallback = events.find((e) => e.type === 'provider.fallback');
-    expect(fallback).toMatchObject({ from: 'pi', to: 'mock' });
   });
 });

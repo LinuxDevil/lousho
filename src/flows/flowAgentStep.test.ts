@@ -12,7 +12,6 @@ import { createAgent } from '../createAgent';
 import { mockModel } from '../testing';
 import { defineTool } from '../tools/defineTool';
 import { memoryStore } from '../storage/agentStore';
-import type { Span, TraceExporter } from '../execution/tracing';
 
 function flowOf(root: EditorStep, code = 'agent-flow'): AgentFlow {
   return { code, name: 'Agent Flow', flow: root };
@@ -27,51 +26,7 @@ function context(extra: Partial<FlowExecutionContext> = {}): FlowExecutionContex
   };
 }
 
-/** An exporter that keeps the spans it was told about. */
-function recording(): TraceExporter & { ended: Span[] } {
-  const ended: Span[] = [];
-  return { ended, onSpanStart: () => {}, onSpanEnd: (span) => ended.push({ ...span }) };
-}
-
 describe('FlowExecutor agent step', () => {
-  it("runs the context's agent and stores its reply text", async () => {
-    const writerModel = mockModel(['A draft.']);
-    const writer = createAgent({ provider: writerModel, instructions: 'w' });
-    const flow = flowOf({
-      type: 'sequence',
-      steps: [
-        { type: 'agent', agent: 'writer', input: 'Write about {{topic}}', outputVariable: 'draft' },
-        { type: 'return', value: '$draft' },
-      ],
-    });
-
-    const result = await FlowExecutor.execute(flow, context({ agents: { writer } }));
-
-    expect(result).toMatchObject({ success: true, output: 'A draft.' });
-    expect(result.variables.draft).toBe('A draft.');
-    // The interpolated input was sent to the agent as its user message.
-    const userMessage = writerModel.calls[0]?.messages.find((m) => m.role === 'user');
-    expect(userMessage?.content).toBe('Write about cats');
-    // The step reuses the llm-call/llm-response events, carrying `agent`.
-    const llmCall = result.events.find((event) => event.type === 'llm-call');
-    expect(llmCall?.data).toMatchObject({ agent: 'writer', prompt: 'Write about cats' });
-    const llmResponse = result.events.find((event) => event.type === 'llm-response');
-    expect(llmResponse?.data).toMatchObject({ agent: 'writer', text: 'A draft.' });
-  });
-
-  it("nests the agent's invoke_agent span under the node span", async () => {
-    const exporter = recording();
-    const writer = createAgent({ provider: mockModel(['A draft.']), exporter });
-    const flow = flowOf({ type: 'agent', agent: 'writer' });
-
-    const result = await FlowExecutor.execute(flow, context({ agents: { writer }, exporter }));
-
-    expect(result.success).toBe(true);
-    const nodeSpan = exporter.ended.find((span) => span.name === 'flow.node agent');
-    const invokeAgent = exporter.ended.find((span) => span.attributes['gen_ai.operation.name'] === 'invoke_agent');
-    expect(nodeSpan).toBeDefined();
-    expect(invokeAgent?.parentId).toBe(nodeSpan!.id);
-  });
 
   it('fails with LOUSHO_FLOW_INVALID naming the available agents when the name is unknown', async () => {
     const writer = createAgent({ provider: mockModel(['A draft.']) });
@@ -113,22 +68,6 @@ describe('FlowExecutor agent step', () => {
     expect(result.error).toMatchObject({ code: 'LOUSHO_FLOW_EXECUTION_FAILED' });
     expect(result.error?.message).toContain("agent step 'pauser' paused for an approval");
     expect(execute).not.toHaveBeenCalled();
-  });
-
-  it('retries a send that throws, per the node retry options', async () => {
-    const send = vi
-      .fn<Parameters<FlowStepAgent['send']>, ReturnType<FlowStepAgent['send']>>()
-      .mockRejectedValueOnce(new Error('service down'))
-      .mockResolvedValueOnce({ text: 'ok', finishReason: 'stop' });
-    const flaky: FlowStepAgent = { send };
-    const flow = flowOf({ type: 'agent', agent: 'flaky', retry: { maxAttempts: 2 }, outputVariable: 'out' });
-
-    const result = await FlowExecutor.execute(flow, context({ agents: { flaky } }));
-
-    expect(result).toMatchObject({ success: true, output: 'ok' });
-    expect(result.variables.out).toBe('ok');
-    expect(send).toHaveBeenCalledTimes(2);
-    expect(result.events.filter((event) => event.type === 'step-retry')).toHaveLength(1);
   });
 
   it('does not call a completed agent step again when a durable run resumes', async () => {

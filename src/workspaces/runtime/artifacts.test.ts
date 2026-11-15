@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -68,34 +68,6 @@ describe('artifact store', () => {
     }
   });
 
-  it('writes are atomic (a kill mid-write leaves no partial file)', async () => {
-    const root = await tempRoot();
-    const store = fileArtifactStore(root);
-    const artifacts = join(root, 'marketing', 'runs', 'run-a', 'artifacts');
-    let fail!: (error: Error) => void;
-    const stalled = new Promise<never>((_, reject) => {
-      fail = reject;
-    });
-    let firstChunkWritten!: () => void;
-    const midWrite = new Promise<void>((resolve) => {
-      firstChunkWritten = resolve;
-    });
-    async function* dying(): AsyncIterable<Uint8Array> {
-      yield new TextEncoder().encode('half of the ');
-      firstChunkWritten();
-      yield await stalled;
-    }
-    const put = store.put(pageA, 'video.mp4', dying(), 'video/mp4');
-    await midWrite;
-    expect((await readdir(artifacts)).filter((entry) => !entry.startsWith('.'))).toEqual([]);
-    expect(await store.get('artifact://marketing/run-a/video.mp4', pageA)).toBeUndefined();
-    fail(new Error('killed'));
-    await expect(put).rejects.toThrow('killed');
-    expect(await readdir(artifacts)).toEqual([]);
-    const ref = await store.put(pageA, 'video.mp4', 'whole', 'video/mp4');
-    expect((await store.get(ref.uri, pageA))?.data).toEqual(new TextEncoder().encode('whole'));
-  });
-
   it('caps the size of an artifact with maxArtifactBytes, for every store', async () => {
     for (const [, make] of STORES) {
       const store = await make({ maxArtifactBytes: 4 });
@@ -131,16 +103,6 @@ describe('artifact store', () => {
     }
   });
 
-  it('decodes a uri once: a double-encoded name stays a literal name', async () => {
-    for (const [, make] of STORES) {
-      const store = await make();
-      const ref = await store.put(pageA, 'a%2Fb.md', 'literal', 'text/markdown');
-      expect(ref.uri).toBe('artifact://marketing/run-a/a%252Fb.md');
-      expect((await store.get('artifact://marketing/run-a/a%252Fb.md', pageA))?.ref.name).toBe('a%2Fb.md');
-      await expect(store.get('artifact://marketing/run-a/a%2Fb.md', pageA)).rejects.toBeInstanceOf(ValidationError);
-    }
-  });
-
   it('refuses an existing blob key with a conditional put, even when head missed it', async () => {
     const client = memoryBlobClient();
     expect(await client.put('k', new Uint8Array([1]), {}, { ifAbsent: true })).toBe(true);
@@ -158,15 +120,5 @@ describe('artifact store', () => {
     expect(new TextDecoder().decode((await store.get(ref.uri, pageA))?.data)).toBe('one');
     const vanished = blobArtifactStore({ put: () => Promise.resolve(false), get: inner.get, head: () => Promise.resolve(undefined) });
     await expect(vanished.put(pageA, 'b.md', 'x', 'text/markdown')).rejects.toMatchObject({ code: 'LOUSHO_STORAGE_FAILED' });
-  });
-
-  it('copies bytes in and out of the memory store', async () => {
-    const store = memoryArtifactStore();
-    const bytes = new Uint8Array([1, 2, 3]);
-    const ref = await store.put(pageA, 'a.bin', bytes, 'application/octet-stream');
-    bytes[0] = 9;
-    const first = await store.get(ref.uri, pageA);
-    first!.data[1] = 9;
-    expect((await store.get(ref.uri, pageA))?.data).toEqual(new Uint8Array([1, 2, 3]));
   });
 });

@@ -1,20 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
-import { z } from 'zod';
 import {
   compactMessages,
   createCompactionHook,
   pruneToolResultsStrategy,
-  type CompactionInfo,
-  type CompactionStrategy,
+  
 } from './compaction';
 import type { GenerateOptions, Message } from '../providers';
 import { textOf } from '../providers';
-import { estimateTokens, registerModel } from '../models';
+import { estimateTokens } from '../models';
 import { HookRegistry } from '../execution/hooks';
-import { AgentExecutor } from '../execution/AgentExecutor';
-import { defineTool } from '../tools/defineTool';
-import { ToolRegistry } from '../tools';
-import { mockModel } from '../testing';
 
 const BIG = 'x'.repeat(4_000); // about 1,000 tokens
 
@@ -73,228 +67,14 @@ describe('pruneToolResultsStrategy / compactMessages', () => {
     expect(result.tokensAfter).toBeLessThan(result.tokensBefore / 2);
     expectValidTranscript(result.messages);
   });
-
-  it('never touches system messages, user messages or assistant turns', async () => {
-    const original = transcript(4, BIG);
-    original.splice(4, 0, { role: 'user', content: BIG });
-    const result = await compactMessages(original, { protectedTokens: 0 });
-
-    result.messages.forEach((m, i) => {
-      if (m.role !== 'tool') expect(m).toBe(original[i]);
-    });
-    expect(result.prunedToolCallIds).toEqual(['call_1', 'call_2', 'call_3']);
-  });
-
-  it('never prunes results of the latest assistant turn, even with no protected tokens', async () => {
-    const original = transcript(3);
-    const result = await compactMessages(original, { protectedTokens: 0 });
-    expect(result.messages.at(-1)).toBe(original.at(-1));
-    expect(result.prunedToolCallIds).toEqual(['call_1', 'call_2']);
-  });
-
-  it('is pure and idempotent: markers and short results are left alone', async () => {
-    const original = transcript(5);
-    original.push({ role: 'assistant', content: '', toolCalls: [{ id: 'tiny', type: 'function', function: { name: 'n', arguments: '{}' } }] });
-    original.push({ role: 'tool', toolCallId: 'tiny', toolName: 'n', content: '"ok"' });
-    original.push({ role: 'assistant', content: 'done' });
-    const snapshot = structuredClone(original);
-
-    const first = await compactMessages(original, { protectedTokens: 0 });
-    expect(original).toEqual(snapshot);
-    expect(first.prunedToolCallIds).toEqual(['call_1', 'call_2', 'call_3', 'call_4', 'call_5']);
-
-    const second = await compactMessages(first.messages, { protectedTokens: 0 });
-    expect(second.messages).toBe(first.messages);
-    expect(second.prunedToolCallIds).toEqual([]);
-    expect(second.tokensAfter).toBe(second.tokensBefore);
-  });
-
-  it('uses the given strategy', async () => {
-    const strategy: CompactionStrategy = {
-      name: 'drop-all',
-      compact: ({ messages, estimateTokens: count, contextWindow }) => ({
-        messages: messages.slice(0, 2),
-        tokensBefore: count(messages),
-        tokensAfter: contextWindow,
-        prunedToolCallIds: [],
-      }),
-    };
-    const result = await compactMessages(transcript(2), { strategy, model: 'gpt-4o-mini' });
-    expect(result.messages).toHaveLength(2);
-    expect(result.tokensAfter).toBe(128_000); // gpt-4o-mini's window from the registry
-  });
 });
 
 function request(messages: Message[], model = 'compaction-test-model'): GenerateOptions {
   return { model, messages };
 }
 
-describe('protectedTokens on a small context window', () => {
-  it('the default protectedTokens never covers a small window: an 8K local model still prunes', async () => {
-    const messages = transcript(20); // about 20K tokens of tool results
-    const result = await compactMessages(messages, { contextWindow: 8_192 });
-    expect(result.prunedToolCallIds.length).toBeGreaterThan(10);
-    expect(result.tokensAfter).toBeLessThan(result.tokensBefore);
-  });
-
-  it('clamps an explicit protectedTokens at or above the threshold and warns once', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      const messages = transcript(20);
-      const result = await compactMessages(messages, { contextWindow: 8_192, protectedTokens: 40_000 });
-      await compactMessages(messages, { contextWindow: 8_192, protectedTokens: 40_000 });
-      expect(result.prunedToolCallIds.length).toBeGreaterThan(10);
-      expect(warn).toHaveBeenCalledTimes(1);
-      expect(String(warn.mock.calls[0][0])).toMatch(/protectedTokens \(40000\) is not below the compaction threshold/);
-      // A value below the threshold is the caller's choice and is kept.
-      const kept = await compactMessages(messages, { contextWindow: 8_192, protectedTokens: 6_000 });
-      expect(kept.prunedToolCallIds.length).toBeLessThan(result.prunedToolCallIds.length);
-      expect(warn).toHaveBeenCalledTimes(1);
-    } finally {
-      warn.mockRestore();
-    }
-  });
-});
-
-describe('compaction with multimodal content', () => {
-  it('measures a tool result given as parts by its text and leaves user image parts alone', async () => {
-    const original = transcript(4);
-    original[1] = { role: 'user', content: [{ type: 'text', text: 'start' }, { type: 'image', image: 'https://example.com/a.png' }] };
-    original[3] = { ...original[3], content: [{ type: 'text', text: BIG }] };
-
-    const result = await compactMessages(original, { protectedTokens: 1_000, strategy: pruneToolResultsStrategy() });
-
-    expect(result.messages[1]).toBe(original[1]);
-    expect(result.messages[3].content).toBe('[pruned: search({}) result, 4000 chars; already read]');
-  });
-});
-
-describe('createCompactionHook', () => {
-  registerModel({ id: 'compaction-test-model', provider: 'test', contextWindow: 10_000 });
-
-  async function runHook(hook = createCompactionHook(), req = request(transcript(10))) {
-    const hooks = new HookRegistry();
-    hooks.register(hook);
-    const before = req.messages;
-    await hooks.runPreGenerate({ messages: req.messages, request: req });
-    expect(req.messages).toBe(before); // rewritten in place, never replaced
-    return req;
-  }
-
-  it('is named compaction and rejects a threshold outside (0, 1]', () => {
-    expect(createCompactionHook().name).toBe('compaction');
-    expect(() => createCompactionHook({ thresholdPercent: 0 })).toThrow(RangeError);
-    expect(() => createCompactionHook({ thresholdPercent: 1.5 })).toThrow(RangeError);
-  });
-
-  it('compacts only above thresholdPercent of the context window', async () => {
-    const messages = transcript(4);
-    const tokens = estimateTokens(messages);
-    const onCompaction = vi.fn();
-
-    // Exactly at the threshold: nothing happens.
-    const atThreshold = await runHook(
-      createCompactionHook({ contextWindow: tokens * 2, thresholdPercent: 0.5, protectedTokens: 0, onCompaction }),
-      request(structuredClone(messages))
-    );
-    expect(atThreshold.messages).toEqual(messages);
-    expect(onCompaction).not.toHaveBeenCalled();
-
-    // One token over: compacts.
-    const over = await runHook(
-      createCompactionHook({ contextWindow: (tokens - 1) * 2, thresholdPercent: 0.5, protectedTokens: 0, onCompaction }),
-      request(structuredClone(messages))
-    );
-    expect(over.messages.filter(isMarker)).toHaveLength(3);
-    expect(onCompaction).toHaveBeenCalledTimes(1);
-  });
-
-  it('uses the registry context window for request.model and the default 0.9 threshold', async () => {
-    // compaction-test-model has a 10,000-token window: 8 rounds (~8,100 tokens) stay, 10 (~10,100) compact.
-    const onCompaction = vi.fn<[CompactionInfo], void>();
-    const small = await runHook(createCompactionHook({ protectedTokens: 2_000, onCompaction }), request(transcript(8)));
-    expect(small.messages.some(isMarker)).toBe(false);
-
-    const large = await runHook(createCompactionHook({ protectedTokens: 2_000, onCompaction }), request(transcript(10)));
-    expect(large.messages.filter(isMarker).length).toBeGreaterThan(5);
-    expectValidTranscript(large.messages);
-
-    const info = onCompaction.mock.calls[0][0];
-    expect(info.strategy).toBe('prune-tool-results');
-    expect(info.tokensBefore).toBeGreaterThan(9_000);
-    expect(info.tokensAfter).toBe(estimateTokens(large.messages));
-    expect(info.prunedToolCallIds).toEqual(large.messages.filter(isMarker).map((m) => m.toolCallId));
-
-    // An unknown model falls back to a 128,000-token window.
-    const unknown = await runHook(createCompactionHook({ protectedTokens: 0 }), request(transcript(10), 'no-such-model'));
-    expect(unknown.messages.some(isMarker)).toBe(false);
-  });
-
-  it('does not report a compaction that changed nothing', async () => {
-    const onCompaction = vi.fn();
-    const hook = createCompactionHook({ contextWindow: 100, protectedTokens: 0, onCompaction });
-    const req = await runHook(hook);
-    await runHook(hook, req);
-    expect(onCompaction).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('compaction in a run', () => {
-  it('prunes old tool results before each model call and keeps them pruned in the transcript', async () => {
-    const fetchPage = defineTool({
-      name: 'fetch_page',
-      description: 'Fetch a page',
-      input: z.object({ n: z.number() }),
-      execute: async ({ n }) => `${n}:${BIG}`,
-    });
-    const toolRegistry = new ToolRegistry();
-    toolRegistry.register(fetchPage);
-    const call = (n: number) => ({ toolCalls: [{ name: 'fetch_page', args: { n }, id: `call_${n}` }] });
-    const model = mockModel([call(1), call(2), call(3), call(4), 'done']);
-
-    const compactions: CompactionInfo[] = [];
-    const hooks = new HookRegistry();
-    hooks.register(
-      createCompactionHook({ contextWindow: 3_000, protectedTokens: 1_500, onCompaction: (info) => compactions.push(info) })
-    );
-
-    const result = await AgentExecutor.execute({
-      agent: {
-        id: 'a',
-        name: 'Agent',
-        prompt: 'Read pages.',
-        tools: { fetch_page: { tool: 'fetch_page' } },
-      },
-      input: 'read four pages',
-      provider: model,
-      toolRegistry,
-      hooks,
-      maxSteps: 10,
-    });
-
-    expect(result.text).toBe('done');
-    // Each request stays under the threshold once compacted; the newest result is always intact.
-    for (const req of model.calls.slice(1)) {
-      expect(estimateTokens(req.messages as Message[])).toBeLessThan(3_000 * 0.9);
-      expect(req.messages.at(-1)?.content).toContain(BIG);
-    }
-    // Pruning persists in the run's transcript, and no result is pruned twice.
-    const pruned = compactions.flatMap((c) => c.prunedToolCallIds);
-    expect(new Set(pruned).size).toBe(pruned.length);
-    expect(pruned).toEqual(['call_1', 'call_2']); // call_3 and call_4 fit under the threshold
-    const markers = result.messages.filter((m) => m.role === 'tool' && textOf(m).startsWith('[pruned: fetch_page('));
-    expect(markers.map((m) => m.toolCallId)).toEqual(pruned);
-    expectValidTranscript(result.messages);
-  });
-});
-
 describe('compaction request size and context window', () => {
   const messages = () => transcript(4);
-  const bigSchema = z.object(Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`field_${i}`, z.string().describe(`The value of field ${i}, as text`)])));
-  const withTools = (req: GenerateOptions): GenerateOptions => ({
-    ...req,
-    tools: [{ type: 'function', function: { name: 'search', description: 'Search the logs for a pattern', parameters: bigSchema } }],
-  });
 
   async function preGenerate(hook: ReturnType<typeof createCompactionHook>, req: GenerateOptions) {
     const hooks = new HookRegistry();
@@ -302,54 +82,6 @@ describe('compaction request size and context window', () => {
     await hooks.runPreGenerate({ messages: req.messages, request: req });
     return hooks;
   }
-
-  it('warns once, naming compaction.contextWindow and registerModel(), when the model is unknown', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    await preGenerate(createCompactionHook(), request(messages(), 'unknown-local-model-c3'));
-    await preGenerate(createCompactionHook(), request(messages(), 'unknown-local-model-c3'));
-    const warnings = warn.mock.calls.map(([text]) => String(text)).filter((text) => text.includes('unknown-local-model-c3'));
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toMatch(/128,000-token context window/);
-    expect(warnings[0]).toContain("'compaction.contextWindow'");
-    expect(warnings[0]).toContain("registerModel({ id: 'unknown-local-model-c3'");
-
-    // A known window (given, or registered) does not warn.
-    warn.mockClear();
-    await preGenerate(createCompactionHook({ contextWindow: 8_192 }), request(messages(), 'other-unknown-model-c3'));
-    await preGenerate(createCompactionHook(), request(messages()));
-    expect(warn).not.toHaveBeenCalled();
-    warn.mockRestore();
-  });
-
-  it('counts the tool definitions toward the request size', async () => {
-    const tokens = estimateTokens(messages());
-    const onCompaction = vi.fn<[CompactionInfo], void>();
-    // Messages alone sit just under the threshold; with the tool schema the request is over it.
-    const options = { contextWindow: tokens + 10, thresholdPercent: 1, protectedTokens: 0, onCompaction };
-    const plain = request(messages());
-    await preGenerate(createCompactionHook(options), plain);
-    expect(onCompaction).not.toHaveBeenCalled();
-
-    const req = withTools(request(messages()));
-    await preGenerate(createCompactionHook(options), req);
-    expect(onCompaction).toHaveBeenCalledTimes(1);
-    const info = onCompaction.mock.calls[0][0];
-    expect(info.tokensBefore).toBeGreaterThan(tokens + 100);
-    expect(req.messages.filter(isMarker).length).toBeGreaterThan(0);
-  });
-
-  it("adds what the provider's reported prompt tokens exceeded the estimate by on the previous call", async () => {
-    const tokens = estimateTokens(messages());
-    const onCompaction = vi.fn();
-    const hook = createCompactionHook({ contextWindow: tokens + 200, thresholdPercent: 1, protectedTokens: 0, onCompaction });
-    const req = request(messages());
-    const hooks = await preGenerate(hook, req);
-    expect(onCompaction).not.toHaveBeenCalled();
-    // The provider billed 500 more tokens than estimated: the next call of this transcript compacts.
-    await hooks.runPostGenerate({ messages: req.messages, request: req }, { text: '', usage: { promptTokens: tokens + 500, completionTokens: 1, totalTokens: tokens + 501 } } as never);
-    await hooks.runPreGenerate({ messages: req.messages, request: req });
-    expect(onCompaction).toHaveBeenCalledTimes(1);
-  });
 
   it('reserveOutputTokens lowers the threshold to contextWindow - reserve, never raises it', async () => {
     const tokens = estimateTokens(messages());

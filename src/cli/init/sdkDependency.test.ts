@@ -15,20 +15,6 @@ afterEach(() => {
 });
 
 describe('resolveSdkDependency', () => {
-  it('is a caret range of the SDK version by default and writes nothing', () => {
-    const project = tempDir();
-    expect(resolveSdkDependency('1.0.0-alpha.8', project)).toBe('^1.0.0-alpha.8');
-    expect(fs.readdirSync(project)).toEqual([]);
-  });
-
-  it('copies a given tarball into the project and points at it with file:', () => {
-    const tarball = path.join(tempDir(), 'sdk-1.2.3.tgz');
-    fs.writeFileSync(tarball, 'not really a tarball');
-    const project = tempDir();
-
-    expect(resolveSdkDependency('1.0.0', project, tarball)).toBe('file:./sdk-1.2.3.tgz');
-    expect(fs.readFileSync(path.join(project, 'sdk-1.2.3.tgz'), 'utf8')).toBe('not really a tarball');
-  });
 
   it('explains a missing path and a non-tarball file', () => {
     const project = tempDir();

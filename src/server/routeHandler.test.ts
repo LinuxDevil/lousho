@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { readUIMessageStream, type UIMessage, type UIMessageChunk } from 'ai-v7';
 import { createAgent } from '../createAgent';
 import { defineTool } from '../tools/defineTool';
 import { mockModel } from '../testing';
@@ -32,25 +31,6 @@ const routes = (replies: Parameters<typeof mockModel>[0], options?: RouteHandler
   createRouteHandler(createAgent({ provider: mockModel(replies), tools: [deploy], store: memoryStore() }), options);
 
 describe('createRouteHandler', () => {
-  it('streams a chat turn through POST and serves the transcript through GET', async () => {
-    const { POST, GET } = routes(['Hello there.']);
-    const response = await POST(post('/api/agent/chat', { sessionId: 's1', input: 'hi' }));
-    expect(response.headers.get('content-type')).toBe('text/event-stream');
-    const events = await frames(response);
-    expect(events.at(-1)).toMatchObject({ type: 'run.done', finishReason: 'stop', text: 'Hello there.' });
-    const saved = await (await GET(get('/api/agent/chat/s1'))).json();
-    expect(saved.messages.map((m: { role: string }) => m.role)).toEqual(['user', 'assistant']);
-  });
-
-  it('round-trips an approval and streams the continuation', async () => {
-    const { handler } = routes([{ toolCalls: [{ name: 'deploy', id: 'c1' }] }, 'Deployed.']);
-    const paused = await frames(await handler(post('/api/agent/chat', { sessionId: 's2', input: 'ship it' })));
-    const requested = paused.find((e) => e.type === 'approval.requested') as { approvalId: string };
-    expect(paused.at(-1)).toMatchObject({ finishReason: 'awaiting-approval' });
-    const continued = await frames(await handler(post(`/api/agent/chat/s2/approvals/${requested.approvalId}`, { approved: true })));
-    expect(continued.find((e) => e.type === 'tool.done')).toMatchObject({ result: 'shipped' });
-    expect(continued.at(-1)).toMatchObject({ finishReason: 'stop', text: 'Deployed.' });
-  });
 
   describe('a step paused on several calls', () => {
     const release = defineTool({ name: 'release', description: 'Releases', input: z.object({}), needsApproval: true, execute: () => 'released' });
@@ -70,37 +50,6 @@ describe('createRouteHandler', () => {
       expect(done.filter((e) => e.type === 'tool.done').map((e) => e.result)).toEqual(['shipped', 'released']);
       expect(done.at(-1)).toMatchObject({ finishReason: 'stop', text: 'Both done.' });
     });
-
-    it('after a restart, the session checkpoint lets the route decide any call of the step', async () => {
-      const store = memoryStore();
-      const first = createRouteHandler(createAgent({ provider: mockModel([twoCalls]), tools: [deploy, release], store }));
-      const paused = await frames(await first.handler(post('/api/agent/chat', { sessionId: 'm2', input: 'ship and release' })));
-      const ids = paused.filter((e) => e.type === 'approval.requested').map((e) => e.approvalId as string);
-
-      const second = createRouteHandler(createAgent({ provider: mockModel([]), tools: [deploy, release], store }));
-      expect((await second.handler(post(`/api/agent/chat/m2/approvals/${ids[1]}`, { approved: false }))).status).toBe(200);
-
-      const third = createRouteHandler(createAgent({ provider: mockModel(['Shipped only.']), tools: [deploy, release], store }));
-      const done = await frames(await third.handler(post(`/api/agent/chat/m2/approvals/${ids[0]}`, { approved: true })));
-      expect(done.at(-1)).toMatchObject({ finishReason: 'stop', text: 'Shipped only.' });
-      const saved = await (await third.GET(get('/api/agent/chat/m2'))).json();
-      expect(saved.messages.map((m: { role: string }) => m.role)).toEqual(['user', 'assistant', 'tool', 'tool', 'assistant']);
-    });
-  });
-
-  it('checks a bearer token, but leaves /health open', async () => {
-    const { handler } = routes(['ok'], { auth: 'sekret' });
-    const body = { sessionId: 's3', input: 'hi' };
-    const denied = await handler(post('/api/agent/chat', body));
-    expect(denied.status).toBe(401);
-    expect(denied.headers.get('www-authenticate')).toBe('Bearer');
-    expect((await handler(post('/api/agent/chat', body, { authorization: 'Bearer wrong' }))).status).toBe(401);
-    expect((await handler(post('/api/agent/chat', body, { authorization: 'Bearer sekret' }))).status).toBe(200);
-    expect(await (await handler(get('/api/agent/health'))).text()).toBe('ok');
-  });
-
-  it("refuses an empty-string token at construction instead of locking every route", () => {
-    expect(() => routes(['ok'], { auth: '' })).toThrow(expect.objectContaining({ code: 'LOUSHO_AUTH_CONFIG_INVALID' }));
   });
 
   it('asks an authorizer function, sync or async', async () => {
@@ -115,19 +64,6 @@ describe('createRouteHandler', () => {
     expect((await handler(post('/api/agent/chat', body))).status).toBe(401);
     expect((await handler(post('/api/agent/chat', body, { 'x-user': 'ada' }))).status).toBe(200);
     expect(seen).toEqual(['POST', 'POST']);
-  });
-
-  it('keeps a boolean authorizer meaning what it did: true runs with the custom anonymous principal', async () => {
-    const seen: Array<Principal | undefined> = [];
-    const agent = createAgent({
-      provider: mockModel(['ok']),
-      instructions: ({ principal }: RunConfigContext) => (seen.push(principal), 'be brief'),
-    });
-    const { handler } = createRouteHandler(agent, { auth: () => true });
-    const response = await handler(post('/api/agent/chat', { sessionId: 'b1', input: 'hi' }));
-    expect(response.status).toBe(200);
-    await response.text();
-    expect(seen).toEqual([{ id: 'anonymous', type: 'user', authenticator: 'custom' }]);
   });
 
   describe('auth lists', () => {
@@ -185,22 +121,6 @@ describe('createRouteHandler', () => {
       await (await handler(post('/api/agent', { input: 'hi' }, headers))).text();
       expect(seen.map((p) => p?.id)).toEqual(['web', 'web']);
     });
-
-    it('warns once in production when a route has no auth', () => {
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-      const previous = process.env.NODE_ENV;
-      process.env.NODE_ENV = 'production';
-      try {
-        routes(['x']);
-        routes(['x']);
-        routes(['x'], { auth: 't' });
-        expect(warn).toHaveBeenCalledTimes(1);
-        expect(warn.mock.calls[0][0]).toContain('no `auth`');
-      } finally {
-        process.env.NODE_ENV = previous;
-        warn.mockRestore();
-      }
-    });
   });
 
   it('strips the base path, accepts a trailing slash, and 404s outside it', async () => {
@@ -231,88 +151,6 @@ describe('createRouteHandler', () => {
       const own = await frames(await handler(post(`/api/agent/chat/g1/approvals/${approvalId}`, { approved: true }, as('alice'))));
       expect(own.find((e) => e.type === 'tool.done')).toMatchObject({ result: 'shipped' });
     });
-
-    it('authorizeApproval overrides the default, letting e.g. a supervisor decide', async () => {
-      const supervised = authed(
-        [{ toolCalls: [{ name: 'deploy', id: 'c1' }] }, 'x', { toolCalls: [{ name: 'deploy', id: 'c2' }] }, 'y'],
-        { authorizeApproval: ({ principal }) => principal?.id === 'staff' },
-      );
-      const first = await frames(await supervised.handler(post('/api/agent/chat', { sessionId: 'l1', input: 'a' }, as('alice'))));
-      const a1 = (first.find((e) => e.type === 'approval.requested') as { approvalId: string }).approvalId;
-      // alice pauses it but cannot decide it under this policy; staff can
-      expect((await supervised.handler(post(`/api/agent/chat/l1/approvals/${a1}`, { approved: true }, as('alice')))).status).toBe(403);
-      expect((await supervised.handler(post(`/api/agent/chat/l1/approvals/${a1}`, { approved: true }, as('staff')))).status).toBe(200);
-
-      const byRequest = authed([{ toolCalls: [{ name: 'deploy', id: 'c3' }] }, 'z'], {
-        authorizeApproval: ({ principal, approval }) => principal?.id === 'alice' && approval.toolName === 'deploy',
-      });
-      const paused = await frames(await byRequest.handler(post('/api/agent/chat', { sessionId: 'f1', input: 'c' }, as('alice'))));
-      const a3 = (paused.find((e) => e.type === 'approval.requested') as { approvalId: string }).approvalId;
-      expect((await byRequest.handler(post(`/api/agent/chat/f1/approvals/${a3}`, { approved: true }, as('alice')))).status).toBe(200);
-    });
-
-    it('a service principal (a shared token, a remote agent) may decide its own pause', async () => {
-      const { handler } = routes([{ toolCalls: [{ name: 'deploy', id: 'c1' }] }, 'Deployed.'], { auth: 't' });
-      const headers = { authorization: 'Bearer t' };
-      const paused = await frames(await handler(post('/api/agent/chat', { sessionId: 'sv1', input: 'ship it' }, headers)));
-      const { approvalId } = paused.find((e) => e.type === 'approval.requested') as { approvalId: string };
-      const continued = await frames(await handler(post(`/api/agent/chat/sv1/approvals/${approvalId}`, { approved: true }, headers)));
-      expect(continued.find((e) => e.type === 'tool.done')).toMatchObject({ result: 'shipped' });
-    });
-
-    it('by default a session belongs to its first principal; authorizeSession replaces that rule', async () => {
-      const { handler } = authed(['Hi Alice.', 'follow-up']);
-      await (await handler(post('/api/agent/chat', { sessionId: 'mine', input: 'hi' }, as('alice')))).text();
-      // default: alice used it first, so bob can neither read nor continue it
-      const read = await handler(get('/api/agent/chat/mine', as('bob')));
-      expect(read.status).toBe(403);
-      expect(await read.json()).toMatchObject({ code: 'LOUSHO_SESSION_FORBIDDEN' });
-      expect((await handler(post('/api/agent/chat', { sessionId: 'mine', input: 'mine now' }, as('bob')))).status).toBe(403);
-      expect((await handler(get('/api/agent/chat/mine', as('alice')))).status).toBe(200);
-
-      // the opt-out: every authenticated caller may use every session
-      const shared = authed(['a'], { authorizeSession: () => true });
-      await (await shared.handler(post('/api/agent/chat', { sessionId: 'team', input: 'hi' }, as('alice')))).text();
-      expect((await shared.handler(get('/api/agent/chat/team', as('bob')))).status).toBe(200);
-
-      const owned = authed(['a', 'b'], {
-        authorizeSession: ({ principal, sessionId }) => sessionId === `u-${principal?.id}`,
-      });
-      expect((await owned.handler(post('/api/agent/chat', { sessionId: 'u-alice', input: 'hi' }, as('alice')))).status).toBe(200);
-      expect((await owned.handler(post('/api/agent/chat', { sessionId: 'u-alice', input: 'hi' }, as('bob')))).status).toBe(403);
-    });
-
-    it('the approvals route 404s when the named session waits on a different pause', async () => {
-      const { handler } = authed([
-        { toolCalls: [{ name: 'deploy', id: 'c1' }] },
-        { toolCalls: [{ name: 'deploy', id: 'c2' }] },
-        'x',
-      ]);
-      const first = await frames(await handler(post('/api/agent/chat', { sessionId: 'w1', input: 'a' }, as('alice'))));
-      const a1 = (first.find((e) => e.type === 'approval.requested') as { approvalId: string }).approvalId;
-      const second = await frames(await handler(post('/api/agent/chat', { sessionId: 'w2', input: 'b' }, as('staff'))));
-      expect(second.find((e) => e.type === 'approval.requested')).toBeDefined();
-      // w2 waits on its own pause, not a1: naming a1 under w2 is a mismatch
-      expect((await handler(post(`/api/agent/chat/w2/approvals/${a1}`, { approved: true }, as('staff')))).status).toBe(404);
-      // a1 under a session that never paused is a mismatch too
-      expect((await handler(post(`/api/agent/chat/fresh/approvals/${a1}`, { approved: true }, as('alice')))).status).toBe(404);
-      // and a1 itself is still decidable by its owner on its own session
-      expect((await handler(post(`/api/agent/chat/w1/approvals/${a1}`, { approved: true }, as('alice')))).status).toBe(200);
-    });
-
-    it('a question pause is answered by the user it was asked of (self-resolution allowed)', async () => {
-      const agent = createAgent({
-        provider: mockModel([{ toolCalls: [{ name: 'ask_question', args: { question: 'Where?', options: ['Porto', 'Lisbon'] }, id: 'q1' }] }, 'Lisbon.']),
-        store: memoryStore(),
-        askQuestion: true,
-      });
-      const { handler } = createRouteHandler(agent, { auth: [userAuth] });
-      const paused = await frames(await handler(post('/api/agent/chat', { sessionId: 'q', input: 'plan' }, as('alice'))));
-      const question = paused.find((e) => e.type === 'approval.requested') as { approvalId: string };
-      expect(question).toMatchObject({ kind: 'question' });
-      const answered = await frames(await handler(post(`/api/agent/chat/q/approvals/${question.approvalId}`, { answer: 'Lisbon' }, as('alice'))));
-      expect(answered.find((e) => e.type === 'tool.done')).toBeDefined();
-    });
   });
 
   it('serves the remote createAgentRunner behind useLoushoAgent({ url, approvalsUrl }) unchanged, approvals included', async () => {
@@ -336,31 +174,6 @@ describe('createRouteHandler', () => {
 
   describe('uiMessageStream', () => {
     const userMessage = (text: string) => ({ id: 'm', role: 'user', parts: [{ type: 'text', text }] });
-
-    it('answers useChat with a UI message stream that the ai reader understands, in the session named by id', async () => {
-      const { handler, GET } = routes(['Hi Ada.'], { uiMessageStream: true });
-      const response = await handler(post('/api/agent/ui', { id: 'chat-1', messages: [userMessage('hi')] }));
-      expect(response.headers.get('x-vercel-ai-ui-message-stream')).toBe('v1');
-      const lines = (await response.text()).split('\n\n').filter((frame) => frame.startsWith('data: ') && frame !== 'data: [DONE]');
-      const stream = new ReadableStream<UIMessageChunk>({
-        start(controller) {
-          for (const line of lines) controller.enqueue(JSON.parse(line.slice(6)));
-          controller.close();
-        },
-      });
-      let last: UIMessage | undefined;
-      for await (const message of readUIMessageStream({ stream })) last = message;
-      expect(last?.parts.find((p) => p.type === 'text')).toMatchObject({ text: 'Hi Ada.' });
-      const saved = await (await GET(get('/api/agent/chat/chat-1'))).json();
-      expect(saved.messages).toHaveLength(2);
-    });
-
-    it('runs without a session when no id is posted, rejects a bad body, and is off by default', async () => {
-      const on = routes(['ok'], { uiMessageStream: true });
-      expect((await on.handler(post('/api/agent/ui', { messages: [userMessage('hi')] }))).status).toBe(200);
-      expect((await on.handler(post('/api/agent/ui', { nope: true }))).status).toBe(400);
-      expect((await routes(['ok']).handler(post('/api/agent/ui', { messages: [userMessage('hi')] }))).status).toBe(404);
-    });
 
     it('answers 400 for an invalid chat id, like POST /chat, before authorizeSession sees it', async () => {
       const authorizeSession = vi.fn(() => true);

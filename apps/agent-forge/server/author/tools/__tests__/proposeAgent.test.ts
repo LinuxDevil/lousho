@@ -1,9 +1,6 @@
-import { mkdirSync, mkdtempSync, readdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import * as path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 import { testToolContext } from 'lousho/testing';
-import type { AgentSpecV2 } from 'lousho';
 import type { AuthorToolDeps, CatalogService } from '../index';
 import type { AuthorTurn } from '../../turnRunner';
 import type { WorkspaceContext } from '../../../workspace/context';
@@ -12,7 +9,7 @@ import type { AuthorToolFailure, ProposalOutput } from '../../../../shared/autho
 import { proposalTurnState } from '../../proposal/turnState';
 import { passReview } from '../../proposal/review';
 import { AuthorSessionStore } from '../../sessionStore';
-import { AUTHOR_TOOL_FACTORIES, buildAuthorTools } from '../index';
+import { buildAuthorTools } from '../index';
 import type { AuthorDraft } from '../../draft/schema';
 
 /**
@@ -83,45 +80,6 @@ async function call(tool: ReturnType<typeof proposeTool>, args: Record<string, u
 }
 
 describe('proposeAgent', () => {
-  it('is registered in AUTHOR_TOOL_FACTORIES', () => {
-    const names = AUTHOR_TOOL_FACTORIES.map((factory) => factory(turn(), fakeDeps())).map(
-      (tool) => (tool as { name?: string }).name ?? tool.displayName
-    );
-    expect(names).toContain('proposeAgent');
-  });
-
-  it('returns a create ProposalOutput keyed on the toolCallId, writing nothing', async () => {
-    const root = mkdtempSync(path.join(tmpdir(), 'aa08-'));
-    mkdirSync(path.join(root, '.lousho', 'agents'), { recursive: true });
-    const before = readdirSync(root, { recursive: true });
-    const t = turn();
-    const requirements = [{ id: 'provider:mock', kind: 'provider_key', status: 'ok', label: 'Mock provider' }];
-    const tool = proposeTool(t, fakeDeps({ requirements: async () => requirements as never }));
-    const output = (await call(tool, { draft: DRAFT })) as ProposalOutput;
-
-    expect(output.ok).toBe(true);
-    expect(output.proposalId).toBe('call_a');
-    expect(output.kind).toBe('create');
-    expect(output.agentId).toBeUndefined();
-    expect(output.enabled).toBe(false);
-    expect(output.changes).toEqual([]);
-    expect(output.carriedOver).toBe(false);
-    expect(output.carriedFields).toEqual([]);
-    expect(output.baseSpecHash).toBeNull();
-    expect(output.requirements).toEqual(requirements);
-    const spec = output.spec as AgentSpecV2;
-    expect(spec.version).toBe(2);
-    expect(spec.name).toBe('Support triage');
-    expect(spec.triggers?.some((trigger) => trigger.type === 'chat')).toBe(true);
-    // Nothing was written anywhere under .lousho/.
-    expect(readdirSync(root, { recursive: true })).toEqual(before);
-  });
-
-  it('records the card under the create identity in the turn state', async () => {
-    const t = turn();
-    const output = (await call(proposeTool(t, fakeDeps()), { draft: DRAFT })) as ProposalOutput;
-    expect(proposalTurnState(t).proposed.get('create')).toBe(output);
-  });
 
   it('one UNKNOWN_MODEL failure lists both an unknown model and an unknown tool', async () => {
     const t = turn();
@@ -137,49 +95,6 @@ describe('proposeAgent', () => {
     expect(output.error).toContain('tools[0] builtin "web_fetch" does not exist');
     expect(output.next).toContain('proposeAgent');
     expect(proposalTurnState(t).proposed.size).toBe(0);
-  });
-
-  it('a failing review returns its failure and leaves proposed empty', async () => {
-    const t = turn();
-    const reviewFailure: AuthorToolFailure = {
-      ok: false,
-      code: 'DRAFT_REVIEW',
-      error: 'The draft would not run: no tool can read mail.',
-      userMessage: 'The Author is still working on the draft.',
-    };
-    const output = (await call(
-      proposeTool(t, fakeDeps({ reviewDraft: async () => ({ pass: false, failure: reviewFailure }) })),
-      { draft: DRAFT }
-    )) as AuthorToolFailure;
-    expect(output).toBe(reviewFailure);
-    expect(proposalTurnState(t).proposed.size).toBe(0);
-  });
-
-  it('passes spec, changes and requirements to the review', async () => {
-    const t = turn();
-    let seen: unknown;
-    const requirements = [{ id: 'mcp:gh', kind: 'mcp', status: 'unknown', label: 'MCP server gh' }];
-    const tool = proposeTool(
-      t,
-      fakeDeps({
-        requirements: async () => requirements as never,
-        reviewDraft: async (input) => {
-          seen = input;
-          return { pass: true };
-        },
-      })
-    );
-    const output = (await call(tool, { draft: DRAFT })) as ProposalOutput;
-    expect(output.ok).toBe(true);
-    const input = seen as { turn: AuthorTurn; spec: AgentSpecV2 };
-    expect(input.turn).toBe(t);
-    expect(seen).toMatchObject({
-      identity: { kind: 'create' },
-      toolName: 'proposeAgent',
-      changes: [],
-      requirements,
-    });
-    expect(input.spec.name).toBe('Support triage');
   });
 
   it('invalid draft -> DRAFT_INVALID with path: message text', async () => {

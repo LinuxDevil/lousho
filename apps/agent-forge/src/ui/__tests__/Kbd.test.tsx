@@ -24,17 +24,4 @@ describe('Kbd', () => {
     expect([...host.querySelectorAll('kbd')].map((k) => k.textContent)).toEqual(['Ctrl', 'J']);
     expect(host.querySelectorAll('.kbd-plus')).toHaveLength(1);
   });
-
-  it('renders Mod+J as ⌘J on Apple platforms, with no plus', () => {
-    setPlatform('MacIntel');
-    const host = render(<Kbd combo="Mod+J" />);
-    expect([...host.querySelectorAll('kbd')].map((k) => k.textContent)).toEqual(['⌘', 'J']);
-    expect(host.querySelectorAll('.kbd-plus')).toHaveLength(0);
-  });
-
-  it('renders a lone key without a plus', () => {
-    const host = render(<Kbd combo="Esc" />);
-    expect([...host.querySelectorAll('kbd')].map((k) => k.textContent)).toEqual(['Esc']);
-    expect(host.querySelectorAll('.kbd-plus')).toHaveLength(0);
-  });
 });

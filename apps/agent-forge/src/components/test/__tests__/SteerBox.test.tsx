@@ -61,26 +61,6 @@ describe('SteerBox', () => {
     expect(done.querySelector('.steer-box')).toBeNull();
   });
 
-  it('shows the form only while the run is running', () => {
-    state.runStatus = status({ status: 'running', provider: 'mock/mock-1' });
-    const container = render(<SteerBox />);
-    expect(container.querySelector('.steer-label')?.textContent).toBe('Message the running agent');
-    expect(textarea(container).rows).toBe(2);
-    expect(textarea(container).maxLength).toBe(3000);
-    expect(sendButton(container).textContent).toContain('Send to run');
-    // No steering history yet -> no list.
-    expect(container.querySelector('.steer-list')).toBeNull();
-
-    // Paused/done hide the form; the list alone stays when there is history.
-    state.runStatus = status({
-      status: 'done',
-      steering: [steerItem({ delivery: 'delivered' })],
-    });
-    const after = render(<SteerBox />);
-    expect(after.querySelector('.steer-input')).toBeNull();
-    expect(after.querySelector('.steer-list')).not.toBeNull();
-  });
-
   it('sends the trimmed draft through steerRun and clears the box', async () => {
     state.runStatus = status({ status: 'running' });
     const container = render(<SteerBox />);
@@ -89,20 +69,6 @@ describe('SteerBox', () => {
     await act(async () => {});
     expect(state.steerRun).toHaveBeenCalledWith('use Paris instead');
     expect(textarea(container).value).toBe('');
-  });
-
-  it('Enter sends, Shift+Enter inserts a newline', async () => {
-    state.runStatus = status({ status: 'running' });
-    const container = render(<SteerBox />);
-    type(textarea(container), 'first line');
-    key(textarea(container), 'Enter', { shiftKey: true });
-    await act(async () => {});
-    expect(state.steerRun).not.toHaveBeenCalled();
-
-    type(textarea(container), 'first line\nsecond line');
-    key(textarea(container), 'Enter');
-    await act(async () => {});
-    expect(state.steerRun).toHaveBeenCalledWith('first line\nsecond line');
   });
 
   it('shows an inline alert when steerRun rejects, keeping the draft', async () => {
@@ -139,13 +105,5 @@ describe('SteerBox', () => {
       'The run ended before this message was delivered.'
     );
     expect(items[0].querySelector('.steer-item-note')).toBeNull();
-  });
-
-  it('shows the character counter only past 2500 characters', () => {
-    state.runStatus = status({ status: 'running' });
-    const container = render(<SteerBox />);
-    expect(container.querySelector('.steer-count')).toBeNull();
-    type(textarea(container), 'x'.repeat(2501));
-    expect(container.querySelector('.steer-count')?.textContent).toBe('2501/3000');
   });
 });

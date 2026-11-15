@@ -100,10 +100,10 @@ const PAIRS: [text: string, background: string][] = [
 
 describe('theme contrast', () => {
   for (const scheme of ['light', 'dark'] as const) {
-    for (const [text, background] of PAIRS) {
-      it(`--${text} on --${background} is >= 4.5:1 (${scheme})`, () => {
-        expect(contrast(token(text)[scheme], token(background)[scheme])).toBeGreaterThanOrEqual(4.5);
-      });
-    }
+    it(`every text/background pair is >= 4.5:1 (${scheme})`, () => {
+      for (const [text, background] of PAIRS) {
+        expect(contrast(token(text)[scheme], token(background)[scheme]), `--${text} on --${background}`).toBeGreaterThanOrEqual(4.5);
+      }
+    });
   }
 });

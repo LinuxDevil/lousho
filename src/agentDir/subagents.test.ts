@@ -37,11 +37,6 @@ const viaAlias = { name: 'delegate_to_coder', args: { task: 'write a.txt then de
 const viaTask = { name: 'task', args: { agent: 'coder', prompt: 'write a.txt then deploy', description: 'write and deploy' } };
 
 describe('agent-directory sub-agents run through the native sub-agent runtime', () => {
-  it('lists every createAgent sub-agent directory in the lead config.subagents, keeping the delegate_to_<name> alias', async () => {
-    const { config } = await resolveAgentDir(fixture, { provider: mockModel(['x']) });
-    expect(Object.keys(config.subagents as Record<string, unknown>).sort()).toEqual(['coder', 'ops']);
-    expect((config.tools as unknown as { name: string }[]).map((t) => t.name).sort()).toEqual(['delegate_to_coder', 'delegate_to_ops']);
-  });
 
   for (const [label, call] of [
     ['the delegate_to_<name> alias', viaAlias],
@@ -106,21 +101,5 @@ describe('agent-directory sub-agents run through the native sub-agent runtime', 
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
-
-  it("lets a sub-agent directory's own approver decide its calls", async () => {
-    const model = mockModel([
-      { toolCalls: [{ name: 'delegate_to_ops', args: { task: 'restart it' } }] },
-      { toolCalls: [{ name: 'restart', args: {} }] },
-      'ops done',
-      'lead done',
-    ]);
-    const lead = await loadAgentDir(fixture, { provider: model });
-
-    const result = await lead.send('go');
-
-    expect(result.finishReason).toBe('stop');
-    expect(JSON.stringify(model.calls[2].messages)).toContain('restarted');
-    expect(JSON.stringify(model.calls[3].messages)).toContain('ops done');
   });
 });

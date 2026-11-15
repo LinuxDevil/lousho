@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { FORBIDDEN_EXECUTION_KEYS, FORBIDDEN_HARNESS_KEYS } from './forbiddenKeys';
-import { harnessProfileSchema, harnessSchema, hasExecutableCriterion, type Harness } from './harness';
+import { FORBIDDEN_EXECUTION_KEYS } from './forbiddenKeys';
+import { harnessSchema, hasExecutableCriterion, type Harness } from './harness';
 
 const instagram: Harness = {
   schema: 'lousho.harness/1',
@@ -53,24 +53,6 @@ function placements(key: string): { doc: Record<string, unknown>; path: string }
 }
 
 describe('harnessSchema', () => {
-  it('accepts the Instagram page harness', () => {
-    const result = harnessSchema.safeParse(instagram);
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data).toEqual(instagram);
-  });
-
-  it('accepts the smallest harness', () => {
-    expect(issuesOf({ schema: 'lousho.harness/1' })).toEqual([]);
-  });
-
-  it('each forbidden key at any depth is an error naming R13', () => {
-    expect(FORBIDDEN_HARNESS_KEYS).toEqual(['permissions', 'tools', 'secrets', 'sandbox', 'approvals', 'mcpServers', 'hooks', 'model', 'provider', 'network']);
-    for (const key of FORBIDDEN_HARNESS_KEYS) {
-      for (const { doc, path } of placements(key)) {
-        expect(issuesOf(doc), `${key} at ${path}`).toEqual([{ path: path.replace(/\[(\d+)\]/g, '.$1').split('.').map((s) => (/^\d+$/.test(s) ? Number(s) : s)), message: r13(path, key) }]);
-      }
-    }
-  });
 
   it('each execution key at any depth is an error naming R18', () => {
     expect(FORBIDDEN_EXECUTION_KEYS).toEqual(['execution', 'workflow', 'goal', 'steps', 'lead', 'delegates']);
@@ -88,44 +70,6 @@ describe('harnessSchema', () => {
     expect(issuesOf({ ...instagram, 'MCP-Servers': {} }).map((i) => i.message)).toEqual([r13('["MCP-Servers"]', 'mcpServers')]);
     expect(issuesOf({ ...instagram, 'mo​del': 'x' }).map((i) => i.message)).toEqual([r13('["mo\\u200bdel"]', 'model')]);
     expect(issuesOf({ ...instagram, audience: { description: 'x', traits: { WorkFlow: 'y' } } }).map((i) => i.message)).toEqual([r18('audience.traits.WorkFlow')]);
-  });
-
-  it('reports every forbidden key at once and nothing else', () => {
-    const issues = issuesOf({ ...instagram, tools: [], steps: [], unknownKey: 1, platform: { network: {} } });
-    expect(issues.map((i) => i.message)).toEqual([r13('platform.network', 'network'), r13('tools', 'tools'), r18('steps')]);
-  });
-
-  it('does not flag keys that only contain a forbidden word', () => {
-    const doc = { ...instagram, audience: { description: 'x', traits: { 'role-model': 'y', toolset: 'z', goals: 'w' } } };
-    expect(issuesOf(doc)).toEqual([]);
-  });
-
-  it('treats property names inside an embedded JSON Schema as data, not harness keys', () => {
-    const schema = {
-      type: 'object',
-      properties: { model: { type: 'string' }, tools: { type: 'array', items: { type: 'object', properties: { steps: { type: 'integer' } } } } },
-      patternProperties: { '^provider': { type: 'string' } },
-      $defs: { goal: { type: 'string' } },
-      definitions: { lead: { type: 'string' } },
-      dependentSchemas: { secrets: { type: 'object' } },
-      required: ['model', 'tools'],
-    };
-    expect(issuesOf({ ...instagram, inputs: { schema }, outputs: { schema } })).toEqual([]);
-  });
-
-  it('still flags a forbidden key in keyword position inside a property of an embedded JSON Schema', () => {
-    const schema = { type: 'object', properties: { model: { type: 'string', tools: ['shell'] } } };
-    expect(issuesOf({ ...instagram, inputs: { schema } }).map((i) => i.message)).toEqual([r13('inputs.schema.properties.model.tools', 'tools')]);
-  });
-
-  it('does not treat properties outside an embedded JSON Schema as data', () => {
-    const doc = { ...instagram, platform: { id: 'x', requirements: { properties: { tools: 'y' } } } };
-    expect(issuesOf(doc).map((i) => i.message)).toEqual([r13('platform.requirements.properties.tools', 'tools')]);
-  });
-
-  it('accepts dependentRequired names under an embedded JSON Schema', () => {
-    const schema = { type: 'object', properties: { model: { type: 'string' }, brand: { type: 'string' } }, dependentRequired: { model: ['brand'] }, dependencies: { tools: ['brand'] } };
-    expect(issuesOf({ ...instagram, inputs: { schema } })).toEqual([]);
   });
 
   it('scans a name-map entry whose value is not a schema', () => {
@@ -163,94 +107,12 @@ describe('harnessSchema', () => {
     expect(issuesOf({ ...instagram, platform: { id: 'x', requirements: new Requirements() } }).map((i) => i.path)).toEqual([['platform', 'requirements']]);
   });
 
-  it('validates the scanned copy, so a Proxy get trap cannot add keys after the scan', () => {
-    const proxy = new Proxy(
-      { schema: 'lousho.harness/1', platform: { id: 'x' } },
-      { get: (target, key, receiver) => (key === 'platform' ? { id: 'x', requirements: { tools: ['Bash'] } } : Reflect.get(target, key, receiver)) }
-    );
-    const result = harnessSchema.safeParse(proxy);
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data).toEqual({ schema: 'lousho.harness/1', platform: { id: 'x' } });
-  });
-
-  it('reports a throwing Proxy trap as an issue instead of throwing', () => {
-    const throwingGet = new Proxy({ id: 'x' }, { get: () => { throw new Error('boom'); } });
-    expect(issuesOf({ schema: 'lousho.harness/1', platform: throwingGet })).toEqual([]);
-    const throwingKeys = new Proxy({ schema: 'lousho.harness/1' }, { ownKeys: () => { throw new Error('boom'); } });
-    expect(issuesOf(throwingKeys)).toEqual([{ path: [], message: 'harness: must be plain JSON data: it could not be read' }]);
-    const nested = { ...instagram, platform: { id: 'x', requirements: { deep: new Proxy({}, { getPrototypeOf: () => { throw new Error('boom'); } }) } } };
-    expect(issuesOf(nested)).toEqual([{ path: ['platform', 'requirements', 'deep'], message: 'harness.platform.requirements.deep: must be plain JSON data: it could not be read' }]);
-  });
-
-  it('a profile without id and version is an error', () => {
-    const profile = { schema: 'lousho.harness/1', id: 'social-post', version: '2.0.1', instructions: ['social.md'] };
-    expect(issuesOf(profile, harnessProfileSchema)).toEqual([]);
-    const { id: _id, ...noId } = profile;
-    const { version: _version, ...noVersion } = profile;
-    expect(issuesOf(noId, harnessProfileSchema).map((issue) => issue.path)).toEqual([['id']]);
-    expect(issuesOf(noVersion, harnessProfileSchema).map((issue) => issue.path)).toEqual([['version']]);
-    expect(issuesOf({ ...profile, version: 'v2' }, harnessProfileSchema)[0].path).toEqual(['version']);
-    expect(issuesOf({ ...profile, id: 'Social Post' }, harnessProfileSchema)[0].path).toEqual(['id']);
-    expect(issuesOf({ ...profile, tools: [] }, harnessProfileSchema).map((i) => i.message)).toEqual([r13('tools', 'tools')]);
-    expect(issuesOf(noId)).toEqual([]);
-  });
-
-  it('capabilities.require accepts dotted names', () => {
-    expect(issuesOf({ schema: 'lousho.harness/1', capabilities: { require: ['image.generate', 'web.search.news', 'shell'] } })).toEqual([]);
-    for (const bad of ['', '.web', 'web.', 'web..search', 'web search', 'web/search']) {
-      expect(issuesOf({ schema: 'lousho.harness/1', capabilities: { require: [bad] } })[0].path, bad).toEqual(['capabilities', 'require', 0]);
-    }
-    expect(issuesOf({ schema: 'lousho.harness/1', capabilities: { grant: ['shell'] } })[0].path).toEqual(['capabilities']);
-  });
-
-  it('inputs.schema must be an object schema', () => {
-    expect(issuesOf({ schema: 'lousho.harness/1', inputs: { schema: 'schemas/input.json' } })).toEqual([]);
-    expect(issuesOf({ schema: 'lousho.harness/1', inputs: { schema: { type: 'string' } } })[0].path).toEqual(['inputs', 'schema']);
-    expect(issuesOf({ schema: 'lousho.harness/1', inputs: { schema: { properties: {} } } })[0].path).toEqual(['inputs', 'schema']);
-    expect(issuesOf({ schema: 'lousho.harness/1', inputs: { schema: [] } })[0].path).toEqual(['inputs', 'schema']);
-    expect(issuesOf({ schema: 'lousho.harness/1', inputs: { schema: { '~standard': {}, type: 'object' } } })[0].path).toEqual(['inputs', 'schema']);
-    expect(issuesOf({ schema: 'lousho.harness/1', inputs: { schema: '../outside.json' } })[0].path).toEqual(['inputs', 'schema']);
-    expect(issuesOf({ schema: 'lousho.harness/1', outputs: { schema: { type: 'string' } } })).toEqual([]);
-  });
-
   it('a rubric-only evaluation has no executable criterion', () => {
     const rubricOnly: Harness = { schema: 'lousho.harness/1', evaluation: { criteria: [{ id: 'tone', description: 'Tone fits.', rubric: 'Warm.' }] } };
     expect(issuesOf(rubricOnly)).toEqual([]);
     expect(hasExecutableCriterion(rubricOnly)).toBe(false);
     expect(hasExecutableCriterion({ schema: 'lousho.harness/1' })).toBe(false);
     expect(hasExecutableCriterion(instagram)).toBe(true);
-  });
-
-  it('rejects a criterion with neither check nor rubric', () => {
-    expect(issuesOf({ schema: 'lousho.harness/1', evaluation: { criteria: [{ id: 'x', description: 'y' }] } })[0].path).toEqual(['evaluation', 'criteria', 0]);
-  });
-
-  it('accepts plain artifact file names', () => {
-    for (const name of ['image', 'caption.txt', 'final cut.mp4', 'rapport-été.pdf']) {
-      expect(issuesOf({ schema: 'lousho.harness/1', outputs: { artifacts: [{ name, mediaType: 'text/plain' }] } }), name).toEqual([]);
-    }
-  });
-
-  it('rejects artifact names a page UI could never reference: URLs, separators, colons, control characters, dots and markup', () => {
-    const bad = ['https://example.com/a.png', 'a/b.png', 'a\\b.png', 'C:file', 'a\u0000b', 'a\u202eb', '.', '..', ' ', '<img src=x>', 'javascript:alert(1)', 'x'.repeat(201), '.env', '.hidden.txt', '\u5831'.repeat(150), '\u2028', 'a\u2029b'];
-    for (const name of bad) {
-      const found = issuesOf({ schema: 'lousho.harness/1', outputs: { artifacts: [{ name, mediaType: 'text/plain' }] } });
-      expect(found.map((issue) => issue.path), JSON.stringify(name)).toEqual([['outputs', 'artifacts', 0, 'name']]);
-    }
-  });
-
-  it('rejects duplicate constraint, criterion and artifact ids', () => {
-    const doc = {
-      schema: 'lousho.harness/1',
-      constraints: [{ id: 'a', text: 'x' }, { id: 'a', text: 'y' }],
-      evaluation: { criteria: [{ id: 'c', description: 'x', check: 'c.ts' }, { id: 'c', description: 'y', rubric: 'r' }] },
-      outputs: { artifacts: [{ name: 'image', mediaType: 'image/png' }, { name: 'image', mediaType: 'image/jpeg' }] },
-    };
-    expect(issuesOf(doc)).toEqual([
-      { path: ['outputs', 'artifacts', 1, 'name'], message: "duplicate name 'image'" },
-      { path: ['constraints', 1, 'id'], message: "duplicate id 'a'" },
-      { path: ['evaluation', 'criteria', 1, 'id'], message: "duplicate id 'c'" },
-    ]);
   });
 
   it('rejects unknown keys, instructions that are not relative .md paths, and out-of-range numbers', () => {

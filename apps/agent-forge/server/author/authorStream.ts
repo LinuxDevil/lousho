@@ -207,6 +207,7 @@ export function createAuthorUpgradeHandler(deps: {
       send(ws, answer.final);
       return;
     }
+    if (deps.runner.running(sessionId)?.requestId === message.requestId) return;
     send(ws, unknownRequest(message.requestId));
   }
 

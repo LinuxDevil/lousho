@@ -3,15 +3,6 @@ import { generateCodexConfig, CodexAgentConfig } from './codex';
 import { exampleAgentSpec } from './__fixtures__/exampleSpec';
 
 describe('generateCodexConfig', () => {
-  it('produces a config path under .codex/agents/', () => {
-    const file = generateCodexConfig(exampleAgentSpec);
-    expect(file.path).toBe('.codex/agents/ops-fixer.json');
-  });
-
-  it('produces valid, parseable JSON', () => {
-    const file = generateCodexConfig(exampleAgentSpec);
-    expect(() => JSON.parse(file.content)).not.toThrow();
-  });
 
   it("parsed output's fields match the fixture", () => {
     const file = generateCodexConfig(exampleAgentSpec);

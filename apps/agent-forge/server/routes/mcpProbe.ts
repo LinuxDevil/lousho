@@ -205,7 +205,9 @@ export type McpProbeResult =
  */
 export async function probeMcpServer(server: McpServerSpecV2, deps: McpProbeDeps): Promise<McpProbeResult> {
   const connect = deps.connect ?? connectMcp;
-  const timeoutMs = deps.timeoutMs ?? MCP_PROBE_TIMEOUT_MS;
+  const ownTimeout = (server as { connectTimeoutMs?: unknown }).connectTimeoutMs;
+  const nominalMs = typeof ownTimeout === 'number' && ownTimeout > 0 ? ownTimeout : MCP_PROBE_TIMEOUT_MS;
+  const timeoutMs = deps.timeoutMs ?? nominalMs;
   let resolved: Record<string, unknown>;
   try {
     resolved = await resolveRefs(server, deps);
@@ -222,7 +224,7 @@ export async function probeMcpServer(server: McpServerSpecV2, deps: McpProbeDeps
   } catch (error) {
     if (error instanceof ProbeTimeoutError) void pending.then((open) => open.close()).catch(() => {});
     return error instanceof ProbeTimeoutError
-      ? { ok: false, timedOut: true, error: `The server did not answer within ${MCP_PROBE_TIMEOUT_MS / 1000} seconds.` }
+      ? { ok: false, timedOut: true, error: `The server did not answer within ${nominalMs / 1000} seconds.` }
       : { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
   try {

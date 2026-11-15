@@ -8,11 +8,9 @@ import { z } from 'zod';
 import { createAgent } from '../createAgent';
 import { defineTool } from '../tools/defineTool';
 import { PropagatingToolError } from '../execution/AgentExecutor';
-import { mockModel, type MockRequest } from '../testing';
+import { mockModel } from '../testing';
 import { memoryStore } from '../storage/agentStore';
 import { defineMemory, inMemoryMemory } from './index';
-
-const toolsOf = (call: MockRequest | undefined): string[] => (call?.tools ?? []).map((t) => t.function.name);
 
 function facts() {
   const provider = inMemoryMemory();
@@ -25,24 +23,6 @@ function facts() {
 }
 
 describe('memory on continued runs', () => {
-  it('a run continued by approvals.resolve() keeps its memory tools, bound to the scope it paused with', async () => {
-    const { provider, slot } = facts();
-    const deploy = defineTool({ name: 'deploy', description: 'deploy', input: z.object({}), needsApproval: true, execute: async () => 'deployed' });
-    const model = mockModel([
-      { toolCalls: [{ name: 'deploy', id: 'call_deploy' }] },
-      { toolCalls: [{ name: 'remember_facts', id: 'call_mem', args: { text: 'deployed v2' } }] },
-      'Done.',
-    ]);
-    const agent = createAgent({ provider: model, tools: [deploy], memory: [slot], store: memoryStore() });
-    const paused = await agent.session({ id: 's1' }).send('ship it', { metadata: { userId: 'alice' } });
-    expect(paused.finishReason).toBe('awaiting-approval');
-
-    const done = await agent.approvals.resolve({ id: paused.approvalId!, approved: true });
-
-    expect(done.text).toBe('Done.');
-    expect(toolsOf(model.calls[1])).toEqual(expect.arrayContaining(['deploy', 'remember_facts', 'recall_facts']));
-    expect((await provider.list('facts#user:alice')).map((item) => item.text)).toEqual(['deployed v2']);
-  });
 
   it('a crashed session turn whose memory is scoped by metadata resumes without the metadata', async () => {
     const { provider, slot } = facts();

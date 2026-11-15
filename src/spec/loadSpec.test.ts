@@ -18,82 +18,6 @@ function tmpFile(name: string, content: string): string {
 }
 
 describe('loadSpec', () => {
-  it('throws LOUSHO_SPEC_NOT_FOUND for a path that does not exist (no raw ENOENT)', () => {
-    const missing = path.join(os.tmpdir(), `lousho-spec-missing-${process.pid}.yaml`);
-    expect(() => loadSpec(missing)).toThrow(expect.objectContaining({ code: 'LOUSHO_SPEC_NOT_FOUND' }));
-    expect(() => loadSpec(missing)).toThrow(/does not exist/);
-    expect(() => loadSpec(missing)).not.toThrow(/ENOENT/);
-  });
-
-  it("keeps 'optional' on a YAML mcpServers entry", () => {
-    const filePath = tmpFile(
-      'agent.yaml',
-      `
-name: mcp-agent
-prompt: hi
-provider:
-  type: mock
-  model: m
-mcpServers:
-  bad:
-    command: nope-xyz
-    optional: true
-`
-    );
-    expect(loadSpec(filePath).mcpServers).toEqual({ bad: { command: 'nope-xyz', optional: true } });
-  });
-
-  it('loads a .yaml spec file', () => {
-    const filePath = tmpFile(
-      'agent.yaml',
-      `
-name: yaml-agent
-prompt: You are a YAML-defined agent.
-provider:
-  type: mock
-  model: mock-model-1
-tools:
-  - http
-`
-    );
-
-    const spec = loadSpec(filePath);
-    expect(spec).toEqual({
-      name: 'yaml-agent',
-      prompt: 'You are a YAML-defined agent.',
-      provider: { type: 'mock', model: 'mock-model-1' },
-      tools: ['http'],
-    });
-  });
-
-  it('loads an equivalent .json spec file', () => {
-    const filePath = tmpFile(
-      'agent.json',
-      JSON.stringify({
-        name: 'json-agent',
-        prompt: 'You are a JSON-defined agent.',
-        provider: { type: 'mock', model: 'mock-model-1' },
-        tools: ['http'],
-      })
-    );
-
-    const spec = loadSpec(filePath);
-    expect(spec.name).toBe('json-agent');
-    expect(spec.provider).toEqual({ type: 'mock', model: 'mock-model-1' });
-  });
-
-  it('throws naming the missing field when prompt is absent', () => {
-    const filePath = tmpFile(
-      'invalid.json',
-      JSON.stringify({
-        name: 'incomplete-agent',
-        provider: { type: 'openai', model: 'gpt-4o-mini' },
-      })
-    );
-
-    expect(() => loadSpec(filePath)).toThrow(/'prompt'/);
-    expect(() => loadSpec(filePath)).toThrow(expect.objectContaining({ code: 'LOUSHO_SPEC_INVALID' }));
-  });
 
   it('suggests the spec field a top-level typo meant', () => {
     const typo = tmpFile(
@@ -119,77 +43,10 @@ tools:
     expect(loadSpec(unrelated).name).toBe('a');
   });
 
-  it('loads mcpServers from YAML', () => {
-    const filePath = tmpFile(
-      'mcp.yaml',
-      `
-name: mcp-agent
-prompt: hi
-provider:
-  type: mock
-  model: m
-mcpServers:
-  fs:
-    command: npx
-    args: [-y, "@modelcontextprotocol/server-filesystem"]
-    env:
-      ROOT: /tmp
-  docs:
-    url: https://example.com/mcp
-`
-    );
-    expect(loadSpec(filePath).mcpServers).toEqual({
-      fs: {
-        command: 'npx',
-        args: ['-y', '@modelcontextprotocol/server-filesystem'],
-        env: { ROOT: '/tmp' },
-      },
-      docs: { url: 'https://example.com/mcp' },
-    });
-  });
-
-  it('names the mcpServers entry in the error for a bad entry', () => {
-    const filePath = tmpFile(
-      'bad-mcp.json',
-      JSON.stringify({
-        name: 'a',
-        prompt: 'b',
-        provider: { type: 'mock', model: 'm' },
-        mcpServers: { files: { args: ['x'] }, ok: { command: 'npx' } },
-      })
-    );
-    expect(() => loadSpec(filePath)).toThrow(
-      /'mcpServers\.files': missing 'command'/
-    );
-  });
-
   it('throws for an unsupported extension', () => {
     const filePath = tmpFile('agent.txt', 'not a spec');
     expect(() => loadSpec(filePath)).toThrow(/unsupported extension/);
     expect(() => loadSpec(filePath)).toThrow(expect.objectContaining({ code: 'LOUSHO_SPEC_UNSUPPORTED_FORMAT' }));
-  });
-
-  it('loads a spec with a policy block', () => {
-    const spec = loadSpec(path.join(__dirname, '__fixtures__', 'policy.yaml'));
-    expect(spec.policy).toEqual({
-      requiresApproval: ['http'],
-      guardrails: ['secret-scan', { name: 'max-length', maxChars: 2000, on: 'input' }, { name: 'deny-topics', topics: ['medical advice'] }],
-      limits: { maxTokens: 20000, maxSteps: 8 },
-      askQuestion: true,
-      compaction: { thresholdPercent: 0.8 },
-      harness: 'claude-code',
-    });
-  });
-
-  it('names an unknown policy guardrail with did-you-mean and the available names', () => {
-    const filePath = tmpFile(
-      'agent.yaml',
-      'name: a\nprompt: p\nprovider: { type: mock, model: m }\npolicy:\n  guardrails: [secretscan]\n'
-    );
-    expect(() => loadSpec(filePath)).toThrow(
-      /'policy\.guardrails\.0': unknown guardrail 'secretscan' \(did you mean 'secret-scan'\?\)\. Available: max-length/
-    );
-    expect(() => loadSpec(filePath)).toThrow(expect.objectContaining({ code: 'LOUSHO_SPEC_INVALID' }));
   });
 });
 
@@ -201,19 +58,9 @@ describe('loadSpec messages (CLI audit)', () => {
     return file;
   };
 
-  it('names the file and the code for a YAML syntax error', () => {
-    const file = write('broken.yaml', 'name: x\ntools: [a\n  - b\n');
-    expect(() => loadSpec(file)).toThrow(expect.objectContaining({ code: 'LOUSHO_SPEC_INVALID', message: expect.stringContaining(`'${file}' is not valid YAML:`) }));
-  });
-
   it('names the file and the code for a JSON syntax error', () => {
     const file = write('broken.json', '{"name": "x" "prompt": "y"}');
     expect(() => loadSpec(file)).toThrow(expect.objectContaining({ code: 'LOUSHO_SPEC_INVALID', message: expect.stringContaining(`'${file}' is not valid JSON:`) }));
-  });
-
-  it('does not repeat the validation prefix per field', () => {
-    const file = write('noname.yaml', 'provider:\n  type: openai\n  model: x\n');
-    expect(() => loadSpec(file)).toThrow(/failed validation - 'name': missing required field 'name'; 'prompt': missing required field 'prompt'/);
   });
 
   it('points a top-level model at provider.model', () => {

@@ -29,10 +29,20 @@ export function AuthorRouteFocus(): null {
   const chatRef = useRef(chat);
   chatRef.current = chat;
 
+  const routeSetFor = useRef<string | undefined>(undefined);
+
   useEffect(() => {
     const agentId = agentIdOfPath(path);
-    if (agentId === undefined || authorFocusCleared()) return;
     const focus = chatRef.current.state.focus;
+    if (agentId === undefined) {
+      if (routeSetFor.current !== undefined && focus.mode === 'edit' && focus.agentId === routeSetFor.current) {
+        chatRef.current.setFocus({ mode: 'create' });
+      }
+      routeSetFor.current = undefined;
+      return;
+    }
+    if (authorFocusCleared()) return;
+    routeSetFor.current = agentId;
     if (focus.mode === 'edit' && focus.agentId === agentId) return;
     chatRef.current.setFocus({ mode: 'edit', agentId });
   }, [path]);

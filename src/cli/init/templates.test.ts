@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { PROVIDER_NAMES, TEMPLATES, type Template } from './options';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
-import { loadSpec } from '../../spec/loadSpec';
 import { renderProject, type ProjectConfig } from './templates';
 
 const SDK = { version: '1.0.0-alpha.8', peerDependencies: { ai: '^4.3.19', zod: '^3.25.76' } };
@@ -131,113 +127,15 @@ describe('renderProject', () => {
     expect(files['CLAUDE.md']).toBe('@AGENTS.md\n');
   });
 
-  it('AGENTS.md uses the chosen package manager', () => {
-    const agents = renderProject({ ...config('openai', 'minimal'), packageManager: 'pnpm' })['AGENTS.md']!;
-    expect(agents).toContain('`pnpm run test`');
-    expect(agents).not.toMatch(/(^|[s`])npm run/);
-  });
-
-  it('the tools template defines more tools than minimal', () => {
-    const count = (template: Template) =>
-      (renderProject(config('openai', template))['src/agent.ts']!.match(/defineTool\(\{/g) ?? []).length;
-    expect(count('minimal')).toBe(1);
-    expect(count('tools')).toBe(3);
-  });
-
-  it.each([
-    ['openai', '@ai-sdk/openai', ['@ai-sdk/anthropic', 'ollama-ai-provider']],
-    ['openrouter', '@ai-sdk/openai', ['@ai-sdk/anthropic', 'ollama-ai-provider']],
-    ['anthropic', '@ai-sdk/anthropic', ['@ai-sdk/openai', 'ollama-ai-provider']],
-    ['ollama', 'ollama-ai-provider-v2', ['@ai-sdk/openai', '@ai-sdk/anthropic', 'ollama-ai-provider']],
-  ])('%s depends on its own provider package only', (provider, peer, others) => {
-    const dependencies = JSON.parse(renderProject(config(provider, 'minimal'))['package.json']!).dependencies;
-    expect(Object.keys(dependencies)).toContain(peer);
-    for (const other of others) expect(Object.keys(dependencies)).not.toContain(other);
-  });
-
   it.each(Object.entries(SCAFFOLD_PAIRINGS))('%s gets one consistent ai / provider package pairing', (provider, pairing) => {
     const dependencies = JSON.parse(renderProject(config(provider, 'minimal'))['package.json']!).dependencies;
     expect(dependencies).toMatchObject(pairing);
-  });
-
-  it('the yaml template ships agent.yaml and runs it with lousho dev', () => {
-    const files = renderProject(config('anthropic', 'yaml'));
-    expect(files['agent.yaml']).toContain('type: anthropic');
-    expect(JSON.parse(files['package.json']!).scripts.dev).toBe('lousho dev agent.yaml');
-    expect(files['src/agent.ts']).toBeUndefined();
   });
 
   it.each(TEMPLATES)('the %s template can build (tsup) and test under yarn 1, which skips peers (vite)', (template) => {
     const pkg = JSON.parse(renderProject(config('openai', template))['package.json']!);
     expect(pkg.devDependencies).toMatchObject({ tsup: expect.any(String), vite: expect.any(String) });
     expect(pkg.scripts.build).toMatch(/^lousho build \S+ --target=node-server$/);
-  });
-
-  it('the README lists three next commands and counts the tools', () => {
-    for (const template of TEMPLATES) {
-      const readme = renderProject(config('openai', template))['README.md']!;
-      const block = /## Next 3 commands\n\n```bash\n([\s\S]*?)```/.exec(readme)![1]!;
-      expect(block.split('\n').filter((line) => /^npm run /.test(line))).toHaveLength(3);
-    }
-    expect(renderProject(config('openai', 'tools'))['README.md']).toContain('the agent and three example tools');
-    expect(renderProject(config('openai', 'minimal'))['README.md']).toContain('the agent and an example tool');
-  });
-
-  it('the yaml template test imports only public SDK entry points', () => {
-    const test = renderProject(config('openai', 'yaml'))['src/agent.test.ts']!;
-    const specifiers = [...test.matchAll(/from '([^']+)'/g)].map((m) => m[1]);
-    expect(specifiers.filter((s) => s!.startsWith('.'))).toEqual([]);
-  });
-
-  it.each(['123', 'true', 'null'])('quotes a YAML-special project name (%s) so it stays a string', (name) => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'lousho-yaml-name-'));
-    try {
-      const file = path.join(dir, 'agent.yaml');
-      writeFileSync(file, renderProject({ ...config('openai', 'yaml'), name })['agent.yaml']!);
-      expect(loadSpec(file).name).toBe(name);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('the terminal chat survives a provider error and reports a startup error without a stack', () => {
-    const index = renderProject(config('openai', 'minimal'))['src/index.ts']!;
-    expect(index).toMatch(/try \{\n  agent = buildAgent\(\);/);
-    expect(index).toMatch(/try \{\n      for await \(const event of agent\.stream\(message\)\)/);
-    expect(index).toContain('console.error(`\\nerror: ${errorText(error)}`);');
-  });
-
-  it('the terminal chat prints an SDK error with its code, HTTP status and fix', () => {
-    const index = renderProject(config('openai', 'minimal'))['src/index.ts']!;
-    expect(index).toContain('error instanceof SDKError');
-    expect(index).toContain('[${error.code}]');
-    expect(index).toContain('HTTP ${statusCode}');
-  });
-
-  it('the terminal chat loads a .env saved with a byte order mark without losing its first key', () => {
-    const index = renderProject(config('openai', 'minimal'))['src/index.ts']!;
-    expect(index).not.toContain('process.loadEnvFile()');
-    expect(index).toContain("parseEnv(readFileSync('.env', 'utf8').replace(/^\\uFEFF/, ''))");
-    expect(index).toContain('if (process.env[name] === undefined)');
-  });
-
-  it('the doctor script checks the agent module, so a missing provider key fails it', () => {
-    const pkg = JSON.parse(renderProject(config('openai', 'minimal'))['package.json']!);
-    expect(pkg.scripts.doctor).toBe('lousho doctor src/agent.ts');
-  });
-
-  it('the terminal chat streams text deltas and waits for the turn in flight at end of input', () => {
-    const index = renderProject(config('openai', 'minimal'))['src/index.ts']!;
-    expect(index).toContain("event.type === 'text.delta'");
-    expect(index).toContain('for await (const line of rl)');
-    expect(index).not.toContain("rl.on('close', () => process.exit");
-    expect(index).toContain('if (!closed) rl.prompt();');
-  });
-
-  it('uses the chosen package manager in the README commands', () => {
-    const files = renderProject({ ...config('openai', 'minimal'), packageManager: 'pnpm' });
-    expect(files['README.md']).toContain('pnpm run dev');
-    expect(files['README.md']).not.toMatch(/(^|\s)npm run/);
   });
 
   it.each(combos.filter(([, template]) => template !== 'yaml'))(

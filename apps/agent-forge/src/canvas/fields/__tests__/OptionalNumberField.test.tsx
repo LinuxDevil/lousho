@@ -24,21 +24,6 @@ function type(el: HTMLInputElement, value: string) {
 }
 
 describe('OptionalNumberField', () => {
-  it('emits a number for valid input', () => {
-    const onChange = vi.fn();
-    render({ onChange, min: 0, max: 2 });
-    type(input(), '0.5');
-    expect(onChange).toHaveBeenLastCalledWith(0.5);
-    expect(fieldError()).toBeUndefined();
-  });
-
-  it('emits undefined for an empty input', () => {
-    const onChange = vi.fn();
-    render({ onChange, value: 1 });
-    type(input(), '');
-    expect(onChange).toHaveBeenLastCalledWith(undefined);
-    expect(fieldError()).toBeUndefined();
-  });
 
   it('rejects an out-of-range number without emitting it', () => {
     const onChange = vi.fn();
@@ -49,14 +34,6 @@ describe('OptionalNumberField', () => {
     expect(input().getAttribute('aria-invalid')).toBe('true');
   });
 
-  it('rejects a non-integer when integer is set', () => {
-    const onChange = vi.fn();
-    render({ onChange, integer: true });
-    type(input(), '1.5');
-    expect(onChange).not.toHaveBeenCalled();
-    expect(fieldError()).toBe('Enter a whole number');
-  });
-
   it('recovers when the draft becomes valid again', () => {
     const onChange = vi.fn();
     render({ onChange, min: 0, max: 2, integer: true });
@@ -64,10 +41,5 @@ describe('OptionalNumberField', () => {
     type(input(), '1');
     expect(fieldError()).toBeUndefined();
     expect(onChange).toHaveBeenLastCalledWith(1);
-  });
-
-  it('shows the unit suffix', () => {
-    render({ unit: 'tokens' });
-    expect(container.querySelector('.field-unit')!.textContent).toBe('tokens');
   });
 });

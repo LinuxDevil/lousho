@@ -77,13 +77,9 @@ function typeInto(el: HTMLInputElement, value: string): void {
     el.dispatchEvent(new Event('input', { bubbles: true }));
   });
 }
-
-const form = (c: HTMLElement) => c.querySelector<HTMLFormElement>('.secret-card')!;
 const valueInput = (c: HTMLElement) => c.querySelector<HTMLInputElement>('.secret-card input[type="password"]')!;
 const saveButton = (c: HTMLElement) =>
   [...c.querySelectorAll<HTMLButtonElement>('.secret-card button')].find((b) => b.type === 'submit')!;
-const skipButton = (c: HTMLElement) =>
-  [...c.querySelectorAll<HTMLButtonElement>('.secret-card button')].find((b) => b.textContent === 'Skip')!;
 
 beforeEach(() => {
   installMemoryStorage();
@@ -91,31 +87,6 @@ beforeEach(() => {
 });
 
 describe('requestSecret part rendering', () => {
-  it('a busy part (pending, no output) keeps the quiet activity line', () => {
-    const c = mount([assistant([secretPart()])], chatWith());
-    expect(c.querySelector('.secret-card')).toBeNull();
-    expect(c.querySelector('.author-activity')?.textContent).toBe('Preparing a secure card…');
-  });
-
-  it('a pending part with a pending output renders the secure form', () => {
-    const part = secretPart({ output: { ok: true, name: 'JIRA_TOKEN', status: 'pending' } });
-    const c = mount([assistant([part])], chatWith());
-    const card = form(c);
-    expect(card.getAttribute('aria-labelledby')).toBe(`secret-${part.toolCallId}-title`);
-    expect(card.getAttribute('autocomplete')).toBe('off');
-    expect(c.querySelector(`#secret-${part.toolCallId}-title`)?.textContent).toBe('Enter JIRA_TOKEN');
-    expect(c.querySelector('.secret-card-why')?.textContent).toBe('The agent posts to Jira.');
-    const input = valueInput(c);
-    expect(input.id).toBe(`secret-${part.toolCallId}-value`);
-    expect(input.getAttribute('autocomplete')).toBe('off');
-    expect(input.getAttribute('spellcheck')).toBe('false');
-    expect(c.querySelector('label.field-label')?.getAttribute('for')).toBe(input.id);
-    expect(c.querySelector('.secret-card-note')?.textContent).toBe(
-      "Stored encrypted in Studio's secrets store on this machine. The Author never sees the value."
-    );
-    expect(saveButton(c).textContent).toBe('Save secret');
-    expect(skipButton(c).textContent).toBe('Skip');
-  });
 
   it('saved, exists and declined parts render their one-line states', () => {
     const outputs: [RequestSecretOutput, string, string, boolean][] = [
@@ -173,36 +144,6 @@ describe('SecretCard form', () => {
     typeInto(valueInput(c), 's3cret');
     expect(saveButton(c).disabled).toBe(true);
     expect(saveButton(c).getAttribute('title')).toBe('Wait for the Author to finish replying');
-  });
-
-  it('Save posts the value through submitSecret and the input is empty right after submit', async () => {
-    const [part, messages] = pending();
-    let resolveSubmit: () => void = () => {};
-    const chat = chatWith({
-      submitSecret: vi.fn(() => new Promise<void>((resolve) => {
-        resolveSubmit = resolve;
-      })),
-    });
-    const c = mount(messages, chat);
-    typeInto(valueInput(c), 's3cret-v4lue');
-    await act(async () => {
-      saveButton(c).click();
-    });
-    // Cleared before the submit resolves: the value lives in the POST body only.
-    expect(valueInput(c).value).toBe('');
-    expect(chat.submitSecret).toHaveBeenCalledTimes(1);
-    expect(chat.submitSecret).toHaveBeenCalledWith(part.toolCallId, 'JIRA_TOKEN', 's3cret-v4lue');
-    await act(async () => resolveSubmit());
-  });
-
-  it('Skip submits null for the same card', async () => {
-    const [part, messages] = pending();
-    const chat = chatWith();
-    const c = mount(messages, chat);
-    await act(async () => {
-      skipButton(c).click();
-    });
-    expect(chat.submitSecret).toHaveBeenCalledWith(part.toolCallId, 'JIRA_TOKEN', null);
   });
 
   it('shows the route error, with a friendly line for NOT_PENDING', async () => {

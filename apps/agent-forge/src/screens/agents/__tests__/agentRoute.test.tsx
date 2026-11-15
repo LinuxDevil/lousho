@@ -9,6 +9,7 @@ const appState = vi.hoisted(() => ({
   agentsWorkspaceId: undefined as string | undefined,
   dirty: false,
   switchAgent: vi.fn<[string], Promise<void>>(() => Promise.resolve()),
+  refreshAgents: vi.fn<[], Promise<void>>(() => Promise.resolve()),
 }));
 vi.mock('../../../state/AppState', () => ({ useAppState: () => appState }));
 
@@ -61,6 +62,8 @@ beforeEach(() => {
   appState.dirty = false;
   appState.switchAgent.mockReset();
   appState.switchAgent.mockImplementation(() => Promise.resolve());
+  appState.refreshAgents.mockReset();
+  appState.refreshAgents.mockImplementation(() => Promise.resolve());
   confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 });
 afterEach(() => {
@@ -124,11 +127,23 @@ describe('useAgentRouteSync', () => {
     window.history.replaceState(null, '', '/#/agents/typo/canvas');
     const before = window.history.length;
     render(createElement(Probe));
-    expect(window.location.hash).toBe('#/agents');
     await flush();
     expect(window.location.hash).toBe('#/agents');
     expect(window.history.length).toBe(before);
     expect(appState.switchAgent).not.toHaveBeenCalled();
+    expect(appState.refreshAgents).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens an agent created a moment ago once the refreshed list has it, instead of bouncing to the list', async () => {
+    appState.refreshAgents.mockImplementation(async () => {
+      appState.agents = [...appState.agents, { id: 'fresh' }];
+    });
+    window.history.replaceState(null, '', '/#/agents/fresh/canvas');
+    render(createElement(Probe));
+    await flush();
+    await flush();
+    expect(window.location.hash).toBe('#/agents/fresh/canvas');
+    expect(appState.switchAgent).toHaveBeenCalledWith('fresh');
   });
 
   it('leaves bare #/agents (the list) alone', () => {

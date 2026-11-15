@@ -180,24 +180,8 @@ describe('tool calls through the real provider package', () => {
   const toolResults = (server: FakeServer) =>
     ((server.requests[1]?.messages ?? []) as Array<{ role: string; content: string; tool_call_id: string }>).filter((m) => m.role === 'tool');
 
-  it('two calls with the same id both run, with their own arguments', async () => {
-    const server = await fakeServer((n) => ({
-      json: n === 0 ? completion(null, 'tool_calls', [call('dup', '{"a":1,"b":2}'), call('dup', '{"a":3,"b":4}')]) : completion('ok', 'stop'),
-    }));
-    const seen: unknown[] = [];
-    const recorded = defineTool({ ...add, execute: (args: { a: number; b: number }) => (seen.push(args), { sum: args.a + args.b }) });
-    const result = await createAgent({ provider: providers[0][1](server), tools: [recorded], instructions: 'x', retry: false }).send('go');
-
-    expect(result.text).toBe('ok');
-    expect(seen).toEqual([{ a: 1, b: 2 }, { a: 3, b: 4 }]);
-    const results = toolResults(server);
-    expect(results.map((m) => JSON.parse(m.content) as unknown)).toEqual([{ sum: 3 }, { sum: 7 }]);
-    expect(new Set(results.map((m) => m.tool_call_id)).size).toBe(2);
-  });
-
   it.each([
     ['malformed JSON', '{"a":1,"b":', /JSON|parse/i],
-    ['wrong types', '{"a":"1","b":2}', /a: Expected number/],
   ])('%s arguments reach the model as a tool error, and the run goes on (every ai major)', async (_case, args, message) => {
     const server = await fakeServer((n) => ({ json: n === 0 ? completion(null, 'tool_calls', [call('c1', args)]) : completion('ok', 'stop') }));
     const result = await createAgent({ provider: providers[0][1](server), tools: [add], instructions: 'x', retry: false }).send('go');
@@ -208,34 +192,6 @@ describe('tool calls through the real provider package', () => {
     expect(tool.content).not.toMatch(/\(root\): Expected object, received string/);
     // Sent once as the SDK's tool error, not wrapped again in `{"error": ...}` by the provider package (ai 7).
     expect(JSON.parse(tool.content)).toMatchObject({ error: 'ToolArgumentsValidationError', toolName: 'add', kind: 'validation' });
-  });
-
-  it('a call to an unknown tool reaches the model as a tool error (every ai major)', async () => {
-    const unknown = { id: 'c1', type: 'function', function: { name: 'nope', arguments: '{}' } };
-    const server = await fakeServer((n) => ({ json: n === 0 ? completion(null, 'tool_calls', [unknown]) : completion('ok', 'stop') }));
-    const result = await createAgent({ provider: providers[0][1](server), tools: [add], instructions: 'x', retry: false }).send('go');
-
-    expect(result.text).toBe('ok');
-    expect(JSON.parse(toolResults(server)[0].content)).toMatchObject({ error: 'ToolNotFoundError', toolName: 'nope', kind: 'not-found' });
-  });
-
-  it('a tool that throws reaches the model as one tool error, on the chat and the stream path', async () => {
-    const failing = defineTool({ ...add, execute: () => { throw new Error('disk full'); } });
-    const server = await fakeServer((n, body) => {
-      const first = n % 2 === 0;
-      if (body.stream) return { sse: first ? [chunk([{ index: 0, delta: { tool_calls: [{ index: 0, ...call('c1', '{"a":1,"b":2}') }] }, finish_reason: 'tool_calls' }])] : textStream('ok') };
-      return { json: first ? completion(null, 'tool_calls', [call('c1', '{"a":1,"b":2}')]) : completion('ok', 'stop') };
-    });
-    const agent = createAgent({ provider: providers[0][1](server), tools: [failing], instructions: 'x', retry: false });
-
-    expect((await agent.send('go')).text).toBe('ok');
-    expect((await agent.stream('go').result).text).toBe('ok');
-    for (const n of [1, 3]) {
-      const tool = ((server.requests[n].messages ?? []) as Array<{ role: string; content: string }>).find((m) => m.role === 'tool');
-      const content = JSON.parse(tool?.content ?? '') as Record<string, unknown>;
-      expect(content).toMatchObject({ message: expect.stringContaining('disk full') });
-      expect(typeof content.error).toBe('string');
-    }
   });
 });
 

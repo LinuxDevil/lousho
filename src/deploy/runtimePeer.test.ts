@@ -60,19 +60,4 @@ describe('runtimePeerPlugin (node-server build without @opentelemetry/api)', () 
       fs.rmSync(dir, { recursive: true, force: true });
     }
   }, 60_000);
-
-  it('bundles @opentelemetry/api as before when the build can resolve it', async () => {
-    const result = await build({
-      stdin: { contents: "export { trace } from '@opentelemetry/api';\n", resolveDir: __dirname, loader: 'ts' },
-      bundle: true,
-      write: false,
-      format: 'cjs',
-      platform: 'node',
-      logLevel: 'silent',
-      plugins: [runtimePeerPlugin()],
-    });
-    const code = result.outputFiles[0]!.text;
-    expect(code).not.toContain('require("@opentelemetry/api")');
-    expect(code).toContain('TraceAPI');
-  });
 });

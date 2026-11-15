@@ -9,7 +9,8 @@ import { useStoreApi } from '@xyflow/react';
 import { useAppState } from '../../state/AppState';
 import { addNode, ownerForNewNode } from '../../graph/v2/mutations';
 import { positionFor } from '../../graph/v2/reown';
-import { viewportCentrePosition } from '../paletteActions';
+import { ROOT_AGENT_ID } from '../../graph/v2/types';
+import { freeSpot, viewportCentrePosition } from '../paletteActions';
 import type { PaletteEntry } from '../kinds';
 import { paletteOwnerTitle } from './paletteModel';
 
@@ -31,7 +32,7 @@ export function usePaletteActions() {
       return;
     }
     const { transform, width, height } = flow.getState();
-    const position = viewportCentrePosition(transform, width, height);
+    const centre = viewportCentrePosition(transform, width, height);
     const owner = ownerForNewNode(graph, entry.kind, selectedNodeId);
     // Same refusal the drop applies: an `unavailable` entry cannot be added for this owner.
     const reason = entry.unavailable?.(graph, owner);
@@ -40,8 +41,12 @@ export function usePaletteActions() {
       return;
     }
     // A selected group owns the new node - its position must be group-relative.
-    const { graph: next, nodeId } = addNode(graph, entry.create(graph, owner), positionFor(graph, position, owner), owner);
-    // Flow steps link into the step tree here; every other entry ignores it.
+    const position = positionFor(graph, centre, owner);
+    const absolute = owner === null || owner === ROOT_AGENT_ID;
+    const siblings = graph.nodes
+      .filter((n) => (absolute ? n.owner === null || n.owner === ROOT_AGENT_ID : n.owner === owner))
+      .map((n) => n.position);
+    const { graph: next, nodeId } = addNode(graph, entry.create(graph, owner), freeSpot(siblings, position), owner);
     setGraph(() => entry.afterAdd?.(next, nodeId, selectedNodeId) ?? next);
     setSelectedNodeId(nodeId);
     setNotice(`Added ${entry.label} to ${paletteOwnerTitle(graph, owner)}.`);

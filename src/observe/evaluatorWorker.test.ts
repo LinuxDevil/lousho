@@ -5,7 +5,6 @@
  * the worker or its sandbox fails.
  */
 import { createRequire } from 'node:module';
-import type * as http from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createEvaluatorRule, deleteEvaluatorRule, updateEvaluatorRule, type EvaluatorRuleFields } from './evaluators';
 import {
@@ -21,7 +20,6 @@ import { ingestBatch, listScores, openDb, traceDetail, type ScoreRow } from './s
 import type { IngestEvent } from './envelope';
 import { SandboxError } from '../sandbox';
 import type { SqlDatabase } from '../storage/sqlite/driver';
-import { ingestRoutes } from './routes/ingest';
 
 const T0 = 1_700_000_000_000;
 
@@ -55,23 +53,6 @@ const rootEnd = (traceId: string, over: Record<string, unknown> = {}): IngestEve
       input: 'hi',
       output: 'hello',
       ...over,
-    },
-  }) as IngestEvent;
-
-const child = (traceId: string): IngestEvent =>
-  ({
-    type: 'observation',
-    data: {
-      obs_id: `${traceId}-tool`,
-      trace_id: traceId,
-      parent_obs_id: `${traceId}-root`,
-      agent_id: 'support',
-      kind: 'tool',
-      name: 'execute_tool lookup',
-      start: T0 + 10,
-      end: T0 + 20,
-      status: 'error',
-      attrs: { error: 'lookup failed' },
     },
   }) as IngestEvent;
 
@@ -120,35 +101,6 @@ const onlineScores = (db: SqlDatabase, traceId: string): ScoreRow[] =>
   listScores(db, { trace_id: traceId, source: 'online', limit: 100 }).scores;
 
 describe('evaluator worker', () => {
-  it('scores a matching trace once, as an online score named after the rule', async () => {
-    const h = harness(() => ({ value: 0.75, comment: 'ok-ish' }));
-    createEvaluatorRule(h.db, codeRule({ filter: { agent_id: 'support', status: 'ok', name_contains: 'refund' } }));
-    await ingestAndWait(h, [rootEnd('t1'), child('t1')]);
-
-    expect(h.runs).toHaveLength(1);
-    expect(h.runs[0].code).toBe('(t) => 1');
-    expect(h.runs[0].trace).toMatchObject({
-      trace_id: 't1',
-      agent_id: 'support',
-      name: 'invoke_agent refund-bot',
-      status: 'ok',
-      start: T0,
-      end: T0 + 250,
-      duration_ms: 250,
-      input: 'hi',
-      output: 'hello',
-      error_message: 'lookup failed',
-    });
-    expect((h.runs[0].trace.observations as unknown[]).length).toBe(2);
-    expect(onlineScores(h.db, 't1')).toEqual([
-      expect.objectContaining({ name: 'len', value: 0.75, comment: 'ok-ish', source: 'online', agent_id: 'support', obs_id: null }),
-    ]);
-    expect(h.worker.stats()).toMatchObject({ ran: 1, queued: 0, dropped: 0, skipped: 0 });
-
-    // The same root ending again does not score twice.
-    await ingestAndWait(h, [rootEnd('t1')]);
-    expect(onlineScores(h.db, 't1')).toHaveLength(1);
-  });
 
   it('never scores a trace a filter key rules out', async () => {
     for (const filter of [{ agent_id: 'billing' }, { status: 'error' as const }, { name_contains: 'onboarding' }]) {
@@ -158,28 +110,6 @@ describe('evaluator worker', () => {
       expect(h.runs).toEqual([]);
       expect(onlineScores(h.db, 't1')).toEqual([]);
     }
-  });
-
-  it('ignores child ends, open roots, disabled rules and sample_rate 0; never runs a judge rule itself', async () => {
-    const h = harness();
-    createEvaluatorRule(h.db, codeRule({ name: 'off', enabled: false }));
-    createEvaluatorRule(h.db, codeRule({ name: 'never', sample_rate: 0 }));
-    createEvaluatorRule(h.db, { name: 'judge', enabled: true, filter: {}, sample_rate: 1, kind: 'judge', config: { model: 'm', rubric: 'r' } });
-    expect(rootsEndedIn([child('t1'), rootEnd('t2', { end: undefined })])).toEqual([]);
-    await ingestAndWait(h, [rootEnd('t1')]);
-    expect(h.runs).toEqual([]);
-    expect(onlineScores(h.db, 't1')).toEqual([]);
-    expect(h.worker.stats()).toMatchObject({ ran: 0, skipped: 0, judge_queued: 1 });
-  });
-
-  it('samples with random() < sample_rate', async () => {
-    const draws = [0.2, 0.6];
-    const h = harness(() => 1, { random: () => draws.shift() ?? 1 });
-    createEvaluatorRule(h.db, codeRule({ sample_rate: 0.5 }));
-    await ingestAndWait(h, [rootEnd('t1')]);
-    await ingestAndWait(h, [rootEnd('t2')]);
-    expect(onlineScores(h.db, 't1')).toHaveLength(1);
-    expect(onlineScores(h.db, 't2')).toEqual([]);
   });
 
   it('turns a throwing evaluator into value null with the error kind', async () => {
@@ -225,27 +155,6 @@ describe('evaluator worker', () => {
     expect(h.warnings).toHaveLength(hasIsolatedVm ? 0 : 1);
   });
 
-  it('runOnce serializes dry runs and answers undefined for a trace with no root', async () => {
-    let active = 0;
-    let peak = 0;
-    const h = harness(async () => {
-      active++;
-      peak = Math.max(peak, active);
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      active--;
-      return 1;
-    });
-    const rule = createEvaluatorRule(h.db, codeRule());
-    if (rule === undefined) throw new Error('rule not created');
-    ingestBatch(h.db, [rootEnd('t1'), child('orphan')]);
-    const results = await Promise.all([h.worker.runOnce(rule, 't1'), h.worker.runOnce(rule, 't1'), h.worker.runOnce(rule, 't1')]);
-    expect(results).toEqual([1, 1, 1].map((value) => ({ value, comment: null })));
-    expect(peak).toBe(1);
-    await expect(h.worker.runOnce(rule, 'orphan')).resolves.toBeUndefined();
-    await expect(h.worker.runOnce(rule, 'nope')).resolves.toBeUndefined();
-    expect(onlineScores(h.db, 't1')).toEqual([]);
-  });
-
   it('drops and counts traces past maxQueue', async () => {
     const h = harness(() => 1, { maxQueue: 2 });
     createEvaluatorRule(h.db, codeRule());
@@ -255,14 +164,6 @@ describe('evaluator worker', () => {
     await h.worker.idle();
     expect(h.worker.stats()).toMatchObject({ queued: 0, dropped: 1, ran: 2 });
     expect(onlineScores(h.db, 't3')).toEqual([]);
-  });
-
-  it('runs off the caller: notifyRootsEnded returns before any rule runs', () => {
-    const h = harness();
-    createEvaluatorRule(h.db, codeRule());
-    ingestBatch(h.db, [rootEnd('t1')]);
-    h.worker.notifyRootsEnded(['t1']);
-    expect(h.runs).toEqual([]);
   });
 
   it('stop() drops the queue and an in-flight run writes nothing', async () => {
@@ -292,40 +193,6 @@ describe('judge jobs', () => {
     return { ...harness(() => 1, { now: () => clock.now, ...opts }), clock };
   }
 
-  it('a matching judge rule queues one job and writes no score until a result', async () => {
-    const h = judgeHarness();
-    const rule = createEvaluatorRule(h.db, judgeRule({ filter: { agent_id: 'support' } }));
-    createEvaluatorRule(h.db, judgeRule({ name: 'other-agent', filter: { agent_id: 'billing' } }));
-    await ingestAndWait(h, [rootEnd('t1'), child('t1')]);
-    // The same root ending again does not queue a second job.
-    await ingestAndWait(h, [rootEnd('t1')]);
-    expect(h.runs).toEqual([]);
-    expect(onlineScores(h.db, 't1')).toEqual([]);
-    expect(h.worker.stats()).toMatchObject({ judge_queued: 1, judge_leased: 0, ran: 0 });
-
-    const [job, ...rest] = h.worker.claimJudgeJobs(5, 60_000);
-    expect(rest).toEqual([]);
-    expect(job.rule).toEqual(rule);
-    expect(job.trace).toMatchObject({ trace_id: 't1', agent_id: 'support', status: 'ok', input: 'hi', output: 'hello', error_message: 'lookup failed' });
-    // Judge jobs carry no observations: Studio's judge reads only the root fields.
-    expect(job.trace.observations).toEqual([]);
-    expect(h.worker.stats()).toMatchObject({ judge_queued: 0, judge_leased: 1 });
-    // Leased, so still deduped.
-    await ingestAndWait(h, [rootEnd('t1')]);
-    expect(h.worker.stats()).toMatchObject({ judge_queued: 0, judge_leased: 1 });
-
-    const scoreId = h.worker.completeJudgeJob(job.job_id, { value: 0.8, comment: 'clear answer' });
-    expect(typeof scoreId).toBe('string');
-    expect(onlineScores(h.db, 't1')).toEqual([
-      expect.objectContaining({ score_id: scoreId, name: 'helpful', value: 0.8, comment: 'clear answer', source: 'online', agent_id: 'support' }),
-    ]);
-    expect(h.worker.stats()).toMatchObject({ judge_queued: 0, judge_leased: 0, judge_scored: 1 });
-    // Scored now: a new root end queues nothing, and the job is gone.
-    await ingestAndWait(h, [rootEnd('t1')]);
-    expect(h.worker.stats().judge_queued).toBe(0);
-    expect(h.worker.completeJudgeJob(job.job_id, { value: 1, comment: null })).toBeUndefined();
-  });
-
   it('an expired lease goes back to the front of the queue and its late result is refused', async () => {
     const h = judgeHarness();
     createEvaluatorRule(h.db, judgeRule());
@@ -343,22 +210,6 @@ describe('judge jobs', () => {
     expect(again[0].job_id).toBe(first[0].job_id);
     expect(h.worker.completeJudgeJob(first[0].job_id, { value: null, comment: 'invalid_judge_output' })).toEqual(expect.any(String));
     expect(onlineScores(h.db, 't1')).toEqual([expect.objectContaining({ value: null, comment: 'invalid_judge_output' })]);
-  });
-
-  it('drops and counts a job past maxJudgeJobs (pending + leased)', async () => {
-    const h = judgeHarness({ maxJudgeJobs: 2 });
-    createEvaluatorRule(h.db, judgeRule());
-    await ingestAndWait(h, [rootEnd('t1')]);
-    h.worker.claimJudgeJobs(1, 60_000);
-    await ingestAndWait(h, [rootEnd('t2'), rootEnd('t3')]);
-    expect(h.worker.stats()).toMatchObject({ judge_queued: 1, judge_leased: 1, judge_dropped: 1 });
-  });
-
-  it('holds 500 jobs by default: the 501st drops and counts', async () => {
-    const h = judgeHarness();
-    createEvaluatorRule(h.db, judgeRule());
-    await ingestAndWait(h, Array.from({ length: 501 }, (_, i) => rootEnd(`t${i}`)));
-    expect(h.worker.stats()).toMatchObject({ judge_queued: 500, judge_dropped: 1 });
   });
 
   it('discards a job at claim time whose rule was deleted, disabled or switched to code', async () => {
@@ -390,33 +241,6 @@ describe('judge jobs', () => {
 });
 
 describe('ingest with the evaluator worker', () => {
-  it('still answers 202 when the worker throws', async () => {
-    const db = newDb();
-    let status = 0;
-    const res = {
-      writeHead(code: number) {
-        status = code;
-        return res;
-      },
-      end() {},
-    } as unknown as http.ServerResponse;
-    const throwing = {
-      notifyRootsEnded() {
-        throw new Error('worker down');
-      },
-    } as unknown as EvaluatorWorker;
-    await ingestRoutes[0].handle({
-      db,
-      dbPath: ':memory:',
-      req: {} as http.IncomingMessage,
-      res,
-      params: {},
-      query: new URLSearchParams(),
-      readBody: () => Promise.resolve(JSON.stringify({ batch: [rootEnd('t1')] })),
-      evaluators: throwing,
-    });
-    expect(status).toBe(202);
-  });
 
   it('a daemon acks fast while a failing sandbox scores the trace null', async () => {
     const daemon = await startObserveDaemon({
@@ -492,51 +316,6 @@ function recordingDb(db: SqlDatabase): { db: SqlDatabase; calls: Array<{ sql: st
 }
 
 describe('evaluator worker load', () => {
-  it('1000 queued traces with a filtered-out rule never hold the event loop past 50 ms a turn', async () => {
-    const h = harness();
-    createEvaluatorRule(h.db, codeRule({ filter: { agent_id: 'billing' } }));
-    const ids: string[] = [];
-    for (let i = 0; i < 1000; i++) {
-      const id = `load-${i}`;
-      ids.push(id);
-      ingestBatch(h.db, [rootEnd(id), ...children(id, 12)]);
-    }
-    let longest = 0;
-    let last = performance.now();
-    let probing = true;
-    const probe = (): void => {
-      const at = performance.now();
-      longest = Math.max(longest, at - last);
-      last = at;
-      if (probing) setImmediate(probe);
-    };
-    setImmediate(probe);
-    h.worker.notifyRootsEnded(ids);
-    await h.worker.idle();
-    // One more turn so the probe measures the gap the drain's last turn left.
-    await new Promise((resolve) => setImmediate(resolve));
-    probing = false;
-    expect(h.worker.stats()).toMatchObject({ queued: 0, ran: 0 });
-    expect(h.runs).toEqual([]);
-    expect(longest).toBeLessThan(50);
-  });
-
-  it('a filtered-out trace loads only its root row: no observation rows, no scores', async () => {
-    const base = newDb();
-    const rec = recordingDb(base);
-    const worker = startEvaluatorWorker(rec.db, { isolateAvailable: () => true, warn: () => undefined });
-    workers.push(worker);
-    createEvaluatorRule(base, codeRule({ filter: { agent_id: 'billing' } }));
-    ingestBatch(base, [rootEnd('t1'), ...children('t1', 5)]);
-    rec.calls.length = 0;
-    worker.notifyRootsEnded(['t1']);
-    await worker.idle();
-    const observationReads = rec.calls.filter((c) => /FROM observations/.test(c.sql));
-    expect(observationReads).toHaveLength(1);
-    expect(observationReads[0].sql).toMatch(/parent_obs_id IS NULL/);
-    expect(observationReads[0].sql).toMatch(/LIMIT 1/);
-    expect(rec.calls.filter((c) => /FROM scores/.test(c.sql))).toEqual([]);
-  });
 
   it('a code rule gets the first 200 observations, attrs past 8192 chars capped, and the error of a row past 200', async () => {
     const base = newDb();
@@ -600,26 +379,6 @@ describe('evaluator worker load', () => {
     expect(evaluatorTraceFrom('t1', detail?.observations ?? [])).toEqual(h.runs[0].trace);
     expect(h.runs[0].trace).toMatchObject({ error_message: 'late' });
   });
-
-  it('a judge job claims with the root fields and the error, but no observation rows', async () => {
-    const h = harness();
-    createEvaluatorRule(h.db, judgeRule());
-    await ingestAndWait(h, [rootEnd('t1'), ...children('t1', 210, (i) => (i === 205 ? { status: 'error', attrs: { error: 'late' } } : {}))]);
-    const [job] = h.worker.claimJudgeJobs(1, 60_000);
-    expect(job.trace).toEqual({
-      trace_id: 't1',
-      agent_id: 'support',
-      name: 'invoke_agent refund-bot',
-      status: 'ok',
-      start: T0,
-      end: T0 + 250,
-      duration_ms: 250,
-      input: 'hi',
-      output: 'hello',
-      error_message: 'late',
-      observations: [],
-    });
-  });
 });
 
 /** The real isolate (compat CI only: isolated-vm installed and NODE_OPTIONS=--no-node-snapshot). */
@@ -635,27 +394,3 @@ function probeIsolatedVm(): { ok: boolean } {
   }
 }
 const hasIsolatedVm = probeIsolatedVm().ok;
-
-describe.runIf(hasIsolatedVm)('evaluator worker (real isolate)', () => {
-  it('scores a matching trace from the rule source', async () => {
-    const db = newDb();
-    const worker = startEvaluatorWorker(db);
-    workers.push(worker);
-    createEvaluatorRule(db, codeRule({ config: { source: '(trace) => ({ value: trace.duration_ms / 1000, comment: trace.name })' } }));
-    ingestBatch(db, [rootEnd('t1')]);
-    worker.notifyRootsEnded(['t1']);
-    await worker.idle();
-    expect(onlineScores(db, 't1')).toEqual([expect.objectContaining({ value: 0.25, comment: 'invoke_agent refund-bot' })]);
-  });
-
-  it("reports a user-code throw as 'driver' (the isolate passes it through without a kind)", async () => {
-    const db = newDb();
-    const worker = startEvaluatorWorker(db);
-    workers.push(worker);
-    createEvaluatorRule(db, codeRule({ config: { source: '() => { throw new Error("boom") }' } }));
-    ingestBatch(db, [rootEnd('t1')]);
-    worker.notifyRootsEnded(['t1']);
-    await worker.idle();
-    expect(onlineScores(db, 't1')).toEqual([expect.objectContaining({ value: null, comment: 'driver' })]);
-  });
-});

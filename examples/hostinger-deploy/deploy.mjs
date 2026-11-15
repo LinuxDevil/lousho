@@ -4,6 +4,11 @@
  *
  *   HOSTINGER_API_TOKEN=... OPENROUTER_API_KEY=... LOUSHO_API_TOKEN=... \
  *     node examples/hostinger-deploy/deploy.mjs --vm <id|hostname|ip>
+ *       [--agent <dir>] [--name <container>] [--port <n>] [--env KEY]... [--no-smoke]
+ *
+ * --agent/--name/--port deploy any agent directory as its own container, so
+ * several agents can share one VM. Each --env KEY passes that variable from
+ * this shell into the container (its value is redacted from the output).
  *
  * Steps: verify the VM via the Hostinger API (the same API the hostinger-vps
  * MCP server wraps) → `lousho build --target=docker` → ship the build context
@@ -23,15 +28,23 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..');
 const API = 'https://developers.hostinger.com';
-const CONTAINER = 'lousho-agent';
-const PORT = 3000;
-
 const arg = (name) => {
   const i = process.argv.indexOf(name);
   return i === -1 ? undefined : process.argv[i + 1];
 };
+const args = (name) => process.argv.flatMap((value, i) => (process.argv[i - 1] === name ? [value] : []));
 
-const required = ['HOSTINGER_API_TOKEN', 'OPENROUTER_API_KEY', 'LOUSHO_API_TOKEN'];
+const AGENT_DIR = path.resolve(arg('--agent') ?? path.join(HERE, 'agent'));
+const CONTAINER = arg('--name') ?? 'lousho-agent';
+const PORT = Number(arg('--port') ?? 3000);
+const PASS_ENV = args('--env');
+const SMOKE = !process.argv.includes('--no-smoke');
+if (!/^[a-z0-9][a-z0-9_.-]*$/.test(CONTAINER) || !Number.isInteger(PORT) || PASS_ENV.some((k) => !/^[A-Z_][A-Z0-9_]*$/.test(k))) {
+  console.error('--name must be a docker name, --port an integer and every --env an UPPER_CASE variable name');
+  process.exit(1);
+}
+
+const required = ['HOSTINGER_API_TOKEN', 'OPENROUTER_API_KEY', 'LOUSHO_API_TOKEN', ...PASS_ENV];
 const missing = required.filter((k) => !process.env[k]);
 const vmRef = arg('--vm');
 if (missing.length || !vmRef) {
@@ -87,25 +100,29 @@ console.log(`vm: ${vm.id} ${vm.hostname} ${ip} (${vm.template?.name ?? 'unknown 
 // 2. Build the docker target.
 const buildDir = mkdtempSync(path.join(tmpdir(), 'lousho-deploy-'));
 try {
-  sh(process.execPath, [path.join(REPO, 'bin', 'lousho.js'), 'build', path.join(HERE, 'agent'), '--target=docker', `--out=${path.join(buildDir, 'docker')}`], { cwd: REPO });
+  sh(process.execPath, [path.join(REPO, 'bin', 'lousho.js'), 'build', AGENT_DIR, '--target=docker', `--out=${path.join(buildDir, 'docker')}`], { cwd: REPO });
 
   // 3. Ship the build context and build + run the container on the VM.
   const remote = `root@${ip}`;
   const archive = path.join(buildDir, 'context.tgz');
-  sh('tar', [...(process.platform === 'win32' ? ['--force-local'] : []), '-czf', archive, '-C', path.join(buildDir, 'docker'), '.']);
-  sh('ssh', [remote, 'mkdir -p /opt/lousho-agent']);
-  sh('scp', [archive, `${remote}:/opt/lousho-agent/context.tgz`]);
+  sh('tar', [...(process.platform === 'win32' ? ['--force-local'] : []), '-czf', archive, '-C', path.join(buildDir, 'docker'), '.'], { env: { ...process.env, COPYFILE_DISABLE: '1' } });
+  const remoteDir = `/opt/${CONTAINER}`;
+  const quote = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`;
+  const passed = PASS_ENV.map((k) => ` -e ${k}=${quote(process.env[k])}`).join('');
+  sh('ssh', [remote, `rm -rf ${remoteDir} && mkdir -p ${remoteDir}`]);
+  sh('scp', [archive, `${remote}:${remoteDir}/context.tgz`]);
   sh('ssh', [
     remote,
-    `cd /opt/lousho-agent && tar -xzf context.tgz` +
+    `cd ${remoteDir} && tar -xzf context.tgz` +
       ` && docker build -q -t ${CONTAINER} .` +
       ` && (docker rm -f ${CONTAINER} >/dev/null 2>&1 || true)` +
       ` && docker run -d --name ${CONTAINER} --restart unless-stopped` +
-      ` -p ${PORT}:${PORT}` +
+      ` -p ${PORT}:3000` +
       ` -e OPENROUTER_API_KEY='${process.env.OPENROUTER_API_KEY}'` +
       ` -e LOUSHO_API_TOKEN='${process.env.LOUSHO_API_TOKEN}'` +
-      ` -e LOUSHO_STORE=sqlite:/data/lousho.db` +
-      ` -v lousho-data:/data` +
+      passed +
+      ` -e LOUSHO_STORE=sqlite:/app/data/lousho.db` +
+      ` -v ${CONTAINER}-data:/app/data` +
       ` ${CONTAINER}`,
   ]);
 
@@ -122,6 +139,11 @@ try {
     process.exit(1);
   }
   console.log(`healthy: http://${ip}:${PORT}/health`);
+  if (!SMOKE) {
+    console.log(`deployed: http://${ip}:${PORT} (container ${CONTAINER})`);
+    rmSync(buildDir, { recursive: true, force: true });
+    process.exit(0);
+  }
 
   const chat = await fetch(`http://${ip}:${PORT}/chat`, {
     method: 'POST',

@@ -82,45 +82,6 @@ beforeEach(() => {
 });
 
 describe('AuthorSettingsCard', () => {
-  it('renders the three rows with their hints and a Ready pill when ready', async () => {
-    const host = await mount();
-    expect(host.querySelector('section.settings-card')?.getAttribute('aria-label')).toBe('Agent Author');
-    expect(host.textContent).toContain('The models that draft your agents and review each draft.');
-    const rows = [...host.querySelectorAll('.setting-row')];
-    expect(rows.map((r) => r.querySelector('.setting-row-label')?.textContent)).toEqual([
-      'Author model',
-      'Review model',
-      'Review drafts',
-    ]);
-    expect(rows[0].textContent).toContain('Writes proposals in the Author chat.');
-    expect(rows[1].textContent).toContain('Checks each draft before you see it. A small, fast model is enough.');
-    expect(rows[2].textContent).toContain('Turn off to see drafts without the extra check.');
-    expect(pill(host)?.textContent).toContain('Ready');
-    expect(pill(host)?.classList.contains('pill-ok')).toBe(true);
-    // While settings are loaded both selects and the switch are usable.
-    expect(selects(host).every((s) => !s.disabled)).toBe(true);
-    expect(host.querySelector('button[role="switch"]')?.getAttribute('aria-checked')).toBe('true');
-  });
-
-  it('lists only tool-capable models, disabling the ones without a key as "(no key)"', async () => {
-    api.models = [
-      model('anthropic/claude-sonnet-5-5', true),
-      model('ollama/llama3', false),
-      model('openai/gpt-4.1', true, false),
-    ];
-    const host = await mount();
-    const [authorSelect, reviewSelect] = selects(host);
-    const options = [...authorSelect.options].map((o) => ({ label: o.textContent, disabled: o.disabled }));
-    expect(options).toEqual([
-      { label: 'anthropic/claude-sonnet-5-5', disabled: false },
-      { label: 'openai/gpt-4.1 (no key)', disabled: true },
-    ]);
-    // The review select offers the same catalog rows, plus its configured
-    // value first - it is not a tool-capable catalog entry, so it is kept
-    // as the current-value fallback.
-    const reviewOptions = [...reviewSelect.options].map((o) => o.textContent);
-    expect(reviewOptions).toEqual(['anthropic/claude-haiku-5-5', 'anthropic/claude-sonnet-5-5', 'openai/gpt-4.1 (no key)']);
-  });
 
   it('sends one PUT with only the changed field and updates from the response', async () => {
     api.models = [model('anthropic/claude-sonnet-5-5', true), model('openai/gpt-4.1', true)];

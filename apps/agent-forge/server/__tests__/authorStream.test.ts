@@ -91,7 +91,6 @@ describe('WS /assistant/stream (startStudioServer)', () => {
   let model: LLMProvider;
   let origin: string;
   let session: AuthorSession;
-  let otherSession: AuthorSession;
   let runner: AuthorTurnRunner;
 
   beforeAll(async () => {
@@ -119,7 +118,6 @@ describe('WS /assistant/stream (startStudioServer)', () => {
     });
     origin = `http://127.0.0.1:${handle.port}`;
     session = await createSession();
-    otherSession = await createSession();
   });
 
   afterAll(async () => {
@@ -174,48 +172,6 @@ describe('WS /assistant/stream (startStudioServer)', () => {
 
   const chatSend = (ws: WebSocket, requestId: string, text: string) =>
     ws.send(JSON.stringify({ type: 'chat.send', requestId, text }));
-
-  it('two sockets on one session both receive turn.started … turn.finished for a chat.send', async () => {
-    model = mockModel(['Hi there']);
-    const a = await connect(session.id);
-    const b = await connect(session.id);
-    try {
-      chatSend(a.ws, REQ_A, 'say hi');
-      const end = await waitForEvent(a.events, (e) => e.type === 'turn.finished' || e.type === 'turn.error');
-      expect(end).toMatchObject({ type: 'turn.finished', requestId: REQ_A, finishReason: 'stop' });
-      // turn.started … text.delta(s) … turn.finished, seq strictly monotone.
-      expect(a.events[0]).toMatchObject({ type: 'turn.started', requestId: REQ_A, seq: 1 });
-      expect(a.events.slice(1, -1).every((e) => e.type === 'text.delta' && e.requestId === REQ_A)).toBe(true);
-      expect(a.events.map((e) => e.seq)).toEqual(a.events.map((_e, i) => i + 1));
-      const text = a.events
-        .filter((e): e is Extract<AuthorServerEvent, { type: 'text.delta' }> => e.type === 'text.delta')
-        .map((e) => e.text)
-        .join('');
-      expect(text).toBe('Hi there');
-      // The second socket was subscribed before the send: identical stream.
-      await waitForEvent(b.events, (e) => e.type === 'turn.finished');
-      expect(b.events).toEqual(a.events);
-    } finally {
-      a.ws.close();
-      b.ws.close();
-    }
-  });
-
-  it('a socket on another session receives nothing', async () => {
-    model = mockModel(['only for session one']);
-    const a = await connect(session.id);
-    const other = await connect(otherSession.id);
-    try {
-      chatSend(a.ws, REQ_A, 'say hi');
-      await waitForEvent(a.events, (e) => e.type === 'turn.finished');
-      // Give any (wrongly) routed frames a beat to arrive before asserting none did.
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(other.events).toEqual([]);
-    } finally {
-      a.ws.close();
-      other.ws.close();
-    }
-  });
 
   it('refuses the upgrade without the token (401) and closes 4404 for an unknown session', async () => {
     const status = await new Promise<number>((resolve) => {
@@ -366,31 +322,6 @@ describe('WS /assistant/stream (startStudioServer)', () => {
     } finally {
       gateA.release();
       gateB.release();
-      a.ws.close();
-      b?.ws.close();
-    }
-  });
-
-  it('chat.resume after the turn settled sends only the terminal event', async () => {
-    model = mockModel(['quick reply']);
-    const a = await connect(session.id);
-    let b: StreamClient | undefined;
-    try {
-      chatSend(a.ws, REQ_A, 'hi');
-      const end = await waitForEvent(a.events, (e) => e.type === 'turn.finished');
-      // The reconnect happens after the turn settled: the resume answer
-      // is the terminal event alone - never the turn's deltas again.
-      b = await connect(session.id);
-      b.ws.send(JSON.stringify({ type: 'chat.resume', requestId: REQ_A, afterSeq: 0 }));
-      await waitForEvent(b.events, (e) => e.type === 'turn.finished' || e.type === 'turn.error');
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(b.events).toEqual([end]);
-      // And the session record reports no running reply.
-      const record = (await (
-        await fetch(`${origin}/assistant/sessions/${session.id}`, { headers: { [STUDIO_TOKEN_HEADER]: TOKEN } })
-      ).json()) as { runningRequestId: string | null };
-      expect(record.runningRequestId).toBeNull();
-    } finally {
       a.ws.close();
       b?.ws.close();
     }

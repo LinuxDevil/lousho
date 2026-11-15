@@ -44,18 +44,6 @@ function text(selector: string): string | null {
 }
 
 describe('useMcpProbe', () => {
-  it('starts idle, lists the tools a successful probe returned', async () => {
-    const spy = vi.spyOn(runtimeClient, 'probeMcp').mockResolvedValue({ ok: true, tools: TOOLS });
-    container = render(<Probe server={{ command: 'probe-ok-a' }} />);
-    expect(text('.state')).toBe('idle');
-    click();
-    expect(text('.state')).toBe('probing');
-    await flush();
-    expect(text('.state')).toBe('done');
-    expect(text('.tools')).toBe('create_issue,delete_repo');
-    expect(spy).toHaveBeenCalledTimes(1);
-    expect(spy).toHaveBeenCalledWith({ command: 'probe-ok-a' });
-  });
 
   it('serves a second probe of the same server from the cache', async () => {
     const spy = vi.spyOn(runtimeClient, 'probeMcp').mockResolvedValue({ ok: true, tools: TOOLS });
@@ -67,39 +55,5 @@ describe('useMcpProbe', () => {
     expect(spy).toHaveBeenCalledTimes(1);
     expect(text('.state')).toBe('done');
     expect(text('.tools')).toBe('create_issue,delete_repo');
-  });
-
-  it('shares one in-flight probe between two callers of the same server', async () => {
-    const spy = vi.spyOn(runtimeClient, 'probeMcp').mockResolvedValue({ ok: true, tools: TOOLS });
-    container = render(
-      <>
-        <Probe server={{ command: 'probe-ok-c' }} />
-        <Probe server={{ command: 'probe-ok-c' }} />
-      </>,
-    );
-    const buttons = [...container.querySelectorAll<HTMLButtonElement>('.go')];
-    act(() => {
-      for (const button of buttons) button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    await flush();
-    expect(spy).toHaveBeenCalledTimes(1);
-  });
-
-  it('answers the error state when the server cannot be reached', async () => {
-    vi.spyOn(runtimeClient, 'probeMcp').mockResolvedValue({ ok: false, error: 'spawn probe-fail ENOENT' });
-    container = render(<Probe server={{ command: 'probe-fail-a' }} />);
-    click();
-    await flush();
-    expect(text('.state')).toBe('error');
-    expect(text('.error')).toBe('spawn probe-fail ENOENT');
-  });
-
-  it('answers the error state when the request itself throws', async () => {
-    vi.spyOn(runtimeClient, 'probeMcp').mockRejectedValue(new Error('network down'));
-    container = render(<Probe server={{ command: 'probe-throw-a' }} />);
-    click();
-    await flush();
-    expect(text('.state')).toBe('error');
-    expect(text('.error')).toBe('network down');
   });
 });

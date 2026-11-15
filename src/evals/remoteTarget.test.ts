@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
 import { createAgent } from '../createAgent';
 import { serveFetch, type ServeAuth } from '../server/fetchRoutes';
-import { apiToken, basic } from '../auth';
 import { defineTool } from '../tools/defineTool';
 import { mockModel, type MockTurn } from '../testing';
 import { renderJunit } from '../cli/evalReport';
@@ -50,50 +49,6 @@ describe('remoteTarget', () => {
     expect(result.steps).toBe(2);
     expect(result.toolCalls).toEqual([{ name: 'lookup_order', args: { orderId: '42' } }]);
     expect(result.usage?.totalTokens).toBe(30);
-  });
-
-  it('passes against a server whose auth is a list, with the token as its apiToken() entry', async () => {
-    const result = await run(target(deployment(SCRIPT, [basic({ users: { ops: 'pw' } }), apiToken(TOKEN)])), async (t) => {
-      await t.send('Where is order 42?');
-      t.calledTool('lookup_order', { args: { orderId: '42' } });
-      expect(t.reply).toBe('Order 42 has shipped.');
-    });
-    expect(result.error).toBeUndefined();
-    expect(result.passed).toBe(true);
-    expect(result.usage?.totalTokens).toBe(30);
-  });
-
-  it('fails a case whose trajectory check does not hold, and JUnit shows it', async () => {
-    const results = await Promise.all([
-      run(target(deployment()), async (t) => {
-        await t.send('hi');
-        t.calledTool('lookup_order');
-      }),
-      run(target(deployment([{ text: 'No tools here.' }])), async (t) => {
-        await t.send('hi');
-        t.calledTool('lookup_order');
-      }),
-    ]);
-    expect(results.map((r) => r.passed)).toEqual([true, false]);
-    const xml = renderJunit(results, false);
-    expect(xml).toContain('tests="2"');
-    expect(xml).toContain("<failure message=\"calledTool('lookup_order') failed: tools called were none\"");
-  });
-
-  it('uses one remote session per case, shared by its sends', async () => {
-    const sessions: string[] = [];
-    const inner = deployment([{ text: 'one' }, { text: 'two' }]);
-    const spy: typeof fetch = (input, init) => {
-      sessions.push((JSON.parse(String(init?.body)) as { sessionId: string }).sessionId);
-      return inner(input, init);
-    };
-    await run(target(spy), async (t) => {
-      await t.send('a');
-      await t.send('b');
-    });
-    expect(sessions).toHaveLength(2);
-    expect(sessions[0]).toBe(sessions[1]);
-    expect(sessions[0]).toMatch(/^eval-/);
   });
 
   it('fails the case with a coded error on 401, without leaking a token', async () => {

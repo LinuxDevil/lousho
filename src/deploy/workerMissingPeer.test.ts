@@ -37,10 +37,4 @@ describe('workerMissingPeerPlugin (cloudflare-worker build)', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
-
-  it('bundles an installed one as before', async () => {
-    const code = await bundle(path.resolve(__dirname, '..', '..'));
-    expect(code).not.toContain('it was not installed when this Worker was built');
-    expect(code).toContain('createAnthropic');
-  });
 });

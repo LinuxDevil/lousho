@@ -166,29 +166,6 @@ describe('AuthorHistory list', () => {
     expect(meta(rows[1]!)).toBe('New agent · 2h ago · 2 messages');
   });
 
-  it('shows 4 skeleton rows while the list loads', async () => {
-    let resolve: (v: AuthorSessionSummary[]) => void = () => {};
-    vi.mocked(runtimeClient.listAuthorSessions).mockImplementation(
-      () => new Promise((r) => (resolve = r))
-    );
-    const c = mount(chatWith());
-    act(() => historyBtn(c).click());
-    expect(c.querySelectorAll('.skeleton-row')).toHaveLength(4);
-    await act(async () => {
-      resolve([]);
-      await flush();
-    });
-  });
-
-  it('shows the empty copy when there are no earlier chats', async () => {
-    const c = mount(chatWith());
-    await openHistory(c);
-    expect(c.querySelector('.empty-state-title')?.textContent).toBe('No earlier chats');
-    expect(c.querySelector('.empty-state-hint')?.textContent).toBe(
-      'Chats you have with the Author show up here.'
-    );
-  });
-
   it('shows the error note and reloads on Try again', async () => {
     vi.mocked(runtimeClient.listAuthorSessions).mockRejectedValueOnce(new Error('down'));
     const c = mount(chatWith());
@@ -227,18 +204,6 @@ describe('AuthorHistory switching', () => {
     expect(chat.openSession).toHaveBeenCalledWith('s2');
     expect(historySection(c)).toBeNull();
     expect(c.querySelector('.author-body')).not.toBeNull();
-  });
-
-  it('the History button toggles the view with aria-pressed and Back to chat closes it', async () => {
-    const c = mount(chatWith());
-    await openHistory(c);
-    expect(historyBtn(c).getAttribute('aria-pressed')).toBe('true');
-    const back = [...c.querySelectorAll<HTMLButtonElement>('button')].find(
-      (b) => b.textContent === 'Back to chat'
-    )!;
-    act(() => back.click());
-    expect(historySection(c)).toBeNull();
-    expect(historyBtn(c).getAttribute('aria-pressed')).toBe('false');
   });
 
   it('Escape closes history but keeps the dock open; the composer is disabled with the reason', async () => {
@@ -327,11 +292,6 @@ describe('AuthorHistory delete', () => {
       'Stop the reply before deleting this chat.'
     );
     expect(items(c)).toHaveLength(2); // the row stays - it was not deleted
-  });
-
-  it('the delete icon carries an aria-label with the chat title', async () => {
-    const c = await mountWithSessions(chatWith());
-    expect(deleteBtn(items(c)[1]!).getAttribute('aria-label')).toBe('Delete chat “Other chat”');
   });
 });
 

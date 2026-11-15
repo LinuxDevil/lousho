@@ -145,6 +145,8 @@ interface AppState {
   refreshAgents: () => Promise<void>;
   /** The workspace `agents` was fetched for; `undefined` before the first successful fetch (W04b). */
   agentsWorkspaceId: string | undefined;
+  /** Why the last autosave failed; cleared by the next successful save. */
+  autosaveError: string | undefined;
   /** Loads a different agent's graph into the canvas - a full state swap, not a visual pan. */
   switchAgent: (id: string) => Promise<void>;
   /** Creates a new agent from a seed template and switches to it. */
@@ -416,6 +418,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   };
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
+}
+
+export function useOptionalAppState(): AppState | undefined {
+  return useContext(AppStateContext);
 }
 
 export function useAppState(): AppState {

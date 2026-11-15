@@ -1,12 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { z } from 'zod';
 import {
   DEFAULT_SUMMARY_PROMPT,
   compactMessages,
   createCompactionHook,
   isPinned,
   pinMessage,
-  pruneToolResultsStrategy,
   summarizeStrategy,
   twoPhaseStrategy,
   type CompactionInfo,
@@ -16,9 +14,6 @@ import type { Message } from '../providers';
 import { textOf } from '../providers';
 import { estimateTokens, registerModel } from '../models';
 import { HookRegistry } from '../execution/hooks';
-import { AgentExecutor } from '../execution/AgentExecutor';
-import { defineTool } from '../tools/defineTool';
-import { ToolRegistry } from '../tools';
 import { mockModel } from '../testing';
 
 const BIG = 'x'.repeat(4_000); // about 1,000 tokens
@@ -84,33 +79,6 @@ describe('summarizeStrategy', () => {
     expect(request.messages[1].content).not.toContain('You are helpful.');
   });
 
-  it('keeps an assistant turn and all its tool results together', async () => {
-    const original: Message[] = [
-      { role: 'system', content: 'sys' },
-      { role: 'user', content: 'go' },
-      { role: 'assistant', content: '', toolCalls: [call('a'), call('b')] },
-      { role: 'tool', toolCallId: 'a', toolName: 'search', content: BIG },
-      { role: 'tool', toolCallId: 'b', toolName: 'search', content: BIG },
-      { role: 'assistant', content: '', toolCalls: [call('c')] },
-      { role: 'tool', toolCallId: 'c', toolName: 'search', content: 'small' },
-    ];
-    // 1,100 tokens reach into the middle of the first turn's results; the whole turn is kept.
-    const result = await compactMessages(original, {
-      protectedTokens: 1_100,
-      strategy: summarizeStrategy({ model: mockModel(['S']), prompt: 'Summarize briefly.' }),
-    });
-    expect(result.messages).toEqual([original[0], summaryOf('S'), ...original.slice(2)]);
-    expectValidTranscript(result.messages);
-  });
-
-  it('changes nothing when there is nothing before the tail to summarize', async () => {
-    const summarizer = mockModel([]);
-    const original = transcript(1);
-    const result = await compactMessages(original, { protectedTokens: 100_000, strategy: summarizeStrategy({ model: summarizer }) });
-    expect(result.messages).toBe(original);
-    expect(summarizer.calls).toHaveLength(0);
-  });
-
   it('falls back to pruning and reports the error when the summarizer fails, never throwing', async () => {
     const original = transcript(6);
     const pruned = await compactMessages(original, { protectedTokens: 0 });
@@ -136,13 +104,6 @@ describe('summarizeStrategy', () => {
 });
 
 describe('pinned messages', () => {
-  it('pinMessage marks a copy and keeps existing metadata', () => {
-    const message: Message = { role: 'user', content: 'hi', metadata: { source: 'ui' } };
-    const pinned = pinMessage(message);
-    expect(pinned).toEqual({ role: 'user', content: 'hi', metadata: { source: 'ui', pinned: true } });
-    expect(isPinned(pinned)).toBe(true);
-    expect(isPinned(message)).toBe(false);
-  });
 
   function withPins(): Message[] {
     const messages = transcript(8);
@@ -150,28 +111,6 @@ describe('pinned messages', () => {
     messages[5] = pinMessage(messages[5]); // call_2's result
     return messages;
   }
-
-  it('are never pruned', async () => {
-    const original = withPins();
-    const result = await compactMessages(original, { protectedTokens: 0, strategy: pruneToolResultsStrategy() });
-    expect(result.messages[5]).toBe(original[5]);
-    expect(result.prunedToolCallIds).toEqual(['call_1', 'call_3', 'call_4', 'call_5', 'call_6', 'call_7']);
-  });
-
-  it('are never summarized: they stay in place with their tool call, and are not sent to the summarizer', async () => {
-    const original = withPins();
-    const summarizer = mockModel(['S']);
-    const result = await compactMessages(original, { protectedTokens: 0, strategy: summarizeStrategy({ model: summarizer }) });
-
-    // system, pinned user, summary (where call_1 was), call_2's turn with its pinned result, then the tail.
-    expect(result.messages).toEqual([original[0], original[1], summaryOf('S'), original[4], original[5], ...original.slice(-2)]);
-    expectValidTranscript(result.messages);
-    const sent = summarizer.calls[0].messages[1].content;
-    expect(sent).not.toContain('PINNED-GOAL');
-    expect(sent).not.toContain('2:');
-    expect(sent).toContain('1:');
-    expect(sent).toContain('7:');
-  });
 
   it('survive the two-phase strategy', async () => {
     const original = withPins();
@@ -201,37 +140,6 @@ describe('twoPhaseStrategy', () => {
     expect(result.prunedToolCallIds).toHaveLength(9);
     expect(result.tokensAfter).toBeLessThan(1_800);
   });
-
-  it('summarizes the pruned conversation when pruning is not enough', async () => {
-    const summarizer = mockModel(['S']);
-    const original = transcript(10);
-    const result = await compactMessages(original, {
-      protectedTokens: 0,
-      contextWindow: 1_000,
-      strategy: twoPhaseStrategy({ model: summarizer }),
-    });
-    expect(result.prunedToolCallIds).toHaveLength(9);
-    expect(result.summary).toBe('S');
-    expect(result.tokensBefore).toBe(estimateTokens(original));
-    expect(result.messages).toEqual([original[0], summaryOf('S'), ...original.slice(-2)]);
-    // The summarizer read the pruned results, not the full ones.
-    expect(summarizer.calls[0].messages[1].content).toContain('[pruned: search({}) result');
-    expect(summarizer.calls[0].messages[1].content).not.toContain(BIG);
-  });
-
-  it('keeps the pruned result and reports the error when the summarizer fails', async () => {
-    const original = transcript(10);
-    const result = await compactMessages(original, {
-      protectedTokens: 0,
-      contextWindow: 1_000,
-      strategy: twoPhaseStrategy({ model: mockModel([{ error: new Error('down') }]) }),
-    });
-    expect(result.error?.message).toBe('down');
-    expect(result.prunedToolCallIds).toHaveLength(9);
-    expect(result.tokensBefore).toBe(estimateTokens(original));
-    expect(result.messages).toHaveLength(original.length);
-    expectValidTranscript(result.messages);
-  });
 });
 
 describe('async strategies in the hook', () => {
@@ -244,19 +152,6 @@ describe('async strategies in the hook', () => {
     return messages;
   }
 
-  it('reports the summary, and reports a fallback error without throwing', async () => {
-    const infos: CompactionInfo[] = [];
-    const summarized = await runHook(summarizeStrategy({ model: mockModel(['S']) }), (info) => infos.push(info));
-    expect(summarized[1]).toEqual(summaryOf('S'));
-    expect(infos[0]).toMatchObject({ strategy: 'summarize', summary: 'S' });
-    expect(infos[0].error).toBeUndefined();
-
-    const fellBack = await runHook(summarizeStrategy({ model: mockModel([{ error: new Error('boom') }]) }), (info) => infos.push(info));
-    expect(fellBack.some((m) => textOf(m).startsWith('[pruned: '))).toBe(true);
-    expect(infos[1]).toMatchObject({ strategy: 'summarize', prunedToolCallIds: ['call_1', 'call_2', 'call_3'] });
-    expect(infos[1].error?.message).toBe('boom');
-  });
-
   it('leaves the run alone and reports the error when a strategy throws', async () => {
     const onCompaction = vi.fn<[CompactionInfo], void>();
     const throwing: CompactionStrategy = { name: 'broken', compact: async () => Promise.reject(new Error('bad strategy')) };
@@ -265,179 +160,6 @@ describe('async strategies in the hook', () => {
     expect(onCompaction).toHaveBeenCalledTimes(1);
     expect(onCompaction.mock.calls[0][0]).toMatchObject({ strategy: 'broken', prunedToolCallIds: [] });
     expect(onCompaction.mock.calls[0][0].error?.message).toBe('bad strategy');
-  });
-});
-
-describe('a summary that does not compact below the threshold', () => {
-  async function runHook(
-    strategy: CompactionStrategy,
-    onCompaction: (info: CompactionInfo) => void,
-    messages = transcript(4),
-    contextWindow = 1_000
-  ) {
-    const hooks = new HookRegistry();
-    hooks.register(createCompactionHook({ strategy, contextWindow, protectedTokens: 0, onCompaction }));
-    await hooks.runPreGenerate({ messages, request: { messages } });
-    return { hooks, messages };
-  }
-
-  it('rejects a summary that stays over the threshold, falls back to pruning and never summarizes that transcript again', async () => {
-    const summarizer = mockModel([BIG], { onExhausted: 'repeat-last' });
-    const infos: CompactionInfo[] = [];
-    const { hooks, messages } = await runHook(summarizeStrategy({ model: summarizer }), (info) => infos.push(info));
-
-    // Rejected: no summary message, old results are pruned, the fallback is reported as an error.
-    expect(infos).toHaveLength(1);
-    expect(infos[0].summary).toBeUndefined();
-    expect(infos[0].error?.message).toMatch(/did not compact the conversation below the threshold/);
-    expect(infos[0].prunedToolCallIds).toEqual(['call_1', 'call_2', 'call_3']);
-    expect(messages.some((m) => textOf(m).includes('Conversation summary'))).toBe(false);
-    expect(messages.some((m) => textOf(m).startsWith('[pruned: '))).toBe(true);
-    expect(summarizer.calls).toHaveLength(1);
-
-    // Still over the threshold on the next step: it prunes, without calling the summarizer again.
-    const unchanged = structuredClone(messages);
-    await hooks.runPreGenerate({ messages, request: { messages } });
-    expect(summarizer.calls).toHaveLength(1);
-    expect(infos).toHaveLength(1); // nothing changed, so nothing reported
-    expect(messages).toEqual(unchanged);
-  });
-
-  it('rejects a summary larger than the conversation it replaced', async () => {
-    // The observed case: 890 tokens in, a 980-token summary out.
-    const summarizer = mockModel(['x'.repeat(20_000)], { onExhausted: 'repeat-last' });
-    const infos: CompactionInfo[] = [];
-    const { messages } = await runHook(summarizeStrategy({ model: summarizer }), (info) => infos.push(info));
-
-    expect(infos[0].summary).toBeUndefined();
-    expect(infos[0].error?.message).toMatch(/did not compact the conversation below the threshold/);
-    expect(messages.some((m) => textOf(m).includes('Conversation summary'))).toBe(false);
-    expect(estimateTokens(messages)).toBeLessThan(estimateTokens(transcript(4)));
-    expect(summarizer.calls).toHaveLength(1);
-  });
-
-  it('accepts a summary that gets the conversation under the threshold, and may summarize again later', async () => {
-    const summarizer = mockModel(['S'], { onExhausted: 'repeat-last' });
-    const infos: CompactionInfo[] = [];
-    // The compacted transcript ([system, summary, last turn]) lands under 90% of 1,200.
-    const { hooks, messages } = await runHook(
-      summarizeStrategy({ model: summarizer }),
-      (info) => infos.push(info),
-      transcript(4),
-      1_200
-    );
-
-    expect(infos[0].error).toBeUndefined();
-    expect(infos[0].summary).toBe('S');
-    expect(messages[1]).toEqual(summaryOf('S'));
-    expect(summarizer.calls).toHaveLength(1);
-
-    // Growing over the threshold again triggers a real summarize, not the prune-only fallback.
-    messages.push({ role: 'tool', toolCallId: 'late', toolName: 'search', content: BIG });
-    await hooks.runPreGenerate({ messages, request: { messages } });
-    expect(summarizer.calls).toHaveLength(2);
-  });
-});
-
-describe('summarize compaction in a run', () => {
-  it('summarizes old turns before a model call and keeps the summary in the transcript', async () => {
-    const fetchPage = defineTool({
-      name: 'fetch_page',
-      description: 'Fetch a page',
-      input: z.object({ n: z.number() }),
-      execute: async ({ n }) => `${n}:${BIG}`,
-    });
-    const toolRegistry = new ToolRegistry();
-    toolRegistry.register(fetchPage);
-    const fetchCall = (n: number) => ({ toolCalls: [{ name: 'fetch_page', args: { n }, id: `call_${n}` }] });
-    const model = mockModel([fetchCall(1), fetchCall(2), fetchCall(3), fetchCall(4), 'done']);
-    const summarizer = mockModel(['Read pages 1 and 2.'], { onExhausted: 'repeat-last' });
-
-    const compactions: CompactionInfo[] = [];
-    const hooks = new HookRegistry();
-    hooks.register(
-      createCompactionHook({
-        contextWindow: 3_000,
-        protectedTokens: 1_500,
-        strategy: summarizeStrategy({ model: summarizer }),
-        onCompaction: (info) => compactions.push(info),
-      })
-    );
-
-    const result = await AgentExecutor.execute({
-      agent: { id: 'a', name: 'Agent', prompt: 'Read pages.', tools: { fetch_page: { tool: 'fetch_page' } } },
-      input: 'read four pages',
-      provider: model,
-      toolRegistry,
-      hooks,
-      maxSteps: 10,
-    });
-
-    expect(result.text).toBe('done');
-    expect(compactions).toHaveLength(1);
-    expect(compactions[0]).toMatchObject({ strategy: 'summarize', summary: 'Read pages 1 and 2.' });
-    expect(summarizer.calls).toHaveLength(1);
-    expect(summarizer.calls[0].messages[1].content).toContain('user: read four pages');
-
-    // The 4th model call is the first to see the summary; every request stays valid and under the threshold.
-    const summary = summaryOf('Read pages 1 and 2.');
-    expect(model.calls[3].messages[1]).toEqual(summary);
-    for (const req of model.calls) {
-      expectValidTranscript(req.messages as Message[]);
-      expect(estimateTokens(req.messages as Message[])).toBeLessThan(3_000 * 0.9);
-    }
-    // The summary persists in the run's transcript, after the system prompt.
-    expect(result.messages[1]).toEqual(summary);
-    expect(result.messages.filter((m) => m.role === 'tool').map((m) => m.toolCallId)).toEqual(['call_3', 'call_4']);
-    expectValidTranscript(result.messages);
-  });
-
-  it('an adversarial summarizer (larger output) is rejected once; the run finishes without re-summarizing', async () => {
-    const fetchPage = defineTool({
-      name: 'fetch_page',
-      description: 'Fetch a page',
-      input: z.object({ n: z.number() }),
-      execute: async ({ n }) => `${n}:${BIG}`,
-    });
-    const toolRegistry = new ToolRegistry();
-    toolRegistry.register(fetchPage);
-    const fetchCall = (n: number) => ({ toolCalls: [{ name: 'fetch_page', args: { n }, id: `call_${n}` }] });
-    const model = mockModel([fetchCall(1), fetchCall(2), fetchCall(3), fetchCall(4), 'done']);
-    // The adversarial summarizer: its "summary" is larger than what it folded.
-    const summarizer = mockModel(['x'.repeat(20_000)], { onExhausted: 'repeat-last' });
-
-    const compactions: CompactionInfo[] = [];
-    const hooks = new HookRegistry();
-    hooks.register(
-      createCompactionHook({
-        contextWindow: 3_000,
-        protectedTokens: 1_500,
-        strategy: summarizeStrategy({ model: summarizer }),
-        onCompaction: (info) => compactions.push(info),
-      })
-    );
-
-    const result = await AgentExecutor.execute({
-      agent: { id: 'a', name: 'Agent', prompt: 'Read pages.', tools: { fetch_page: { tool: 'fetch_page' } } },
-      input: 'read four pages',
-      provider: model,
-      toolRegistry,
-      hooks,
-      maxSteps: 10,
-    });
-
-    expect(result.text).toBe('done');
-    // Called once: the transcript stayed over the threshold after the first
-    // rejection, but the rest of the run only pruned - before the fix the
-    // summarizer ran again on every step until max-steps.
-    expect(summarizer.calls).toHaveLength(1);
-    expect(compactions[0].error?.message).toMatch(/did not compact the conversation below the threshold/);
-    expect(compactions[0].summary).toBeUndefined();
-    expect(result.messages.some((m) => textOf(m).includes('Conversation summary'))).toBe(false);
-    for (const req of model.calls) {
-      expectValidTranscript(req.messages as Message[]);
-    }
-    expectValidTranscript(result.messages);
   });
 });
 

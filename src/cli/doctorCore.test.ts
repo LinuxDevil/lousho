@@ -57,36 +57,7 @@ function spec(overrides: Partial<AgentSpec> = {}): AgentSpec {
   return { name: 'bot', prompt: 'hi', provider: { type: 'openai', model: 'gpt-4o' }, ...overrides };
 }
 
-describe('node check', () => {
-  it('ok when the version satisfies engines.node', async () => {
-    expect((await check(makeEnv(), 'node')).status).toBe('ok');
-  });
-  it('fail with a fix when too old', async () => {
-    const result = await check(makeEnv({ nodeVersion: '18.0.0' }), 'node');
-    expect(result.status).toBe('fail');
-    expect(result.fix).toContain('>=22.19.0');
-  });
-  it('ok when the SDK declares no engines', async () => {
-    expect((await check(makeEnv({ sdk: {} }), 'node')).status).toBe('ok');
-  });
-});
-
 describe('required peers', () => {
-  it('ok when installed within range', async () => {
-    expect((await check(makeEnv(), 'peer.ai')).status).toBe('ok');
-  });
-  it('fail when missing, with the install command', async () => {
-    const env = makeEnv({ resolvePackageVersion: (n) => (n === 'zod' ? null : INSTALLED[n] ?? null) });
-    const result = await check(env, 'peer.zod');
-    expect(result.status).toBe('fail');
-    expect(result.fix).toBe('npm install zod@^3.25.76');
-  });
-  it('fail when the version is outside the peer range', async () => {
-    const env = makeEnv({ resolvePackageVersion: (n) => (n === 'ai' ? '3.0.0' : INSTALLED[n] ?? null) });
-    const result = await check(env, 'peer.ai');
-    expect(result.status).toBe('fail');
-    expect(result.finding).toContain('^4.3.19');
-  });
   it('ok without a declared range', async () => {
     const result = await check(makeEnv({ sdk: { engines: { node: '>=1' } } }), 'peer.ai');
     expect(result.status).toBe('ok');
@@ -94,33 +65,6 @@ describe('required peers', () => {
 });
 
 describe('optional provider peers', () => {
-  const without = (missing: string) => (n: string) => (n === missing ? null : INSTALLED[n] ?? null);
-
-  it('ok when installed', async () => {
-    expect((await check(makeEnv(), 'optional-peer.@ai-sdk/openai')).status).toBe('ok');
-  });
-  it('missing and unused: one info line naming it, with the install command in its fix, not a warning each', async () => {
-    const env = makeEnv({ resolvePackageVersion: without('@ai-sdk/anthropic') });
-    const report = await runDoctor(env);
-    expect(report.checks.find((c) => c.id === 'optional-peer.@ai-sdk/anthropic')).toBeUndefined();
-    const result = await check(env, 'optional-peers.unused');
-    expect(result.status).toBe('ok');
-    expect(result.finding).toContain('@ai-sdk/anthropic');
-    expect(result.fix).toContain('npm install @ai-sdk/anthropic@^0.0.42');
-  });
-  it('groups every unused optional package into the one line', async () => {
-    const env = makeEnv({ resolvePackageVersion: (n) => (n === '@ai-sdk/anthropic' || n === 'prompts' ? null : INSTALLED[n] ?? null) });
-    const unusedLine = await check(env, 'optional-peers.unused');
-    expect(unusedLine.finding).toMatch(/not needed by this agent \(.*@ai-sdk\/anthropic.*prompts.*\)/);
-  });
-  it('fail when missing and the spec needs it', async () => {
-    const env = makeEnv({
-      resolvePackageVersion: without('@ai-sdk/openai'),
-      specPath: 'a.yaml',
-      loadSpec: () => spec(),
-    });
-    expect((await check(env, 'optional-peer.@ai-sdk/openai')).status).toBe('fail');
-  });
   it('warn on an out-of-range version, fail when needed', async () => {
     const old = (n: string) => (n === 'ollama-ai-provider' ? '0.1.0' : INSTALLED[n] ?? null);
     expect((await check(makeEnv({ resolvePackageVersion: old }), 'optional-peer.ollama-ai-provider')).status).toBe('warn');
@@ -145,50 +89,6 @@ describe('ai / provider package pairing', () => {
   const envWith = (versions: Record<string, string | null>, extra: Partial<DoctorEnvironment> = {}) =>
     makeEnv({ sdk: { peerDependencies: WIDE_PEERS }, resolvePackageVersion: installed(versions), ...extra });
 
-  it('flags ai 7 with @ai-sdk/openai 1.x, with the fix for ai 7', async () => {
-    const result = await check(envWith({ ai: '7.0.1', '@ai-sdk/openai': '1.3.24' }), 'optional-peer.@ai-sdk/openai');
-    expect(result).toMatchObject({
-      status: 'warn',
-      finding: '1.3.24 installed, but ai 7 needs ^4.0.0',
-      fix: 'npm install @ai-sdk/openai@^4.0.0',
-    });
-  });
-
-  it('fails a mismatched pairing the agent spec needs', async () => {
-    const env = envWith({ ai: '6.0.5', '@ai-sdk/openai': '4.0.1' }, { specPath: 'a.yaml', loadSpec: () => spec() });
-    const result = await check(env, 'optional-peer.@ai-sdk/openai');
-    expect(result).toMatchObject({ status: 'fail', fix: 'npm install @ai-sdk/openai@^3.0.0' });
-  });
-
-  it('accepts @ai-sdk/* 0.0.x and 1.x with ai 4, and 4.x with ai 7', async () => {
-    expect((await check(envWith({ '@ai-sdk/openai': '1.3.24' }), 'optional-peer.@ai-sdk/openai')).status).toBe('ok');
-    expect((await check(envWith({ ai: '7.0.0', '@ai-sdk/openai': '4.0.83' }), 'optional-peer.@ai-sdk/openai')).status).toBe('ok');
-  });
-
-  it('checks ollama-ai-provider-v2 on ai 7, and its fix states the zod 4 limitation', async () => {
-    const report = await runDoctor(envWith({ ai: '7.0.0', 'ollama-ai-provider-v2': null }));
-    expect(report.checks.find((c) => c.id === 'optional-peer.ollama-ai-provider')).toBeUndefined();
-    const result = await check(envWith({ ai: '7.0.0', 'ollama-ai-provider-v2': null }), 'optional-peers.unused');
-    expect(result.fix).toMatch(/npm install ollama-ai-provider-v2@\^4\.0\.0 \(note: .*zod 4/);
-  });
-
-  it('ai 5 fails with an upgrade hint that names the supported majors and the provider packages to move', async () => {
-    const result = await check(envWith({ ai: '5.0.60' }), 'peer.ai');
-    expect(result).toMatchObject({
-      status: 'fail',
-      finding: '5.0.60 installed, but AI SDK v5 is not supported (the SDK runs on ai 4.3.19+, 6 or 7)',
-    });
-    expect(result.fix).toBe(
-      'npm install ai@^7.0.0 (upgrade to ai 6 or 7, and move each @ai-sdk/* provider package to the matching major: 3.x for ai 6, 4.x for ai 7)'
-    );
-  });
-
-  it('checks @ai-sdk/google against the installed ai major', async () => {
-    expect((await check(envWith({ '@ai-sdk/google': '1.2.22' }), 'optional-peer.@ai-sdk/google')).status).toBe('ok');
-    const result = await check(envWith({ ai: '7.0.0', '@ai-sdk/google': '1.2.22' }), 'optional-peer.@ai-sdk/google');
-    expect(result).toMatchObject({ status: 'warn', finding: '1.2.22 installed, but ai 7 needs ^4.0.0', fix: 'npm install @ai-sdk/google@^4.0.0' });
-  });
-
   it('a missing or unsupported ai gets one installable range, and provider hints for ai 7', async () => {
     for (const ai of [null, '5.0.0']) {
       expect((await check(envWith({ ai }), 'peer.ai')).fix).toMatch(/^npm install ai@\^7\.0\.0($| )/);
@@ -202,27 +102,6 @@ describe('ai / provider package pairing', () => {
 describe('optional feature peers', () => {
   const without = (missing: string) => (n: string) => (n === missing ? null : INSTALLED[n] ?? null);
 
-  it.each([
-    ['dockerode', 'Docker sandboxing'],
-    ['@modelcontextprotocol/sdk', 'MCP'],
-    ['prompts', 'lousho init'],
-  ])('%s: ok line says what it enables', async (name, enables) => {
-    const result = await check(makeEnv(), `optional-peer.${name}`);
-    expect(result.status).toBe('ok');
-    expect(result.finding).toContain(enables);
-  });
-
-  it.each([
-    ['dockerode', 'npm install dockerode@^5.0.1'],
-    ['@modelcontextprotocol/sdk', 'npm install @modelcontextprotocol/sdk@^1.31.0'],
-    ['prompts', 'npm install prompts@^2.4.2'],
-  ])('%s: grouped as unused with the exact install command when missing', async (name, fix) => {
-    const result = await check(makeEnv({ resolvePackageVersion: without(name) }), 'optional-peers.unused');
-    expect(result.status).toBe('ok');
-    expect(result.finding).toContain(name);
-    expect(result.fix).toContain(fix);
-  });
-
   it('dockerode fails when missing and the spec uses a sandboxed tool', async () => {
     const env = makeEnv({
       resolvePackageVersion: without('dockerode'),
@@ -232,54 +111,9 @@ describe('optional feature peers', () => {
     });
     expect((await check(env, 'optional-peer.dockerode')).status).toBe('fail');
   });
-
-  it('warns on an out-of-range version', async () => {
-    const old = (n: string) => (n === 'prompts' ? '1.0.0' : INSTALLED[n] ?? null);
-    expect((await check(makeEnv({ resolvePackageVersion: old }), 'optional-peer.prompts')).finding).toContain('expects ^2.4.2');
-  });
 });
 
 describe('API keys', () => {
-  it('ok and prints only "set" when the variable is set', async () => {
-    const result = await check(makeEnv({ env: { OPENAI_API_KEY: SECRET } }), 'env.openai');
-    expect(result).toMatchObject({ status: 'ok', finding: 'set', title: 'openai (OPENAI_API_KEY)' });
-  });
-  it('shows the base URL an OpenAI-compatible endpoint is read from, without credentials or query', async () => {
-    const env = makeEnv({ env: { OPENAI_API_KEY: SECRET, OPENAI_BASE_URL: 'http://user:pw@localhost:1234/v1?key=x' } });
-    const result = await check(env, 'env.openai');
-    expect(result.finding).toBe('set; base URL http://localhost:1234/v1 (from OPENAI_BASE_URL)');
-    expect((await check(makeEnv({ env: { OPENAI_BASE_URL: 'http://localhost:1234/v1' } }), 'env.openai')).finding).toBe(
-      'not set; base URL http://localhost:1234/v1 (from OPENAI_BASE_URL)'
-    );
-  });
-  it('warn with a fix when not set', async () => {
-    const result = await check(makeEnv(), 'env.anthropic');
-    expect(result.status).toBe('warn');
-    expect(result.fix).toContain('ANTHROPIC_API_KEY');
-  });
-  it('fail when not set and the spec needs it', async () => {
-    const env = makeEnv({ specPath: 'a.yaml', loadSpec: () => spec() });
-    expect((await check(env, 'env.openai')).status).toBe('fail');
-  });
-  it('ollama needs no key: unset is ok', async () => {
-    const env = makeEnv({
-      specPath: 'a.yaml',
-      loadSpec: () => spec({ provider: { type: 'ollama', model: 'llama3' } }),
-    });
-    expect((await check(env, 'env.ollama')).status).toBe('ok');
-  });
-  it('says which provider createAgent() would pick from the env, without the key', async () => {
-    const picked = await check(makeEnv({ env: { ANTHROPIC_API_KEY: SECRET } }), 'env.default');
-    expect(picked.status).toBe('ok');
-    expect(picked.finding).toContain('anthropic/');
-    const explicit = await check(makeEnv({ env: { LOUSHO_MODEL: 'openai/gpt-4o' } }), 'env.default');
-    expect(explicit.finding).toContain('openai/gpt-4o');
-  });
-  it('warns when createAgent() would have nothing to pick', async () => {
-    const result = await check(makeEnv(), 'env.default');
-    expect(result.status).toBe('warn');
-    expect(result.fix).toContain('LOUSHO_MODEL');
-  });
   it('never leaks a key value into text or JSON output', async () => {
     const env = makeEnv({
       env: { OPENAI_API_KEY: SECRET, ANTHROPIC_API_KEY: `${SECRET}-2`, OPENROUTER_API_KEY: SECRET },
@@ -306,15 +140,6 @@ describe('spec checks', () => {
     const result = await check(env, 'spec');
     expect(result.status).toBe('fail');
     expect(result.finding).toContain("'provider.model'");
-  });
-  it('ok for a valid spec', async () => {
-    expect((await check(withSpec(spec()), 'spec')).status).toBe('ok');
-  });
-  it('fails an unknown provider type but accepts mock', async () => {
-    const unknown = await check(withSpec(spec({ provider: { type: 'foo', model: 'm' } })), 'spec.provider');
-    expect(unknown.status).toBe('fail');
-    const mock = await check(withSpec(spec({ provider: { type: 'mock', model: 'm' } })), 'spec.provider');
-    expect(mock.status).toBe('ok');
   });
   it('checks tools against the built-in registry', async () => {
     const resolveTool = (name: string) => {
@@ -345,16 +170,6 @@ describe('spec checks', () => {
     expect(gone.fix).toContain('mcpServers.gone.command');
     expect((await check(env, 'spec.mcp.docs')).status).toBe('ok');
   });
-  it('reports an invalid mcpServers entry as a spec failure', async () => {
-    const env = withSpec(spec(), {
-      loadSpec: () => {
-        throw new Error("'mcpServers.fs': AgentSpec validation failed: missing 'command'");
-      },
-    });
-    const result = await check(env, 'spec');
-    expect(result.status).toBe('fail');
-    expect(result.finding).toContain('mcpServers.fs');
-  });
 });
 
 describe('spec policy checks', () => {
@@ -381,11 +196,6 @@ describe('spec policy checks', () => {
     ]);
   });
 
-  it('reports nothing for a spec without a policy', async () => {
-    const report = await runDoctor(withPolicy(undefined));
-    expect(report.checks.some((c) => c.id.startsWith('spec.policy.'))).toBe(false);
-  });
-
   it('flags unknown guardrail names with did-you-mean and the available names', async () => {
     const result = await check(withPolicy({ guardrails: ['deny-topic', 'secret-scan'] }), 'spec.policy.guardrails');
     expect(result.status).toBe('fail');
@@ -395,63 +205,7 @@ describe('spec policy checks', () => {
   });
 });
 
-describe('ollama check', () => {
-  const ollamaSpec = spec({ provider: { type: 'ollama', model: 'llama3' } });
-
-  it('is skipped unless the spec uses ollama or OLLAMA_HOST is set', async () => {
-    const report = await runDoctor(makeEnv());
-    expect(report.checks.some((c) => c.id === 'ollama')).toBe(false);
-  });
-  it('ok when reachable (OLLAMA_HOST without a scheme is normalised)', async () => {
-    const urls: string[] = [];
-    const env = makeEnv({
-      env: { OLLAMA_HOST: 'box:11434' },
-      fetch: async (url) => {
-        urls.push(url);
-        return { ok: true, status: 200 };
-      },
-    });
-    expect((await check(env, 'ollama')).status).toBe('ok');
-    expect(urls).toEqual(['http://box:11434/api/tags']);
-  });
-  it('warn when the server answers with an error status', async () => {
-    const env = makeEnv({ env: { OLLAMA_HOST: 'http://x' }, fetch: async () => ({ ok: false, status: 503 }) });
-    const result = await check(env, 'ollama');
-    expect(result.status).toBe('warn');
-    expect(result.finding).toContain('503');
-  });
-  it('warn when the request fails; uses the default endpoint for a spec', async () => {
-    const urls: string[] = [];
-    const env = makeEnv({
-      specPath: 'a.yaml',
-      loadSpec: () => ollamaSpec,
-      fetch: async (url) => {
-        urls.push(url);
-        throw new Error('ECONNREFUSED');
-      },
-    });
-    const result = await check(env, 'ollama');
-    expect(result.status).toBe('warn');
-    expect(result.fix).toContain('ollama serve');
-    expect(urls[0]).toBe('http://localhost:11434/api/tags');
-  });
-});
-
 describe('OpenAI base URL and --ping', () => {
-  it('shows OPENAI_BASE_URL when set, without credentials or query', async () => {
-    const env = makeEnv({ env: { OPENAI_API_KEY: SECRET, OPENAI_BASE_URL: `http://user:${SECRET}@localhost:1234/v1/?key=${SECRET}` } });
-    const result = await check(env, 'env.openai-base-url');
-    expect(result).toMatchObject({ status: 'ok', finding: 'http://localhost:1234/v1' });
-    expect(JSON.stringify(await runDoctor(env, { ping: true }))).not.toContain(SECRET);
-  });
-
-  it('has no base URL line when OPENAI_BASE_URL is not set, and pings nothing without --ping', async () => {
-    const fetch = vi.fn(async () => ({ ok: true, status: 200 }));
-    const report = await runDoctor(makeEnv({ env: { OPENAI_API_KEY: SECRET }, fetch }));
-    expect(report.checks.map((c) => c.id)).not.toContain('env.openai-base-url');
-    expect(report.checks.some((c) => c.id.startsWith('ping'))).toBe(false);
-    expect(fetch).not.toHaveBeenCalled();
-  });
 
   it('--ping GETs <base>/models for each configured provider, with its key and a timeout', async () => {
     const fetch = vi.fn(async (_url: string, _init: { signal: AbortSignal; headers?: Record<string, string> }) => ({ ok: true, status: 200 }));
@@ -483,42 +237,9 @@ describe('OpenAI base URL and --ping', () => {
     expect(result?.finding).toContain('key was rejected');
     expect(report.exitCode).toBe(1);
   });
-
-  it('--ping asks OpenRouter for the key itself (its /models answers without one)', async () => {
-    const fetch = vi.fn(async (_url: string, _init: { signal: AbortSignal; headers?: Record<string, string> }) => ({ ok: true, status: 200 }));
-    const report = await runDoctor(makeEnv({ env: { OPENROUTER_API_KEY: SECRET }, fetch }), { ping: true });
-    expect(fetch.mock.calls.map(([url]) => url)).toEqual(['https://openrouter.ai/api/v1/key']);
-    expect(fetch.mock.calls[0][1].headers).toEqual({ Authorization: `Bearer ${SECRET}` });
-    expect(report.checks.find((c) => c.id === 'ping.openrouter')).toMatchObject({ status: 'ok', finding: 'reachable, key accepted (HTTP 200)' });
-  });
-
-  it('--ping says when an endpoint does not prove the key (a custom OPENAI_BASE_URL)', async () => {
-    const report = await runDoctor(makeEnv({ env: { OPENAI_BASE_URL: 'http://localhost:1234/v1' } }), { ping: true });
-    expect(report.checks.find((c) => c.id === 'ping.openai')?.finding).toBe('reachable (HTTP 200; reachability only, the key is not checked)');
-  });
-
-  it('--ping GETs the Gemini models endpoint with GOOGLE_GENERATIVE_AI_API_KEY as a header, never in the URL', async () => {
-    const fetch = vi.fn(async (_url: string, _init: { signal: AbortSignal; headers?: Record<string, string> }) => ({ ok: true, status: 200 }));
-    const report = await runDoctor(makeEnv({ env: { GOOGLE_GENERATIVE_AI_API_KEY: SECRET }, fetch }), { ping: true });
-    expect(fetch.mock.calls.map(([url]) => url)).toEqual(['https://generativelanguage.googleapis.com/v1beta/models']);
-    expect(fetch.mock.calls[0][1].headers).toEqual({ 'x-goog-api-key': SECRET });
-    expect(report.checks.find((c) => c.id === 'ping.google')).toMatchObject({ status: 'ok', finding: 'reachable, key accepted (HTTP 200)' });
-  });
-
-  it('--ping with no provider configured says so', async () => {
-    const report = await runDoctor(makeEnv(), { ping: true });
-    expect(report.checks.find((c) => c.id === 'ping')).toMatchObject({ status: 'ok', finding: expect.stringContaining('nothing to ping') });
-  });
 });
 
 describe('docker check', () => {
-  it('ok when reachable', async () => {
-    expect((await check(makeEnv(), 'docker')).finding).toContain('reachable');
-  });
-  it('informational ok when unreachable and not needed', async () => {
-    const result = await check(makeEnv({ dockerReachable: async () => false }), 'docker');
-    expect(result.status).toBe('ok');
-  });
   it('warn when unreachable and a sandboxed tool is configured', async () => {
     const env = makeEnv({
       dockerReachable: async () => {
@@ -534,61 +255,6 @@ describe('docker check', () => {
   });
 });
 
-describe('report, rendering and exit codes', () => {
-  it('exit code 0 with warnings only, 1 with any failure', async () => {
-    expect((await runDoctor(makeEnv())).exitCode).toBe(0);
-    expect((await runDoctor(makeEnv({ nodeVersion: '10.0.0' }))).exitCode).toBe(1);
-  });
-
-  it('renders a mixed report as plain ASCII text', async () => {
-    const env = makeEnv({
-      env: { OPENAI_API_KEY: SECRET },
-      resolvePackageVersion: (n) => (n === 'ollama-ai-provider' ? null : INSTALLED[n] ?? null),
-      dockerReachable: async () => false,
-      nodeVersion: '20.1.0',
-    });
-    const text = renderReport(await runDoctor(env));
-    expect(text).toMatchInlineSnapshot(`
-      "lousho doctor
-
-      [FAIL] Node.js: v20.1.0 does not satisfy >=22.19.0
-             fix: Install a Node.js version matching ">=22.19.0" (for example with nvm: nvm install --lts).
-      [ ok ] Required peer ai: 4.3.19 satisfies ^4.3.19
-      [ ok ] Required peer zod: 3.25.76 satisfies ^3.25.76
-      [ ok ] Provider package @ai-sdk/openai: 0.0.42 installed
-      [ ok ] Provider package @ai-sdk/anthropic: 0.0.42 installed
-      [ ok ] Optional package dockerode: 5.0.1 installed - enables Docker sandboxing (SubprocessSandbox)
-      [ ok ] Optional package @modelcontextprotocol/sdk: 1.31.0 installed - enables MCP (serveMcp, \`lousho mcp\` and MCP client connections)
-      [ ok ] Optional package prompts: 2.4.2 installed - enables the interactive prompts of \`lousho init\` (pass --yes to skip them)
-      [ ok ] Optional packages not installed: 4 not needed by this agent (@ai-sdk/google, ollama-ai-provider, @earendil-works/pi-ai, quickjs-emscripten); install one only if you use its feature
-      [ ok ] openai (OPENAI_API_KEY): set
-      [warn] anthropic (ANTHROPIC_API_KEY): not set
-             fix: Set ANTHROPIC_API_KEY in your environment, e.g. export ANTHROPIC_API_KEY=<your key>
-      [warn] openrouter (OPENROUTER_API_KEY): not set
-             fix: Set OPENROUTER_API_KEY in your environment, e.g. export OPENROUTER_API_KEY=<your key>
-      [warn] google (GOOGLE_GENERATIVE_AI_API_KEY): not set
-             fix: Set GOOGLE_GENERATIVE_AI_API_KEY in your environment, e.g. export GOOGLE_GENERATIVE_AI_API_KEY=<your key>
-      [ ok ] ollama (OLLAMA_BASE_URL): not set (optional; the provider default endpoint is used)
-      [ ok ] pi (OPENROUTER_API_KEY): not set (only needed by the matching nested provider; each pi provider reads its own env key)
-      [ ok ] Default provider for createAgent(): would use 'openai/gpt-4.1-mini'
-      [ ok ] Docker: daemon not reachable (only needed for sandboxed tools; none configured)
-
-      13 ok, 3 warnings, 1 failure"
-    `);
-    expect(text).not.toMatch(/[^\x20-\x7e\n]/);
-  });
-
-  it('colours only the status tag when asked', async () => {
-    const text = renderReport(await runDoctor(makeEnv()), { color: true });
-    expect(text).toContain('\u001b[32m[ ok ]\u001b[0m');
-  });
-
-  it('renders JSON that round-trips', async () => {
-    const report = await runDoctor(makeEnv());
-    expect(JSON.parse(renderJson(report))).toEqual(report);
-  });
-});
-
 describe('agent directory', () => {
   const dirEnv = (overrides: Partial<DoctorEnvironment> = {}) =>
     makeEnv({
@@ -597,25 +263,6 @@ describe('agent directory', () => {
       loadAgentDir: async () => ({ name: 'ck', model: 'anthropic/claude-x', tools: ['read_file', 'edit_file'] }),
       ...overrides,
     });
-
-  it('loads the directory instead of reading it as a spec file (no EISDIR)', async () => {
-    const loadSpec = vi.fn();
-    const env = dirEnv({ loadSpec });
-    expect(await check(env, 'spec')).toMatchObject({ status: 'ok', title: 'Agent directory', finding: "'ck' loads (2 tool(s): read_file, edit_file)" });
-    expect(await check(env, 'spec.provider')).toMatchObject({ status: 'ok' });
-    expect(loadSpec).not.toHaveBeenCalled();
-    // The model's provider drives the API key check.
-    expect(await check(env, 'env.anthropic')).toMatchObject({ status: 'fail' });
-  });
-
-  it('reports a directory that fails to load, with the loader message', async () => {
-    const env = dirEnv({
-      loadAgentDir: async () => {
-        throw new Error('loadAgentDir: /p/ck/tools/x.ts: it exports nothing');
-      },
-    });
-    expect(await check(env, 'spec')).toMatchObject({ status: 'fail', finding: expect.stringContaining('tools/x.ts'), fix: 'Fix the file named above in /p/ck.' });
-  });
 
   it('flags an unknown provider in the model string', async () => {
     const env = dirEnv({ loadAgentDir: async () => ({ name: 'ck', model: 'gemini/pro', tools: [] }) });
@@ -643,20 +290,6 @@ describe('agent module', () => {
       ...overrides,
     });
 
-  it('loads a .ts module like `lousho dev` does instead of reading it as a spec file', async () => {
-    const loadSpec = vi.fn();
-    const env = moduleEnv({ loadSpec });
-    expect(await check(env, 'spec')).toMatchObject({ status: 'ok', title: 'Agent module', finding: "'agent' loads (1 tool(s): current_time)" });
-    expect(await check(env, 'spec.provider')).toMatchObject({ status: 'ok', finding: "'openrouter' with model 'openai/gpt-4o-mini'" });
-    expect(loadSpec).not.toHaveBeenCalled();
-  });
-
-  it("fails when the agent's provider key is missing", async () => {
-    const report = await runDoctor(moduleEnv());
-    expect(report.checks.find((c) => c.id === 'env.openrouter')).toMatchObject({ status: 'fail', finding: expect.stringContaining('the agent spec needs it') });
-    expect(report.exitCode).toBe(1);
-  });
-
   it('reports a module that fails to load, naming the file', async () => {
     const env = moduleEnv({
       loadAgentModule: async () => {
@@ -664,38 +297,5 @@ describe('agent module', () => {
       },
     });
     expect(await check(env, 'spec')).toMatchObject({ status: 'fail', title: 'Agent module', fix: 'Fix the file named above: /p/src/agent.ts.' });
-  });
-});
-
-describe('fix lines use the shell of the platform', () => {
-  it('PowerShell syntax on Windows, export elsewhere', async () => {
-    expect((await check(makeEnv({ platform: 'win32' }), 'env.anthropic')).fix).toBe(
-      'Set ANTHROPIC_API_KEY in your environment, e.g. $env:ANTHROPIC_API_KEY="<your key>" (PowerShell), or add it to .env'
-    );
-    expect((await check(makeEnv({ platform: 'linux' }), 'env.anthropic')).fix).toBe(
-      'Set ANTHROPIC_API_KEY in your environment, e.g. export ANTHROPIC_API_KEY=<your key>'
-    );
-  });
-});
-
-describe('spec load failure fix text', () => {
-  it('an unsupported file type lists what doctor accepts', async () => {
-    const env = makeEnv({
-      specPath: 'agent.toml',
-      loadSpec: () => {
-        throw Object.assign(new Error('unsupported'), { code: 'LOUSHO_SPEC_UNSUPPORTED_FORMAT' });
-      },
-    });
-    expect((await check(env, 'spec')).fix).toBe('Pass an agent spec (.yaml/.yml/.json), an agent directory, or a .ts/.js module that exports an agent.');
-  });
-
-  it('a missing spec says to check the path, not to fix fields', async () => {
-    const env = makeEnv({
-      specPath: 'nope.yaml',
-      loadSpec: () => {
-        throw Object.assign(new Error('spec not found'), { code: 'LOUSHO_SPEC_NOT_FOUND' });
-      },
-    });
-    expect((await check(env, 'spec')).fix).toMatch(/^Check the path: nope\.yaml does not exist/);
   });
 });

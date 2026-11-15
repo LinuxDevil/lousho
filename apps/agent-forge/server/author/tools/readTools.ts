@@ -107,7 +107,7 @@ const listModels: AuthorToolFactory = (_turn, deps) =>
     }),
     execute: (input) =>
       guardedToolCall('listModels', async () => {
-        const items = deps.catalog.listModels(input.provider).map((model) => ({
+        const items = (await deps.catalog.listModels(input.provider)).map((model) => ({
           id: model.id,
           provider: model.provider,
           contextWindow: model.contextWindow,

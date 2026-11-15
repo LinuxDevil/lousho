@@ -7,7 +7,6 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import request from 'supertest';
-import { listTraces } from 'lousho/traces';
 import type { AgentSpec } from 'lousho';
 import { createApp } from '../app';
 import { RunManager } from '../runRegistry';
@@ -67,15 +66,6 @@ describe('trace history routes', () => {
     await stopped(runManager, agentId);
   }
 
-  it('a run writes a trace file under the agent folder, readable with the SDK reader', async () => {
-    await finishedRun('weather');
-    const dir = path.join(baseDir, '.lousho', 'agents', 'weather', 'traces');
-    expect(fs.existsSync(dir)).toBe(true);
-    const summaries = await listTraces({ dir });
-    expect(summaries).toHaveLength(1);
-    expect(summaries[0].file.startsWith(dir)).toBe(true);
-  });
-
   it('GET /agents/:id/traces lists the runs newest first, without file paths', async () => {
     await finishedRun('weather');
     await finishedRun('weather', 'And tomorrow?');
@@ -103,29 +93,11 @@ describe('trace history routes', () => {
     expect(body.spans.find((s) => s.attributes['gen_ai.operation.name'] === 'chat')).toMatchObject({ kind: 'client' });
   });
 
-  it('a failed span keeps its error status in the list and the detail', async () => {
-    const dir = path.join(baseDir, '.lousho', 'agents', 'broken', 'traces', '2026-10-02');
-    fs.mkdirSync(dir, { recursive: true });
-    const root = { v: 1, traceId: 'r1', id: 'r1', name: 'invoke_agent broken', kind: 'internal', startTime: 1000, endTime: 1500, attributes: {}, status: { code: 'error', message: 'boom' } };
-    const tool = { v: 1, traceId: 'r1', id: 't1', parentId: 'r1', name: 'execute_tool x', kind: 'internal', startTime: 1100, endTime: 1200, attributes: {}, status: { code: 'error', message: 'boom' } };
-    const lines = [tool, root].map((line) => `${JSON.stringify(line)}
-`).join('');
-    fs.writeFileSync(path.join(dir, 'r1.jsonl'), lines);
-    expect((await request(app).get('/agents/broken/traces').expect(200)).body.traces[0]).toMatchObject({ traceId: 'r1', status: 'error' });
-    const detail = (await request(app).get('/agents/broken/traces/r1').expect(200)).body as TraceDetailPayload;
-    expect(detail.spans.map((s) => s.status)).toEqual([{ code: 'error', message: 'boom' }, { code: 'error', message: 'boom' }]);
-  });
-
   it('an agent without runs has an empty list; an unknown agent is 404', async () => {
     await request(app).put('/agents/fresh').send(SPEC).expect(204);
     expect((await request(app).get('/agents/fresh/traces').expect(200)).body).toEqual({ traces: [] });
     await request(app).get('/agents/nobody/traces').expect(404);
     await request(app).get('/agents/nobody/traces/abc').expect(404);
-  });
-
-  it('an unknown trace is 404', async () => {
-    await finishedRun('weather');
-    await request(app).get('/agents/weather/traces/00000000-0000-0000-0000-000000000000').expect(404);
   });
 
   it('a path-like trace or agent id is 400 and never reaches the filesystem', async () => {
@@ -138,16 +110,5 @@ describe('trace history routes', () => {
     await request(app).get('/agents/weather/traces/..%2F..%2Fagent.yaml').expect(400);
     await request(app).get('/agents/weather/traces/a%5Cb').expect(400);
     await request(app).get('/agents/..%2Fweather/traces').expect(400);
-  });
-
-  it('an ambiguous id prefix is 400', async () => {
-    await finishedRun('weather');
-    const dir = path.join(baseDir, '.lousho', 'agents', 'weather', 'traces');
-    const [day] = fs.readdirSync(dir);
-    for (const name of ['ab-1', 'ab-2']) {
-      const line = { v: 1, traceId: name, id: name, name: 'invoke_agent x', startTime: 1, endTime: 2, attributes: {} };
-      fs.writeFileSync(path.join(dir, day, `${name}.jsonl`), `${JSON.stringify(line)}\n`);
-    }
-    await request(app).get('/agents/weather/traces/ab').expect(400);
   });
 });

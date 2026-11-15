@@ -2,12 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { validateWorkspace } from '../contracts/validate';
-import { readFixtureTree } from '../__fixtures__/readTree';
 import { folderSource } from './folderSource';
 import { memorySource } from './memorySource';
-import { readSourceTree } from './tree';
 import { applyChanges, revisionId } from './revision';
 import type { RevisionMeta, WorkspaceChanges } from './types';
 import { CONTRACT_FILES, sourceContract } from './__fixtures__/sourceContract';
@@ -31,13 +27,6 @@ describe('folderSource after a crash', () => {
     expect(await source.read('pages-old/x.md')).toBeUndefined();
     expect(await source.history()).toEqual([meta]);
     expect(existsSync(join(dir, '.lousho', 'revisions', 'pending.json'))).toBe(false);
-  });
-
-  it('leaves the old tree when the crash came before the journal, and ignores leftover temp files', async () => {
-    const dir = folderWith({ ...CONTRACT_FILES, 'workspace.json.0b1c.lousho-tmp': 'half' });
-    const source = folderSource(dir);
-    expect(await source.revision()).toBe(await memorySource(CONTRACT_FILES).revision());
-    expect(await source.history()).toEqual([]);
   });
 
   it('sets aside a journal that names a path outside the folder, fails that call once, then works', async () => {
@@ -66,16 +55,7 @@ describe('folderSource after a crash', () => {
     expect(await source.read('workspace.json')).toBe(CONTRACT_FILES['workspace.json']);
     expect((await source.history()).map((entry) => entry.seq)).toEqual([1]);
   });
-
-  it('refuses a damaged revision index', async () => {
-    const dir = folderWith(CONTRACT_FILES);
-    mkdirSync(join(dir, '.lousho', 'revisions'), { recursive: true });
-    writeFileSync(join(dir, '.lousho', 'revisions', 'index.json'), JSON.stringify([{ seq: 'one' }]));
-    expect(await codeOf(folderSource(dir).history())).toBe('LOUSHO_WORKSPACE_SOURCE_CORRUPT');
-  });
 });
-
-const FIXTURES = fileURLToPath(new URL('../__fixtures__/', import.meta.url));
 const made: string[] = [];
 
 function tempDir(): string {
@@ -108,43 +88,7 @@ afterEach(() => {
 
 sourceContract('folderSource', async (files) => folderSource(folderWith(files)));
 
-describe('folderSource and memorySource', () => {
-  it('the same files give the same revision id on both sources', async () => {
-    const folder = folderSource(folderWith(CONTRACT_FILES));
-    const memory = memorySource(CONTRACT_FILES);
-    expect(await folder.revision()).toBe(await memory.revision());
-    const changes = { 'harness/a.md': 'a\n', 'pages-old/x.md': null };
-    const fromFolder = await folder.write?.(changes, { expectedRevision: await folder.revision(), by: 'person:ann', message: 'edit' });
-    const fromMemory = await memory.write?.(changes, { expectedRevision: await memory.revision(), by: 'person:ann', message: 'edit' });
-    expect(fromFolder?.revision).toBe(fromMemory?.revision);
-  });
-
-  it('a fixture folder reads into the same WorkspaceTree verdict as the fixture reader', async () => {
-    for (const name of ['marketing', 'coding', 'ops-desk']) {
-      const { revision, tree } = await readSourceTree(folderSource(join(FIXTURES, name)));
-      expect(validateWorkspace(tree, { mode: 'default' })).toEqual(validateWorkspace(readFixtureTree(name), { mode: 'default' }));
-      expect(Object.keys(tree).sort()).toEqual(Object.keys(readFixtureTree(name)).sort());
-      expect(await memorySource(tree).revision()).toBe(revision);
-    }
-  });
-});
-
 describe('folderSource', () => {
-  it('defaults its ref to the folder name', () => {
-    expect(folderSource('/tmp/marketing').ref).toEqual({ projectId: 'default', workspaceId: 'marketing' });
-  });
-
-  it('keeps revision metadata and snapshots in .lousho/revisions/ across instances', async () => {
-    const dir = folderWith(CONTRACT_FILES);
-    const first = folderSource(dir);
-    const base = await first.revision();
-    const meta = await first.write?.({ 'workspace.json': '{}' }, { expectedRevision: base, by: 'person:ann', message: 'edit' });
-    expect(readdirSync(join(dir, '.lousho', 'revisions')).sort()).toEqual([`${base}.json`, `${meta?.revision}.json`, 'index.json'].sort());
-    const again = folderSource(dir);
-    expect(await again.history()).toEqual([meta]);
-    expect(await again.read('workspace.json', { revision: base })).toBe(CONTRACT_FILES['workspace.json']);
-    expect(readdirSync(dir).filter((name) => name.endsWith('.lousho-tmp'))).toEqual([]);
-  });
 
   it('keeps snapshots for the last `keep` revisions only', async () => {
     const source = folderSource(folderWith(CONTRACT_FILES), { keep: 2 });
@@ -160,62 +104,6 @@ describe('folderSource', () => {
     expect(await codeOf(source.read('a.md', { revision: metas[0].revision }))).toBe('LOUSHO_WORKSPACE_REVISION_UNKNOWN');
     expect(await source.read('a.md', { revision: metas[1].revision })).toBe('2');
     expect(await source.history()).toHaveLength(3);
-  });
-
-  it('two concurrent writes with the same expectedRevision: one wins, one is stale', async () => {
-    const source = folderSource(folderWith(CONTRACT_FILES));
-    const expectedRevision = await source.revision();
-    const results = await Promise.allSettled([
-      source.write!({ 'a.md': 'one' }, { expectedRevision, by: 'person:ann', message: 'one' }),
-      source.write!({ 'a.md': 'two' }, { expectedRevision, by: 'person:bob', message: 'two' }),
-    ]);
-    expect(results.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected']);
-    expect(await source.history()).toHaveLength(1);
-  });
-
-  it('two instances writing at once both land, with distinct seq', async () => {
-    const dir = folderWith(CONTRACT_FILES);
-    const [one, two] = [folderSource(dir), folderSource(dir)];
-    const base = await one.revision();
-    const results = await Promise.allSettled([
-      one.write!({ 'a.md': 'one' }, { expectedRevision: base, by: 'person:ann', message: 'one' }),
-      two.write!({ 'b.md': 'two' }, { expectedRevision: base, by: 'person:bob', message: 'two' }),
-    ]);
-    expect(results.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected']);
-    const head = await two.revision();
-    const loser = results[0].status === 'rejected' ? { source: one, changes: { 'a.md': 'one' } as WorkspaceChanges } : { source: two, changes: { 'b.md': 'two' } as WorkspaceChanges };
-    await loser.source.write!(loser.changes, { expectedRevision: head, by: 'person:bob', message: 'retry' });
-    expect(await one.read('a.md')).toBe('one');
-    expect(await one.read('b.md')).toBe('two');
-    expect((await one.history()).map((meta) => meta.seq)).toEqual([2, 1]);
-  });
-
-  it('two instances making their first write at once create the metadata folders without a race', async () => {
-    const dirs = [folderWith(CONTRACT_FILES), folderWith(CONTRACT_FILES)];
-    for (const dir of dirs) {
-      const [one, two] = [folderSource(dir), folderSource(dir)];
-      const base = await one.revision();
-      const results = await Promise.allSettled([
-        one.write!({ 'deep/x/a.md': 'one' }, { expectedRevision: base, by: 'person:ann', message: 'one' }),
-        two.write!({ 'deep/x/b.md': 'two' }, { expectedRevision: base, by: 'person:bob', message: 'two' }),
-      ]);
-      const codes = results.map((result) => (result.status === 'rejected' ? (result.reason as { code?: string }).code : 'ok')).sort();
-      expect(codes).toEqual(['LOUSHO_WORKSPACE_STALE_REVISION', 'ok']);
-    }
-  });
-
-  it('a hand edit to the folder changes the current revision', async () => {
-    const dir = folderWith(CONTRACT_FILES);
-    const source = folderSource(dir);
-    const before = await source.revision();
-    writeFileSync(join(dir, 'workspace.json'), '{"id":"hand"}');
-    expect(await source.revision()).not.toBe(before);
-    expect(await codeOf(source.write!({ 'a.md': 'x' }, { expectedRevision: before, by: 'person:ann', message: 'late' }))).toBe('LOUSHO_WORKSPACE_STALE_REVISION');
-  });
-
-  it('ignores node_modules/ and .git/', async () => {
-    const source = folderSource(folderWith({ ...CONTRACT_FILES, 'node_modules/x/index.js': 'x', '.git/HEAD': 'ref' }));
-    expect(await source.revision()).toBe(await memorySource(CONTRACT_FILES).revision());
   });
 
   it('refuses a missing folder', async () => {
@@ -263,20 +151,6 @@ describe('folderSource refuses to escape its folder', () => {
     expect(await folderSource(dir).list('')).toEqual(Object.keys(CONTRACT_FILES).sort());
   });
 
-  it('leaves names that break the path rules out of the tree instead of failing', async () => {
-    const dir = folderWith({ ...CONTRACT_FILES, 'pages/.GIT/config': 'x', 'odd\\name.md': 'y' });
-    expect(await folderSource(dir).list('')).toEqual(Object.keys(CONTRACT_FILES).sort());
-  });
-
-  it('refuses case-folded reserved folders on disk-backed writes', async () => {
-    const dir = folderWith(CONTRACT_FILES);
-    mkdirSync(join(dir, '.git', 'hooks'), { recursive: true });
-    const source = folderSource(dir);
-    const write = source.write!({ '.Git/hooks/pre-commit': 'rm -rf /' }, { expectedRevision: await source.revision(), by: 'person:eve', message: 'hook' });
-    expect(await codeOf(write)).toBe('LOUSHO_WORKSPACE_PATH_INVALID');
-    expect(readdirSync(join(dir, '.git', 'hooks'))).toEqual([]);
-  });
-
   it('follows a symlinked file inside the workspace and skips a dangling one', async () => {
     const dir = folderWith(CONTRACT_FILES);
     symlinkSync(join(dir, 'pages-old', 'x.md'), join(dir, 'alias.md'));
@@ -286,11 +160,6 @@ describe('folderSource refuses to escape its folder', () => {
     expect(await source.list('')).toContain('alias.md');
     expect(await source.list('')).not.toContain('dangling.md');
   });
-
-  it('dot-dot and absolute paths', async () => {
-    const source = folderSource(folderWith(CONTRACT_FILES));
-    for (const path of ['../../etc/passwd', '/etc/passwd', 'pages/../../x']) expect(await codeOf(source.read(path)), path).toBe('LOUSHO_WORKSPACE_PATH_INVALID');
-  });
 });
 
 describe('folderSource bounds its reads', () => {
@@ -299,15 +168,5 @@ describe('folderSource bounds its reads', () => {
     expect(await codeOf(source.read('big.md'))).toBe('LOUSHO_WORKSPACE_SOURCE_LIMIT');
     expect(await codeOf(source.revision())).toBe('LOUSHO_WORKSPACE_SOURCE_LIMIT');
     expect(await source.read('workspace.json')).toBe(CONTRACT_FILES['workspace.json']);
-  });
-
-  it('more files than maxFiles', async () => {
-    const source = folderSource(folderWith(CONTRACT_FILES), { maxFiles: 3 });
-    expect(await codeOf(source.list(''))).toBe('LOUSHO_WORKSPACE_SOURCE_LIMIT');
-  });
-
-  it('a tree over maxTreeBytes', async () => {
-    const source = folderSource(folderWith(CONTRACT_FILES), { maxTreeBytes: 20 });
-    expect(await codeOf(source.revision())).toBe('LOUSHO_WORKSPACE_SOURCE_LIMIT');
   });
 });

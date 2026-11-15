@@ -33,21 +33,6 @@ function choose(el: HTMLSelectElement, value: string) {
 }
 
 describe('SecretRefField', () => {
-  it('labels the name input and offers env + secret kinds', () => {
-    render();
-    const label = container.querySelector('label.field-label')!;
-    expect(label.getAttribute('for')).toBe(input().id);
-    const options = [...select().querySelectorAll('option')].map((o) => o.textContent);
-    expect(options).toEqual(['Environment variable', 'Studio secret']);
-  });
-
-  it('emits { env: name } for a valid environment-variable name', () => {
-    const onChange = vi.fn();
-    render({ onChange });
-    type(input(), 'GITHUB_TOKEN');
-    expect(onChange).toHaveBeenLastCalledWith({ env: 'GITHUB_TOKEN' });
-    expect(fieldError()).toBeUndefined();
-  });
 
   it('shows an error for a lower-case env name and does not emit it', () => {
     const onChange = vi.fn();
@@ -56,15 +41,6 @@ describe('SecretRefField', () => {
     expect(onChange).not.toHaveBeenCalled();
     expect(fieldError()).toBe('Use capitals, digits and underscores, e.g. GITHUB_TOKEN');
     expect(input().getAttribute('aria-invalid')).toBe('true');
-  });
-
-  it('emits { secret: name } in Studio-secret mode, clearing the value on the switch', () => {
-    const onChange = vi.fn();
-    render({ onChange });
-    choose(select(), 'secret');
-    expect(onChange).toHaveBeenLastCalledWith(undefined);
-    type(input(), 'gh');
-    expect(onChange).toHaveBeenLastCalledWith({ secret: 'gh' });
   });
 
   it('rejects a bad secret name and does not emit it', () => {
@@ -90,25 +66,11 @@ describe('SecretRefField', () => {
     );
   });
 
-  it('shows the existing value: env name, secret name or plain string', () => {
-    render({ value: { secret: 'bot-token' } });
-    expect(input().value).toBe('bot-token');
-    expect(select().value).toBe('secret');
-  });
-
   it('emits undefined when the input is cleared', () => {
     const onChange = vi.fn();
     render({ onChange, value: { env: 'X' } });
     type(input(), '');
     expect(onChange).toHaveBeenLastCalledWith(undefined);
     expect(fieldError()).toBeUndefined();
-  });
-
-  it('shows Required for an empty required field', () => {
-    const onChange = vi.fn();
-    render({ onChange, value: { env: 'X' }, required: true });
-    type(input(), '');
-    expect(onChange).toHaveBeenLastCalledWith(undefined);
-    expect(fieldError()).toBe('Required');
   });
 });

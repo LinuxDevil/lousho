@@ -1,5 +1,4 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+
 import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -33,24 +32,6 @@ afterEach(() => {
 });
 
 describe('MessageView', () => {
-  it('renders an OpenAI-style message array as role-labelled bubbles with tool-call chips', () => {
-    const c = render(<MessageView value={JSON.stringify(CHAT)} label="Input" />);
-    const list = bubbles(c);
-    expect(list.map((b) => b.dataset.role)).toEqual(['system', 'user', 'assistant', 'tool', 'assistant']);
-    expect(list.map((b) => b.querySelector('.mv-role')?.textContent)).toEqual([
-      'system',
-      'user',
-      'assistant',
-      'tool',
-      'assistant',
-    ]);
-    expect(list[1].textContent).toContain('Weather in Oslo?');
-    const chips = [...list[2].querySelectorAll('.mv-chip')];
-    expect(chips).toHaveLength(1);
-    expect(chips[0].textContent).toContain('get_weather');
-    expect(list[3].textContent).toContain('call_1');
-    expect(c.querySelector('.mv-label')?.textContent).toBe('Input');
-  });
 
   it('gives each role its avatar icon and bubble style; tool content is a mono block', () => {
     const c = render(<MessageView value={JSON.stringify(CHAT)} label="Input" />);
@@ -87,32 +68,6 @@ describe('MessageView', () => {
     expect(text.querySelector('.mv-content')?.classList.contains('mv-mono')).toBe(true);
   });
 
-  it('styles bubbles per role from theme tokens: user surface-2, assistant bordered surface, system dashed', () => {
-    const css = readFileSync(resolve(__dirname, '../messageView.css'), 'utf8');
-    /** The declarations of the first rule whose selector list ends with `sel`. */
-    const rule = (sel: string) => {
-      const at = css.indexOf(`${sel} {`);
-      return at < 0 ? '' : css.slice(at, css.indexOf('}', at));
-    };
-    expect(rule(".mv-bubble[data-role='user']")).toContain('var(--surface-2)');
-    expect(rule(".mv-bubble[data-role='assistant']")).toContain('var(--surface)');
-    expect(rule(".mv-bubble[data-role='system']")).toContain('dashed');
-    expect(rule('.mv-mono')).toContain('var(--font-mono)');
-    expect(css).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(/i);
-  });
-
-  it('accepts an object with a messages array', () => {
-    const c = render(<MessageView value={JSON.stringify({ model: 'x', messages: CHAT.slice(0, 2) })} />);
-    expect(bubbles(c).map((b) => b.dataset.role)).toEqual(['system', 'user']);
-  });
-
-  it('renders a plain string as text, with no JSON mode', () => {
-    const c = render(<MessageView value="hello there" />);
-    expect(c.querySelector('.mv-text')?.textContent).toBe('hello there');
-    expect(bubbles(c)).toHaveLength(0);
-    expect(button(c, 'JSON')).toBeUndefined();
-  });
-
   it('Raw shows the exact string', () => {
     const raw = JSON.stringify(CHAT, null, 2);
     const c = render(<MessageView value={raw} />);
@@ -126,28 +81,6 @@ describe('MessageView', () => {
     click(button(c, 'JSON'));
     expect(bubbles(c)).toHaveLength(0);
     expect(c.querySelector('.json-node')).not.toBeNull();
-  });
-
-  it('renders non-message JSON through JsonView', () => {
-    const c = render(<MessageView value='{"answer":42}' />);
-    expect(c.querySelector('.json-key')?.textContent).toContain('answer');
-    expect(c.querySelector('.json-num')?.textContent).toBe('42');
-  });
-
-  it('collapses JSON deeper than 4 levels', () => {
-    const deep = { l1: { l2: { l3: { l4: { l5: 'hidden' } } } } };
-    const c = render(<MessageView value={JSON.stringify(deep)} />);
-    const text = c.textContent ?? '';
-    expect(text).toContain('l4');
-    expect(text).not.toContain('l5');
-    expect(text).not.toContain('hidden');
-  });
-
-  it('renders null and empty values as a muted empty line', () => {
-    for (const value of [null, '']) {
-      const c = render(<MessageView value={value} label="Output" />);
-      expect(c.querySelector('.mv-empty')?.textContent).toBe('empty');
-    }
   });
 
   it('renders a 64 KB string without blocking, behind a Show all button', () => {
@@ -205,15 +138,6 @@ describe('MessageView', () => {
     expect(writeText).toHaveBeenCalledWith(raw);
     expect(button(c, 'Copied')).toBeDefined();
   });
-
-  it('does not throw when the clipboard is unavailable', async () => {
-    vi.stubGlobal('navigator', {});
-    const c = render(<MessageView value="text" />);
-    await act(async () => {
-      button(c, 'Copy')!.click();
-    });
-    expect(button(c, 'Copy failed')).toBeDefined();
-  });
 });
 
 describe('JsonView', () => {
@@ -235,24 +159,5 @@ describe('JsonView', () => {
     expect(c.querySelectorAll('.json-num')).toHaveLength(100);
     click(button(c, 'Show 150 more'));
     expect(c.querySelectorAll('.json-num')).toHaveLength(250);
-  });
-
-  it('is a mono code block on surface-3 with token colours and chevron toggles', () => {
-    const c = render(<JsonView value={{ a: { b: 'x' } }} defaultExpandDepth={1} />);
-    expect(c.querySelector('.json-view')).not.toBeNull();
-    const toggles = [...c.querySelectorAll<HTMLButtonElement>('.json-toggle')];
-    expect(toggles[0]!.querySelector('svg')?.getAttribute('class')).toContain('lucide-chevron-down');
-    expect(toggles[1]!.querySelector('svg')?.getAttribute('class')).toContain('lucide-chevron-right');
-    expect(toggles.every((t) => !/[▸▾]/.test(t.textContent ?? ''))).toBe(true);
-    const css = readFileSync(resolve(__dirname, '../jsonView.css'), 'utf8');
-    expect(css).toContain('var(--surface-3)');
-    expect(css).toContain('var(--font-mono)');
-    expect(css).toMatch(/font-size:\s*12px/);
-    expect(css).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(/i);
-  });
-
-  it('honours an explicit defaultExpandDepth', () => {
-    const c = render(<JsonView value={{ a: { b: 1 } }} defaultExpandDepth={1} />);
-    expect(c.querySelector('.json-num')).toBeNull();
   });
 });

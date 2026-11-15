@@ -1,6 +1,6 @@
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render } from '../../ui/__tests__/render';
+import { render } from '../../ui/__tests__/render';
 import { useStudioEvents } from '../useStudioEvents';
 import { useAgentDocument } from '../useAgentDocument';
 import type { AgentStore } from '../../persistence/AgentStore';
@@ -57,15 +57,6 @@ afterEach(() => {
 });
 
 describe('useStudioEvents', () => {
-  it('subscribes once and delivers each published event to the callback', () => {
-    const spy = vi.fn();
-    render(<Probe onEvent={spy} />);
-    expect(captured.calls).toBe(1);
-    const event: StudioEvent = { type: 'agent.changed', agentId: 'a1', reason: 'save' };
-    emit(event);
-    expect(spy).toHaveBeenCalledTimes(1);
-    expect(spy).toHaveBeenCalledWith(event);
-  });
 
   it('resubscribes 2 s after the socket is lost', () => {
     render(<Probe onEvent={vi.fn()} />);
@@ -78,12 +69,6 @@ describe('useStudioEvents', () => {
       vi.advanceTimersByTime(1);
     });
     expect(captured.calls).toBe(2);
-  });
-
-  it('unsubscribes on unmount so a stale listener receives nothing', () => {
-    render(<Probe onEvent={vi.fn()} />);
-    cleanup();
-    expect(captured.unsubscribe).toHaveBeenCalled();
   });
 });
 

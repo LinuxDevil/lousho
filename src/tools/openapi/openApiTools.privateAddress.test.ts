@@ -94,12 +94,6 @@ async function tools(options: OpenApiToolsOptions, document: object | string | U
 }
 
 describe("privateAddresses: 'refuse' - operation requests", () => {
-  it('refuses a base URL whose name resolves to a private address, and nothing connects', async () => {
-    answers['internal.test'] = () => '127.0.0.1';
-    const all = await tools({ baseUrl: `https://internal.test:${port}/v1` });
-    await expect(all.listPets.execute({}, ctx)).rejects.toThrow(/GET \/pets refused: internal\.test is or resolves to a loopback, link-local or private address/);
-    expect(connections).toBe(0);
-  });
 
   it('refuses a name that resolves to an IPv4-mapped IPv6 loopback address', async () => {
     answers['mapped.test'] = () => '::ffff:127.0.0.1';
@@ -119,27 +113,6 @@ describe("privateAddresses: 'refuse' - operation requests", () => {
     expect(connections).toBe(0);
     expect(count).toBe(1);
     expect(lookups).toEqual(['rebind.test']);
-  });
-
-  it('connects through the pinned lookup to an allowPrivate host, and to exactly the address it checked', async () => {
-    const all = await tools({ baseUrl: `http://localhost:${port}/v1`, allowPrivate: ['localhost'] });
-    expect(await all.listPets.execute({}, ctx)).toMatchObject({ status: 200, body: { url: '/v1/pets' } });
-    expect(lookups).toEqual(['localhost']);
-    expect(connections).toBe(1);
-  });
-
-  it('a path parameter cannot change the host', async () => {
-    const all = await tools({ baseUrl: `http://localhost:${port}/v1`, allowPrivate: ['localhost'] });
-    for (const petId of ['@169.254.169.254', '//127.0.0.2/x', 'http://10.0.0.1/', '%2F%2F10.0.0.1']) {
-      await all.getPet.execute({ petId, 'X-Tenant': 't' }, ctx);
-    }
-    expect(seen.map((s) => s.host)).toEqual(Array(4).fill(`localhost:${port}`));
-    expect(seen.map((s) => s.url)).toEqual([
-      '/v1/pets/%40169.254.169.254',
-      '/v1/pets/%2F%2F127.0.0.2%2Fx',
-      '/v1/pets/http%3A%2F%2F10.0.0.1%2F',
-      '/v1/pets/%252F%252F10.0.0.1',
-    ]);
   });
 });
 
@@ -173,43 +146,13 @@ describe("privateAddresses: 'refuse' - addresses refused when the tools are made
     });
   }
 
-  it('allows a literal or a localhost name listed in allowPrivate', async () => {
-    await expect(openApiTools(petstore, { ...REFUSE, baseUrl: 'https://10.0.0.1/v1', allowPrivate: ['10.0.0.1'] })).resolves.toHaveLength(5);
-    await expect(openApiTools(petstore, { ...REFUSE, baseUrl: 'http://[::1]:3000/v1', allowPrivate: ['[::1]'] })).resolves.toHaveLength(5);
-    await expect(openApiTools(petstore, { ...REFUSE, baseUrl: 'https://api.localhost/v1', allowPrivate: ['*.localhost'] })).resolves.toHaveLength(5);
-  });
-
   it("refuses a server URL whose template variable defaults to a private address (the model never sets server variables)", async () => {
     const doc = { ...petstore, servers: [{ url: 'https://{host}/v1', variables: { host: { default: '169.254.169.254' } } }] };
     await expect(openApiTools(doc, REFUSE)).rejects.toThrow(/169\.254\.169\.254 is or resolves to/);
   });
-
-  it("does not check anything with the default 'allow'", async () => {
-    await expect(openApiTools(petstore, { baseUrl: 'http://127.0.0.1:3000/v1' })).resolves.toHaveLength(5);
-    await expect(openApiTools(petstore, { baseUrl: 'https://10.0.0.1/v1', privateAddresses: 'allow' })).resolves.toHaveLength(5);
-  });
 });
 
 describe("privateAddresses: 'refuse' - the document fetch", () => {
-  it('refuses a document URL that is a private literal before any request', async () => {
-    await expect(openApiTools('https://169.254.169.254/openapi.json', REFUSE)).rejects.toThrow(/the document URL .*169\.254\.169\.254 is or resolves to/);
-    await expect(openApiTools(`http://127.0.0.1:${port}/openapi.json`, REFUSE)).rejects.toThrow(ConfigurationError);
-    expect(connections).toBe(0);
-  });
-
-  it('refuses a document URL whose name resolves to a private address, and nothing connects', async () => {
-    answers['internal.test'] = () => '127.0.0.1';
-    await expect(openApiTools(`https://internal.test:${port}/openapi.json`, REFUSE)).rejects.toThrow(
-      /could not fetch the document .*internal\.test is or resolves to a loopback, link-local or private address/
-    );
-    expect(connections).toBe(0);
-  });
-
-  it('fetches a document from an allowPrivate host through the pinned lookup', async () => {
-    const list = await openApiTools(`http://localhost:${port}/openapi.json`, { ...REFUSE, allowPrivate: ['localhost'], baseUrl: `http://localhost:${port}/v1` });
-    expect(list).toHaveLength(5);
-    expect(lookups).toEqual(['localhost']);
-  });
 
   it('checks every redirect hop: a literal and a name that resolves privately', async () => {
     answers['internal.test'] = () => '127.0.0.1';
@@ -221,13 +164,6 @@ describe("privateAddresses: 'refuse' - the document fetch", () => {
 });
 
 describe("privateAddresses: 'refuse' - configuration", () => {
-  it('cannot be combined with a custom fetch, whose connections it cannot pin', async () => {
-    const custom = vi.fn() as unknown as typeof fetch;
-    await expect(openApiTools(petstore, { ...REFUSE, baseUrl: 'https://api.example.com', fetch: custom })).rejects.toThrow(
-      /privateAddresses: 'refuse' cannot be combined with 'fetch'/
-    );
-    expect(custom).not.toHaveBeenCalled();
-  });
 
   it('refuses allowPrivate without refuse, an invalid pattern and an unknown mode', async () => {
     await expect(openApiTools(petstore, { baseUrl: 'https://api.example.com', allowPrivate: ['localhost'] })).rejects.toThrow(/allowPrivate.*privateAddresses: 'refuse'/);

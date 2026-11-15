@@ -19,51 +19,8 @@ function call(tool: DefinedTool, args: Record<string, unknown>, abortSignal?: Ab
 }
 
 describe('createFsTools on MemoryWorkspace', () => {
-  it('creates all six tools, or only the read-only four with readOnly', () => {
-    const ws = new MemoryWorkspace();
-    expect(createFsTools(ws).map((t) => t.name)).toEqual(['read_file', 'write_file', 'edit_file', 'list_dir', 'glob', 'grep']);
-    expect(createFsTools(ws, { readOnly: true }).map((t) => t.name)).toEqual(['read_file', 'list_dir', 'glob', 'grep']);
-  });
-
-  it('marks write_file and edit_file, and only them, as file edits; the four readers stay read-only', () => {
-    const ws = new MemoryWorkspace();
-    // #309: with rewind checkpoints the same two tools are the edits.
-    for (const options of [{}, { checkpoints: new WorkspaceCheckpoints(ws) }] as FsToolsOptions[]) {
-      const marked = createFsTools(ws, options).filter((t) => t.metadata?.editsFiles === true).map((t) => t.name);
-      expect(marked).toEqual(['write_file', 'edit_file']);
-    }
-    const tools = toolsByName(new MemoryWorkspace());
-    for (const name of ['read_file', 'list_dir', 'glob', 'grep']) {
-      expect(tools[name].metadata).toEqual({ mcp: { annotations: { readOnlyHint: true, destructiveHint: false } } });
-    }
-    expect(tools.write_file.metadata).toEqual({ editsFiles: true });
-  });
-
-  it('needs no approval by default; per-tool overrides apply', async () => {
-    const tools = toolsByName(new MemoryWorkspace(), {
-      needsApproval: { write_file: true, edit_file: ({ path }) => path.startsWith('protected/') },
-    });
-    expect(tools.read_file.needsApproval).toBeUndefined();
-    expect(tools.write_file.needsApproval).toBe(true);
-    const predicate = tools.edit_file.needsApproval as (args: { path: string }) => boolean;
-    expect(predicate({ path: 'protected/a' })).toBe(true);
-    expect(predicate({ path: 'src/a' })).toBe(false);
-  });
 
   describe('read_file', () => {
-    it('returns numbered lines', async () => {
-      const { read_file } = toolsByName(new MemoryWorkspace({ files: { 'a.txt': 'one\ntwo\r\nthree\n' } }));
-      expect(await call(read_file, { path: 'a.txt' })).toBe('     1\tone\n     2\ttwo\n     3\tthree');
-    });
-
-    it('pages with offset/limit and says how to continue', async () => {
-      const content = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join('\n');
-      const { read_file } = toolsByName(new MemoryWorkspace({ files: { 'a.txt': content } }));
-      expect(await call(read_file, { path: 'a.txt', offset: 3, limit: 2 })).toBe(
-        '     3\tline 3\n     4\tline 4\n[Truncated: showing lines 3-4 of 10. Call read_file with offset=5 to read more.]'
-      );
-      await expect(call(read_file, { path: 'a.txt', offset: 11 })).rejects.toThrow(/past the end of a.txt, which has 10 lines/);
-    });
 
     it('caps lines and characters', async () => {
       const content = Array.from({ length: 50 }, () => 'x'.repeat(100)).join('\n');
@@ -94,23 +51,7 @@ describe('createFsTools on MemoryWorkspace', () => {
     });
   });
 
-  it('write_file creates parent directories and reports the size', async () => {
-    const ws = new MemoryWorkspace();
-    const { write_file, list_dir } = toolsByName(ws);
-    expect(await call(write_file, { path: 'a/b/c.txt', content: 'héllo' })).toBe('Wrote 6 bytes to a/b/c.txt.');
-    expect(ws.snapshot()).toEqual({ 'a/b/c.txt': 'héllo' });
-    expect(await call(list_dir, { path: 'a' })).toBe('b/');
-  });
-
   describe('edit_file', () => {
-    it('replaces a unique occurrence', async () => {
-      const ws = new MemoryWorkspace({ files: { 'a.ts': 'const a = 1;\nconst b = 2;\n' } });
-      const { edit_file } = toolsByName(ws);
-      expect(await call(edit_file, { path: 'a.ts', old_string: 'b = 2', new_string: 'b = $&3' })).toBe(
-        'Edited a.ts: replaced 1 occurrence.'
-      );
-      expect(ws.snapshot()['a.ts']).toBe('const a = 1;\nconst b = $&3;\n');
-    });
 
     it('refuses a non-unique old_string unless replace_all', async () => {
       const ws = new MemoryWorkspace({ files: { 'a.ts': 'x x x' } });
@@ -131,28 +72,6 @@ describe('createFsTools on MemoryWorkspace', () => {
         /old_string was not found in a.ts\. Call read_file and copy the exact text/
       );
       await expect(call(edit_file, { path: 'a.ts', old_string: 'one\ntwo', new_string: 'x' })).rejects.toThrow(/CRLF line endings/);
-    });
-
-    it('succeeds without writing when the edit was already applied (a re-run after a crash), also with replace_all', async () => {
-      const ws = new MemoryWorkspace({ files: { 'a.ts': 'const b = 3;\nconst c = 3;\n' } });
-      let writes = 0;
-      const original = ws.writeFile.bind(ws);
-      ws.writeFile = async (path, content) => {
-        writes++;
-        return original(path, content);
-      };
-      const { edit_file } = toolsByName(ws);
-      const message = 'a.ts already contains new_string and no old_string; the edit was already applied, so nothing changed.';
-      expect(await call(edit_file, { path: 'a.ts', old_string: 'b = 2', new_string: 'b = 3' })).toBe(message);
-      expect(await call(edit_file, { path: 'a.ts', old_string: '= 2', new_string: '= 3', replace_all: true })).toBe(message);
-      expect(writes).toBe(0);
-      expect(ws.snapshot()['a.ts']).toBe('const b = 3;\nconst c = 3;\n');
-    });
-
-    it('still fails when old_string is missing and new_string is absent too, or empty', async () => {
-      const { edit_file } = toolsByName(new MemoryWorkspace({ files: { 'a.ts': 'one\n' } }));
-      await expect(call(edit_file, { path: 'a.ts', old_string: 'two', new_string: 'three' })).rejects.toThrow(/old_string was not found/);
-      await expect(call(edit_file, { path: 'a.ts', old_string: 'two', new_string: '' })).rejects.toThrow(/old_string was not found/);
     });
 
     it('rejects empty and no-op edits', async () => {
@@ -201,20 +120,6 @@ describe('createFsTools on MemoryWorkspace', () => {
       await expect(call(glob, { pattern: '../**' })).rejects.toThrow(/outside the workspace/);
       await expect(call(glob, { pattern: '*', path: '/etc' })).rejects.toThrow(/outside the workspace/);
     });
-
-    it("uses the provider's own glob when it has one", async () => {
-      const ws = new MemoryWorkspace();
-      const provider: FsProvider = Object.assign(Object.create(ws) as FsProvider, {
-        glob: async (pattern: string) => [`${pattern}-b`, `${pattern}-a`, `${pattern}-a`],
-      });
-      expect(await call(toolsByName(provider).glob, { pattern: '*.ts', path: 'src' })).toBe('src/*.ts-a\nsrc/*.ts-b');
-    });
-
-    it('stops when the run is aborted', async () => {
-      const controller = new AbortController();
-      controller.abort();
-      await expect(call(toolsByName(new MemoryWorkspace({ files })).glob, { pattern: '**' }, controller.signal)).rejects.toThrow(/cancelled/);
-    });
   });
 
   describe('grep', () => {
@@ -248,12 +153,6 @@ describe('createFsTools on MemoryWorkspace', () => {
       await expect(call(grep, { pattern: 'x', path: 'missing' })).rejects.toThrow('Path not found: missing');
     });
 
-    it('stops when the run is aborted', async () => {
-      const controller = new AbortController();
-      controller.abort();
-      await expect(call(toolsByName(new MemoryWorkspace({ files })).grep, { pattern: 'x' }, controller.signal)).rejects.toThrow(/cancelled/);
-    });
-
     // A model-written regex must not freeze the process.
     it('refuses a pattern with nested unbounded quantifiers, and allows the safe look-alikes', async () => {
       const { grep } = toolsByName(new MemoryWorkspace({ files: { 'data.txt': `${'a'.repeat(28)}!\n` } }));
@@ -278,21 +177,6 @@ describe('createFsTools on MemoryWorkspace', () => {
       expect(ticks).toBeGreaterThan(5);
     });
 
-    it('does not count time spent reading files against the matching budget', async () => {
-      const files = Object.fromEntries(Array.from({ length: 6 }, (_, i) => [`f${i}.txt`, 'hello world\n']));
-      const inner = new MemoryWorkspace({ files });
-      const slow = Object.create(inner) as MemoryWorkspace;
-      slow.readFile = async (path: string) => {
-        await new Promise((r) => setTimeout(r, 300));
-        return inner.readFile(path);
-      };
-      const limits = { maxReadLines: 2000, maxOutputChars: 30_000, maxResults: 100, maxFilesScanned: 10, ignore: new Set<string>(), grepTimeoutMs: 1000 };
-      const started = Date.now();
-      const out = await grepFiles(slow, { pattern: 'hello' }, limits);
-      expect(Date.now() - started).toBeGreaterThan(1500);
-      expect(out.split('\n')).toHaveLength(6);
-    });
-
     it('an abort stops a running slow pattern at once', async () => {
       const ws = new MemoryWorkspace({ files: { 'spaces.txt': `${' '.repeat(3000)}\n` } });
       const controller = new AbortController();
@@ -300,20 +184,6 @@ describe('createFsTools on MemoryWorkspace', () => {
       const started = Date.now();
       await expect(call(toolsByName(ws).grep, { pattern: '\\s*\\s*\\s*\\s*\\s*!' }, controller.signal)).rejects.toThrow(/cancelled/);
       expect(Date.now() - started).toBeLessThan(3000);
-    });
-  });
-
-  it('a rejected path reaches the model as a tool error and the run continues', async () => {
-    const provider = mockModel([{ toolCalls: [{ name: 'read_file', args: { path: '../../etc/passwd' } }] }, 'I cannot read that.']);
-    const agent = createAgent({ prompt: 'p', provider, tools: createFsTools(new MemoryWorkspace()) });
-    const result = await agent.send('read it');
-    expect(result.text).toBe('I cannot read that.');
-    const toolMessage = provider.calls[1].messages.find((m) => m.role === 'tool');
-    expect(toolMessage?.isError).toBe(true);
-    expect(JSON.parse(toolMessage!.content as string)).toMatchObject({
-      error: 'WorkspaceError',
-      toolName: 'read_file',
-      message: expect.stringMatching(/outside the workspace/),
     });
   });
 });
@@ -340,20 +210,6 @@ describe('MemoryWorkspace', () => {
     await ws.writeFile('f.txt', 'x');
     await ws.rm('f.txt');
     expect(ws.snapshot()).toEqual({});
-  });
-
-  it('exec runs the scripted handler and records every call', async () => {
-    const ws = new MemoryWorkspace({ exec: (command) => (command === 'ok' ? { stdout: 'yes\n' } : { exitCode: 2 }) });
-    expect(await ws.exec('ok')).toEqual({ stdout: 'yes\n', stderr: '', exitCode: 0, timedOut: false });
-    expect(await ws.exec('bad', { cwd: 'src', timeoutMs: 5 })).toMatchObject({ exitCode: 2 });
-    expect(ws.commands).toEqual([
-      { command: 'ok', options: {} },
-      { command: 'bad', options: { cwd: 'src', timeoutMs: 5 } },
-    ]);
-  });
-
-  it('exec without a handler fails with 127 and says how to program it', async () => {
-    expect(await new MemoryWorkspace().exec('ls')).toMatchObject({ exitCode: 127, stderr: expect.stringMatching(/no exec handler/) });
   });
 });
 

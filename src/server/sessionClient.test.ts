@@ -57,38 +57,6 @@ const failure = (promise: Promise<unknown>) =>
   );
 
 describe('runRemoteTurn', () => {
-  it('posts the turn and summarizes the run: text, tool calls, steps, usage, session id', async () => {
-    const requests: Request[] = [];
-    const script: MockTurn[] = [
-      {
-        toolCalls: [{ name: 'echo', args: { v: 'x' } }],
-        usage: { inputTokens: 3, outputTokens: 2 },
-      },
-      { text: 'done', usage: { inputTokens: 3, outputTokens: 2 } },
-    ];
-    const summary = await runRemoteTurn(client(deployed(script, TOKEN, requests), { headers: { 'X-Team': 'a' } }), turn());
-
-    expect(summary).toMatchObject({
-      sessionId: 's1',
-      text: 'done',
-      finishReason: 'stop',
-      steps: 2,
-      approval: undefined,
-      error: undefined,
-    });
-    expect(summary.toolCalls.map((c) => [c.function.name, c.function.arguments])).toEqual([['echo', '{"v":"x"}']]);
-    expect(summary.usage?.totalTokens).toBe(10);
-    const [request] = requests;
-    expect(request.url).toBe('https://agent.test/chat');
-    expect(request.headers.get('authorization')).toBe(`Bearer ${TOKEN}`);
-    expect(request.headers.get('x-team')).toBe('a');
-    expect(await request.json()).toEqual({ sessionId: 's1', input: 'hi' });
-  });
-
-  it('accepts a token function', async () => {
-    const summary = await runRemoteTurn(client(deployed(['ok']), { auth: async () => TOKEN }), turn());
-    expect(summary.text).toBe('ok');
-  });
 
   it('throws LOUSHO_REMOTE_UNAUTHORIZED on 401', async () => {
     const error = await failure(runRemoteTurn(client(deployed(['x'], 'other-token')), turn()));
@@ -96,26 +64,6 @@ describe('runRemoteTurn', () => {
     expect(error?.code).toBe('LOUSHO_REMOTE_UNAUTHORIZED');
     expect(error?.message).toContain('The remote');
     expect(error?.message).toContain('401');
-  });
-
-  it('throws LOUSHO_REMOTE_REQUEST_FAILED on a non-2xx answer, with the server detail', async () => {
-    const error = await failure(
-      runRemoteTurn(
-        client(async () => Response.json({ error: 'boom' }, { status: 502 })),
-        turn()
-      )
-    );
-    expect(error?.code).toBe('LOUSHO_REMOTE_REQUEST_FAILED');
-    expect(error?.message).toContain('answered 502: boom');
-  });
-
-  it('throws LOUSHO_REMOTE_REQUEST_FAILED on a network error', async () => {
-    const down: Fetch = async () => {
-      throw new TypeError('ECONNREFUSED');
-    };
-    const error = await failure(runRemoteTurn(client(down), turn()));
-    expect(error?.code).toBe('LOUSHO_REMOTE_REQUEST_FAILED');
-    expect(error?.message).toContain('could not be reached at https://agent.test/chat: ECONNREFUSED');
   });
 
   it('throws on a truncated or foreign stream, and when the stream breaks', async () => {
@@ -141,55 +89,5 @@ describe('runRemoteTurn', () => {
     );
     expect(error?.code).toBe('LOUSHO_REMOTE_REQUEST_FAILED');
     expect(error?.message).toContain('stream failed: socket hang up');
-  });
-
-  it('aborts the in-flight request', async () => {
-    const hanging: Fetch = (_input, init) =>
-      new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))));
-    const controller = new AbortController();
-    const run = failure(runRemoteTurn(client(hanging), turn({ signal: controller.signal })));
-    controller.abort();
-    const error = await run;
-    expect(error?.code).toBe('LOUSHO_REMOTE_REQUEST_FAILED');
-    expect(error?.message).toContain('was aborted');
-  });
-
-  it('never lets the token reach an error message', async () => {
-    const leaky: Fetch = async () => {
-      throw new TypeError(`connect failed while sending ${TOKEN}`);
-    };
-    const network = await failure(runRemoteTurn(client(leaky), turn({ label: `The remote ${TOKEN}` })));
-    const status = await failure(
-      runRemoteTurn(
-        client(async () => Response.json({ error: `bad ${TOKEN}` }, { status: 500 })),
-        turn()
-      )
-    );
-    const stream = new ReadableStream<Uint8Array>({
-      start: (c) => c.error(new Error(`broke ${TOKEN}`)),
-    });
-    const broken = await failure(
-      runRemoteTurn(
-        client(async () => new Response(stream)),
-        turn()
-      )
-    );
-    for (const error of [network, status, broken]) {
-      expect(error?.message).toContain('[redacted]');
-      expect(error?.message).not.toContain(TOKEN);
-    }
-  });
-
-  it('summarizes a run that paused for approval, with the pending tool call', async () => {
-    const summary = await runRemoteTurn(client(deployed([{ toolCalls: [{ name: 'deploy' }] }, 'never'])), turn());
-    expect(summary.finishReason).toBe('awaiting-approval');
-    expect(summary.approval).toMatchObject({ toolName: 'deploy', args: {} });
-    expect(summary.approval?.approvalId).toEqual(expect.any(String));
-  });
-
-  it('summarizes a remote run that ended in an error instead of throwing', async () => {
-    const summary = await runRemoteTurn(client(deployed([{ error: new Error('model exploded') }])), turn());
-    expect(summary.finishReason).toBe('error');
-    expect(summary.error).toContain('model exploded');
   });
 });

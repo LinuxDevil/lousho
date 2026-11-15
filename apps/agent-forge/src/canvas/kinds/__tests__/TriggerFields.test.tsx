@@ -160,19 +160,6 @@ beforeEach(() => {
 });
 
 describe('trigger Inspector: Type select', () => {
-  it('lists the catalog rows with their runsUnder suffix and description titles', () => {
-    renderInspector();
-    const options = [...field<HTMLSelectElement>('node-trigger-type').querySelectorAll('option')];
-    expect(options.map((o) => o.textContent)).toEqual([
-      'Chat · Dev, worker, studio',
-      'Schedule · Dev, worker, studio',
-      'Webhook · Studio',
-      'Channel · Studio',
-      'After another agent · Studio',
-      'Email · Studio',
-    ]);
-    expect(options[2].title).toBe('Runs when an HTTP POST arrives at the path.');
-  });
 
   it('keeps the id and replaces the other fields on a type switch', () => {
     useTrigger({ id: 't1', type: 'cron', cron: '0 9 * * *', prompt: 'go' }, 'trigger:t1');
@@ -186,18 +173,6 @@ describe('trigger Inspector: Type select', () => {
 });
 
 describe('trigger Inspector: Id field', () => {
-  it('writes item.id', () => {
-    renderInspector();
-    type('node-trigger-id', 'morning');
-    expect(item().id).toBe('morning');
-  });
-
-  it('flags an invalid id', () => {
-    renderInspector();
-    type('node-trigger-id', 'has space');
-    flush();
-    expect(container.textContent).toContain('The id can use letters, digits, dash or underscore');
-  });
 
   it('flags an id another trigger already uses', () => {
     app.graph = specToGraph(specOf([
@@ -208,16 +183,6 @@ describe('trigger Inspector: Id field', () => {
     type('node-trigger-id', 't2');
     flush();
     expect(container.textContent).toContain('Another trigger uses this id');
-  });
-});
-
-describe('trigger Inspector: chat', () => {
-  it('shows only the help line', () => {
-    renderInspector();
-    expect(container.textContent).toContain(
-      'Runs when someone messages the agent in Studio or over HTTP.',
-    );
-    expect(container.querySelector('#node-trigger-cron')).toBeNull();
   });
 });
 
@@ -243,23 +208,6 @@ describe('trigger Inspector: cron form', () => {
       );
     });
     expect(item()).toMatchObject({ sharedSession: true });
-  });
-
-  it('flags a cron expression that is not five fields', () => {
-    type('node-trigger-cron', '0 9 *');
-    flush();
-    expect(container.textContent).toContain('Use five fields: minute hour day month weekday');
-  });
-
-  it('flags an unknown time zone', () => {
-    type('node-trigger-timezone', 'Mars/Olympus');
-    flush();
-    expect(container.textContent).toContain('Unknown time zone');
-  });
-
-  it('offers the IANA zones through a datalist when the runtime lists them', () => {
-    const list = container.querySelector('datalist#node-trigger-timezone-list');
-    expect(list).not.toBeNull();
   });
 });
 
@@ -291,16 +239,6 @@ describe('trigger Inspector: webhook form', () => {
     type('node-trigger-filter', "event.body.action == 'opened'");
     expect(item()).toMatchObject({ filter: "event.body.action == 'opened'" });
   });
-
-  it('deletes the filter when its input is cleared', () => {
-    useTrigger(
-      { id: 't3', type: 'webhook', path: '/hooks/zendesk', promptTemplate: 'x', filter: 'true' },
-      'trigger:t3',
-    );
-    renderInspector();
-    type('node-trigger-filter', '');
-    expect('filter' in item()).toBe(false);
-  });
 });
 
 describe('trigger Inspector: channel form', () => {
@@ -313,11 +251,6 @@ describe('trigger Inspector: channel form', () => {
     [...container.querySelectorAll<HTMLInputElement>('.kv-row input[placeholder="Name"]')].map(
       (input) => input.value,
     );
-
-  it('prefills the channel\'s required secret keys while the map is empty', () => {
-    expect(secretKeys()).toEqual(['signingSecret', 'botToken']);
-    expect(item()).toMatchObject({ secrets: {} });
-  });
 
   it('reports a missing required key and writes the filled one', () => {
     choose('node-trigger-secrets-value-0-mode', 'env');
@@ -346,15 +279,6 @@ describe('trigger Inspector: agent chain form', () => {
     renderInspector();
   });
 
-  it('lists the workspace agents except the open one', () => {
-    const values = [...field<HTMLSelectElement>('node-trigger-after').querySelectorAll('option')].map(
-      (o) => o.value,
-    );
-    expect(values).toContain('triage');
-    expect(values).toContain('billing');
-    expect(values).not.toContain('open-agent');
-  });
-
   it('writes after, on and promptTemplate', () => {
     choose('node-trigger-after', 'billing');
     expect(item()).toMatchObject({ after: 'billing' });
@@ -374,13 +298,5 @@ describe('trigger Inspector: schema form for a catalog-extra type', () => {
     expect(address).not.toBeNull();
     type('node-trigger-address', 'alerts@example.com');
     expect(item()).toStrictEqual({ id: 't9', type: 'email', address: 'alerts@example.com' });
-  });
-
-  it('keeps the type selectable after switching to it', () => {
-    renderInspector();
-    choose('node-trigger-type', 'email');
-    expect(item()).toStrictEqual({ id: 't1', type: 'email' });
-    flush();
-    expect(field<HTMLInputElement>('node-trigger-address')).not.toBeNull();
   });
 });

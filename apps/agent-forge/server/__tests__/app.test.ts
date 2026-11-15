@@ -73,7 +73,7 @@ describe('HTTP API', () => {
 
   beforeEach(() => {
     resetSteerGate();
-    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lou-n-app-test-'));
+    baseDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lou-n-app-test-')));
     const repo = new AgentRepo(baseDir);
     const agentStore = createFsAgentStore(baseDir, repo);
     runManager = new RunManager({
@@ -316,11 +316,12 @@ describe('settings/secrets HTTP routes', () => {
   let app: ReturnType<typeof createApp>;
 
   // The provider env vars feed `envKey`: cleared for each test so a developer's own keys don't leak into the expectations.
-  const savedEnv = { OPENAI_API_KEY: process.env.OPENAI_API_KEY, ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY };
+  const savedEnv = { OPENAI_API_KEY: process.env.OPENAI_API_KEY, ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY, OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY };
 
   beforeEach(() => {
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lou-r-app-test-'));
     const repo = new AgentRepo(baseDir);
     const agentStore = createFsAgentStore(baseDir, repo);
@@ -349,6 +350,7 @@ describe('settings/secrets HTTP routes', () => {
     expect(res.body).toEqual([
       { provider: 'openai', hasKey: false, masked: null, envKey: false },
       { provider: 'anthropic', hasKey: false, masked: null, envKey: false },
+      { provider: 'openrouter', hasKey: false, masked: null, envKey: false },
     ]);
   });
 
@@ -358,8 +360,18 @@ describe('settings/secrets HTTP routes', () => {
     expect(res.body).toEqual([
       { provider: 'openai', hasKey: false, masked: null, envKey: true },
       { provider: 'anthropic', hasKey: false, masked: null, envKey: false },
+      { provider: 'openrouter', hasKey: false, masked: null, envKey: false },
     ]);
     expect(JSON.stringify(res.body)).not.toContain('env-key-placeholder');
+  });
+
+  it('PUT /settings/providers/:provider refuses an OpenRouter key in the OpenAI field and stores it in its own', async () => {
+    const wrong = await request(app).put('/settings/providers/openai').send({ apiKey: 'sk-or-v1-placeholder' });
+    expect(wrong.status).toBe(400);
+    expect(wrong.body.error).toBe('This looks like an OpenRouter key. Paste it into the OpenRouter API key field instead.');
+    const right = await request(app).put('/settings/providers/openrouter').send({ apiKey: 'sk-or-v1-placeholder' });
+    expect(right.status).toBe(200);
+    expect(right.body).toMatchObject({ provider: 'openrouter', hasKey: true });
   });
 
   it('PUT /settings/providers/:provider stores a key and never echoes it back', async () => {

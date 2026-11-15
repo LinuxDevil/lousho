@@ -234,7 +234,8 @@ export function startStudio(options: StudioOptions = {}): StudioHandle {
 
   const mode = resolveMode(target.appDir, requested);
   if (mode === 'prod') return startProdStudio(target.appDir, repoRoot, apiPort, apiHost, spawnImpl);
-  const token = randomBytes(24).toString('base64url');
+  const fixed = process.env[STUDIO_TOKEN_ENV];
+  const token = fixed !== undefined && fixed.length >= 24 ? fixed : randomBytes(24).toString('base64url');
   return startDevStudio(target.appDir, repoRoot, apiPort, apiHost, token, spawnImpl);
 }
 

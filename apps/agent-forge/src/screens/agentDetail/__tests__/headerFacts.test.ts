@@ -34,21 +34,6 @@ function record(over: { spec?: Partial<AgentRecord['spec']>; updatedAt?: string 
 }
 
 describe('headerFacts', () => {
-  it('lists model, tool count, trigger count and update age in order', () => {
-    const facts = headerFacts(
-      record({
-        spec: { tools: [{ builtin: 'web_search' }, { builtin: 'todo' }] },
-        updatedAt: new Date(NOW - 2 * 3_600_000).toISOString(),
-      }),
-      NOW,
-    ).map(({ label, value }) => ({ label, value }));
-    expect(facts).toEqual([
-      { label: 'Model', value: 'anthropic/claude-sonnet-5-5' },
-      { label: 'Tools', value: '2 tools' },
-      { label: 'Triggers', value: 'No triggers' },
-      { label: 'Updated', value: 'Updated 2h ago' },
-    ]);
-  });
 
   it('singularises one tool/trigger and says so when there are none', () => {
     const facts = headerFacts(

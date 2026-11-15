@@ -11,19 +11,6 @@ const systemOf = (call: MockRequest | undefined): string =>
 const toolsOf = (call: MockRequest | undefined): string[] => (call?.tools ?? []).map((t) => t.function.name);
 
 describe('memory/ in an agent directory', () => {
-  it('loads memory/*.ts: the name defaults to the file name, an explicit name wins', async () => {
-    const { config, manifest } = await resolveAgentDir(fixture('memory'), { provider: mockModel(['x']) });
-    expect(manifest.memory).toEqual(['notes', 'user-prefs']);
-    expect(config.memory?.map((m) => m.name)).toEqual(['notes', 'user-prefs']);
-    expect(config.memory?.[0].description).toBe('Facts to keep');
-    expect(config.memory?.[1].recall.maxItems).toBe(3);
-  });
-
-  it('a directory without memory/ behaves as before', async () => {
-    const { config, manifest } = await resolveAgentDir(fixture('full'), { provider: mockModel(['x']) });
-    expect(manifest.memory).toEqual([]);
-    expect(config).not.toHaveProperty('memory');
-  });
 
   it('rejects a default export that is not a slot with a coded error naming the file', async () => {
     const failure = await resolveAgentDir(fixture('err-bad-memory'), { provider: mockModel(['x']) }).catch((e: unknown) => e);

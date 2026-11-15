@@ -63,7 +63,7 @@ export interface RegistryMcpServer {
  */
 export interface CatalogService {
   /** `listModels` with a model's `available` also true when Studio holds a stored key for the provider. */
-  listModels(provider?: string): CatalogModel[];
+  listModels(provider?: string): CatalogModel[] | Promise<CatalogModel[]>;
   /** `listBuiltinTools` rows, full `inputJsonSchema` included (the tool decides what to expose). */
   listTools(): CatalogTool[];
   listGuardrails(): CatalogGuardrail[];

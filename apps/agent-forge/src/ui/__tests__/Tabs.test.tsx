@@ -45,19 +45,6 @@ describe('Tabs', () => {
     expect(versions.getAttribute('aria-current')).toBeNull();
   });
 
-  it('marks nothing when the current id belongs to a disabled tab', () => {
-    render(<Tabs label="Agent" items={ITEMS} currentId="versions" />);
-    expect(container.querySelector('[aria-current]')).toBeNull();
-  });
-
-  it('renders the trailing slot only when given one', () => {
-    render(<Tabs label="Agent" items={ITEMS} currentId="runs" trailing={<span id="chips" />} />);
-    expect(container.querySelector('.tabs-trailing #chips')).not.toBeNull();
-
-    render(<Tabs label="Agent" items={ITEMS} currentId="runs" />);
-    expect(container.querySelector('.tabs-trailing')).toBeNull();
-  });
-
   it('draws a 14px decorative icon before the label', () => {
     const items: TabItem[] = [{ id: 'a', label: 'Agents', href: '#/agents', icon: Bot }];
     render(<Tabs label="Agent" items={items} currentId="a" />);

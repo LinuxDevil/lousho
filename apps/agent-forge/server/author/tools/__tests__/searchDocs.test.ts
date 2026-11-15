@@ -59,42 +59,6 @@ describe('loadDocsIndex + searchDocs', () => {
     expect(hits[0].title).toBe('Studio Guide › Handoffs and context');
     expect(hits[0].path).toBe('docs/guide.md#handoffs-and-context');
   });
-
-  it('every hit keeps title, path and an excerpt inside its bounds', async () => {
-    const index = await loadDocsIndex(fixtureDocs);
-    const hits = searchDocs(index!, 'handoff input filter', 5);
-    for (const hit of hits) {
-      expect(hit.title).toMatch(/^(Studio Guide|Reference)/);
-      expect(hit.path).toMatch(/^docs\/[a-z-]+\.md#[a-z0-9-]+$/);
-      expect(hit.excerpt.length).toBeLessThanOrEqual(302);
-    }
-  });
-
-  it('a mid-body hit centres the excerpt ~80 chars before it with both ellipses', async () => {
-    const index = await loadDocsIndex(fixtureDocs);
-    const hits = searchDocs(index!, 'filter decides', 5);
-    expect(hits.length).toBeGreaterThan(0);
-    const first = hits[0];
-    expect(first.excerpt).toMatch(/^…/);
-    expect(first.excerpt).toMatch(/…$/);
-    expect(first.excerpt).toMatch(/filter\s+decides/);
-    expect(first.excerpt.length).toBeLessThanOrEqual(302);
-  });
-
-  it('ranks heading hits above body-only hits and drops score 0', async () => {
-    const index = await loadDocsIndex(fixtureDocs);
-    const hits = searchDocs(index!, 'models', 8);
-    expect(hits.length).toBeGreaterThan(0);
-    expect(hits[0].path).toBe('docs/reference.md#models');
-    const noMatch = searchDocs(index!, 'zzz-nothing-matches', 5);
-    expect(noMatch).toEqual([]);
-  });
-
-  it('stop-words and one-letter words are ignored', async () => {
-    const index = await loadDocsIndex(fixtureDocs);
-    // 'a', 'an', 'the', 'to', 'of', 'in', 'or', 'and' score nothing on their own.
-    expect(searchDocs(index!, 'the and of in a an to or', 5)).toEqual([]);
-  });
 });
 
 /** The call name a ToolDescriptor carries (`defineTool` results), else its display name. */

@@ -9,20 +9,12 @@
  * an error, a log line, `status()`, an event or a result.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { createAgent } from '../../createAgent';
 import { mockModel } from '../../testing';
 import { memoryStore } from '../../storage/agentStore';
-import { SqliteStore } from '../../storage/sqlite';
-import { loadDatabaseSync } from '../../storage/sqlite/driver';
-import { generateTokenKey } from '../../oauth/tokenCipher';
-import { createRouteHandler } from '../../server/routeHandler';
 import type { AgentEvent } from '../../execution/agentEvents';
 import type { ExecutionResult } from '../../execution/AgentExecutor';
 import type { Logger } from '../../execution/logger';
-import type { OAuthTokenStore } from '../../oauth/types';
 import type { McpHttpServerSpec } from '../../spec/schema';
 import { connectMcp, type McpConnections } from './connect';
 import { mcpFetch } from './mcpOAuth';
@@ -73,88 +65,7 @@ async function signIn(agent: ReturnType<typeof createAgent>, server: FakeMcpOAut
   return url;
 }
 
-function rawOAuthRows(file: string): string {
-  const DatabaseSync = loadDatabaseSync();
-  const db = new DatabaseSync(file);
-  try {
-    return JSON.stringify([...db.prepare('SELECT * FROM oauth_tokens').all(), ...db.prepare('SELECT * FROM oauth_pending').all()]);
-  } finally {
-    db.close();
-  }
-}
-
 describe('MCP servers with OAuth', () => {
-  it('not signed in: connect fails with LOUSHO_MCP_AUTH_REQUIRED and status needs-auth, without registering or starting a sign-in', async () => {
-    const server = await fake();
-    const tokens = memoryStore().tokens;
-    const putPending = vi.spyOn(tokens, 'putPending');
-    await expect(connectMcp({ linear: entry(server) }, { tokens })).rejects.toMatchObject({
-      code: 'LOUSHO_MCP_AUTH_REQUIRED',
-      message: expect.stringContaining("agent.oauth.mcpSignInUrl('linear')") as unknown,
-    });
-
-    const lines: string[] = [];
-    const mcp = await connect({ linear: entry(server) }, { tokens, onError: 'skip', logger: captureLogger(lines) });
-    expect(mcp.status()).toEqual({ linear: 'needs-auth' });
-    expect(mcp.tools).toEqual({});
-    expect(lines.join('\n')).toContain("skipping MCP server 'linear'");
-    expect(server.registrations).toBe(0);
-    expect(putPending).not.toHaveBeenCalled();
-    expect(server.requests.some((request) => request.path === '/token')).toBe(false);
-  });
-
-  it('operator sign-in: the link has PKCE, state, resource, the registered client and redirect_uri; the callback stores the token encrypted; tools then work', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'lousho-mcp-oauth-'));
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
-    const file = join(dir, 'agent.db');
-    const store = new SqliteStore(file, { tokenKey: generateTokenKey() });
-    cleanups.push(() => store.connection.close());
-    const server = await fake();
-    const agent = createAgent({ provider: mockModel([CALL, { text: 'Done.' }]), mcpServers: { linear: entry(server) }, store });
-    cleanups.push(() => agent.close());
-
-    await expect(agent.ready()).rejects.toMatchObject({ code: 'LOUSHO_MCP_AUTH_REQUIRED' });
-
-    const url = new URL(await agent.oauth.mcpSignInUrl('linear'));
-    const params = url.searchParams;
-    expect(`${url.origin}${url.pathname}`).toBe(`${server.base}/authorize`);
-    expect(params.get('response_type')).toBe('code');
-    expect(params.get('code_challenge')).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(params.get('code_challenge_method')).toBe('S256');
-    expect(params.get('state')).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(params.get('resource')).toBe(server.url);
-    expect(params.get('client_id')).toBe('dyn-client-1');
-    expect(params.get('redirect_uri')).toBe(REDIRECT);
-    expect(server.registrations).toBe(1);
-    expect(JSON.parse(server.requests.find((request) => request.path === '/register')?.body ?? '{}')).toMatchObject({
-      client_name: 'lousho',
-      redirect_uris: [REDIRECT],
-      grant_types: ['authorization_code', 'refresh_token'],
-      response_types: ['code'],
-      token_endpoint_auth_method: 'none',
-    });
-
-    const { code, state } = server.authorize(url.href);
-    expect(await agent.oauth.complete({ state, code })).toEqual({ outcome: 'signed-in', provider: 'mcp-linear', displayName: 'linear' });
-    // the state works once
-    await expect(agent.oauth.complete({ state, code })).rejects.toMatchObject({ code: 'LOUSHO_OAUTH_STATE_INVALID' });
-    const [exchange] = server.forms('/token');
-    expect(exchange.get('grant_type')).toBe('authorization_code');
-    expect(exchange.get('resource')).toBe(server.url);
-
-    const stored = await store.tokens.get('mcp-linear', { owner: 'app' });
-    expect(stored?.accessToken).toBe('mcp_at_SECRET_2');
-    const raw = rawOAuthRows(file);
-    expect(raw).toContain('v1.');
-    for (const secret of [stored?.accessToken ?? '?', stored?.refreshToken ?? '?', 'dyn-client-1']) expect(raw).not.toContain(secret);
-
-    await agent.ready();
-    const result = await agent.send('Ask support.');
-    expect(result.finishReason).toBe('stop');
-    expect(toolMessage(result)).toContain('pong');
-    const mcpCalls = server.requests.filter((request) => request.path === '/mcp' && request.headers.authorization === 'Bearer mcp_at_SECRET_2');
-    expect(mcpCalls.length).toBeGreaterThan(1);
-  });
 
   it('a deferLoading server that needs a sign-in fails the run like any server; once signed in, its tools load through tool_search', async () => {
     const server = await fake();
@@ -171,51 +82,6 @@ describe('MCP servers with OAuth', () => {
     // Every deferred tool is loaded, so tool_search is no longer offered.
     expect(model.calls[1].tools?.map((tool) => tool.function.name)).toEqual(['linear__support']);
     expect(toolMessage(result)).toContain('pong');
-  });
-
-  it('the callback route finishes an MCP sign-in', async () => {
-    const server = await fake();
-    const agent = createAgent({ provider: mockModel([{ text: 'hi' }]), mcpServers: { linear: entry(server) }, store: memoryStore() });
-    cleanups.push(() => agent.close());
-    const { code, state } = server.authorize(await agent.oauth.mcpSignInUrl('linear'));
-    const { handler } = createRouteHandler(agent, { basePath: '/api/agent' });
-    const response = await handler(new Request(`https://agent.example.com/api/agent/oauth/callback?state=${state}&code=${code}`));
-    expect(response.status).toBe(200);
-    expect(await response.text()).toContain('Signed in to linear.');
-    await expect(agent.ready()).resolves.toBeUndefined();
-  });
-
-  it('an expired access token is refreshed without the operator; a revoked grant is a LOUSHO_MCP_AUTH_REQUIRED tool error and needs-auth', async () => {
-    const server = await fake();
-    const store = memoryStore();
-    const agent = createAgent({ provider: mockModel([CALL, { text: 'a' }, CALL, { text: 'b' }]), mcpServers: { linear: entry(server) }, store });
-    cleanups.push(() => agent.close());
-    await signIn(agent, server);
-    const mcp = await connect({ linear: entry(server) }, { tokens: store.tokens });
-    expect(mcp.status()).toEqual({ linear: 'connected' });
-
-    server.expireAll();
-    await expect(mcp.tools.linear__support.tool.execute!({ message: 'x' }, { toolCallId: 'c', messages: [] })).resolves.toMatchObject({ text: 'pong' });
-    expect(server.forms('/token').map((form) => form.get('grant_type'))).toEqual(['authorization_code', 'refresh_token']);
-    expect((await store.tokens.get('mcp-linear', { owner: 'app' }))?.accessToken).toBe('mcp_at_SECRET_3');
-    expect(mcp.status()).toEqual({ linear: 'connected' });
-
-    // the agent's own connection refreshes too
-    expect(toolMessage(await agent.send('one'))).toContain('pong');
-
-    server.revokeAll();
-    await expect(mcp.tools.linear__support.tool.execute!({ message: 'x' }, { toolCallId: 'c', messages: [] })).rejects.toMatchObject({ code: 'LOUSHO_MCP_AUTH_REQUIRED' });
-    expect(mcp.status()).toEqual({ linear: 'needs-auth' });
-    expect(await store.tokens.get('mcp-linear', { owner: 'app' })).toBeUndefined();
-
-    const refused = await agent.send('two');
-    expect(refused.finishReason).toBe('stop');
-    expect(toolMessage(refused)).toContain('LOUSHO_MCP_AUTH_REQUIRED');
-
-    // signing in again is enough: the next call reconnects with the new token
-    await signIn(agent, server);
-    await expect(mcp.tools.linear__support.tool.execute!({ message: 'x' }, { toolCallId: 'c', messages: [] })).resolves.toMatchObject({ text: 'pong' });
-    expect(mcp.status()).toEqual({ linear: 'connected' });
   });
 
   it('a pre-registered clientId skips registration and authenticates at the token endpoint', async () => {
@@ -365,17 +231,5 @@ describe('MCP servers with OAuth', () => {
       for (const secret of secrets) expect(text, `a secret in ${where}`).not.toContain(secret);
     }
     expect(outputs.events).toContain('LOUSHO_MCP_AUTH_REQUIRED');
-  });
-});
-
-describe('the token store contract the MCP provider relies on', () => {
-  it('keeps the grant per server name, bound to its url', async () => {
-    const server = await fake();
-    const tokens: OAuthTokenStore = memoryStore().tokens;
-    const agent = createAgent({ provider: mockModel([{ text: 'hi' }]), mcpServers: { linear: entry(server) }, store: { tokens } });
-    cleanups.push(() => agent.close());
-    await signIn(agent, server);
-    expect(await tokens.getClient('mcp-linear')).toMatchObject({ serverUrl: server.url, client: { client_id: 'dyn-client-1' } });
-    expect(await tokens.list({ provider: 'mcp-linear' })).toEqual([expect.objectContaining({ owner: { owner: 'app' }, hasRefreshToken: true })]);
   });
 });

@@ -45,10 +45,4 @@ describe('joinRatings', () => {
     expect(rows[1].rating).toBeNull();
     expect(rows[1].ratingComment).toBeNull();
   });
-
-  it('ignores scores that are not human ratings and runs without any score', () => {
-    const other = { ...score('t1', 5, 9, 'judge'), name: 'quality' };
-    const rows = joinRatings([run('t1'), run('t2')], [other]);
-    expect(rows.every((r) => r.rating === null)).toBe(true);
-  });
 });

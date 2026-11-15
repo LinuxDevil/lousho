@@ -21,3 +21,12 @@ export function viewportCentrePosition(
     y: Math.round((height / 2 - y) / safeZoom - NODE_SIZE.height / 2),
   };
 }
+
+const STACK_STEP = 140;
+const NEAR = 40;
+
+export function freeSpot(taken: readonly { x: number; y: number }[], position: { x: number; y: number }): { x: number; y: number } {
+  let y = position.y;
+  while (taken.some((p) => Math.abs(p.x - position.x) < NEAR && Math.abs(p.y - y) < NEAR)) y += STACK_STEP;
+  return { x: position.x, y };
+}

@@ -5509,7 +5509,7 @@ and a replayed tap does not run the tool twice.
 
 ## GitHub
 
-`githubChannel({ webhookSecret, botName, token?, app?, name?, apiUrl?, fetch?, triggers?, approvers?, pullRequestOpened?, onError? })`
+`githubChannel({ webhookSecret, botName, token?, app?, name?, apiUrl?, fetch?, triggers?, approvers?, pullRequestOpened?, pullRequestEvents?, replyToPullRequest?, onError? })`
 lets people summon an agent with `@<botName>` in a GitHub issue, pull-request
 or review comment; the agent answers with a comment in the same thread. It reads
 the webhooks of a GitHub App (or of one repository) and posts through the REST
@@ -5547,8 +5547,12 @@ so it also runs on Workers.
   `pullRequestOpened: true` an `opened` action by a human `triggers` allows
   starts a turn on the PR's own session (`<owner>/<repo>#<number>`, the same
   one its comments share), so a review bot can read a PR the moment it opens.
-  `synchronize`, `closed`, `reopened`, bot-opened and untriggered PRs are
-  ignored.
+  `pullRequestEvents` picks the actions instead: `['opened', 'synchronize',
+  'reopened', 'ready_for_review']` re-reviews every push. Draft PRs are skipped
+  until `ready_for_review`, and the input names the action and the head commit
+  (`Head commit: <sha>`). Other actions, bot-opened and untriggered PRs are
+  ignored. `replyToPullRequest: false` posts nothing after a pull-request turn,
+  for agents that post their own output (a review with `github_submit_review`).
 - One session per issue or pull request (`<owner>/<repo>#<number>`), and one
   per review thread (a review comment and the replies under it).
 - The reply is a new comment: a timeline comment on the issue or pull request,
@@ -14442,8 +14446,8 @@ What it does, step by step:
 
 The example's environment flags are worth copying:
 
-- `-e LOUSHO_STORE=sqlite:/data/lousho.db -v lousho-data:/data` — sessions and
-  paused approvals survive container restarts (`/data` is a named volume).
+- `-e LOUSHO_STORE=sqlite:/app/data/lousho.db -v <name>-data:/app/data` — sessions and
+  paused approvals survive container restarts (`/app/data` is a named volume the image's `node` user owns).
 - `-e LOUSHO_API_TOKEN=...` — required: every route except `/health` is then
   bearer-authed. The image listens on `0.0.0.0`, so without a token (or an
   `auth.ts`) the container refuses to start (`LOUSHO_SERVER_UNPROTECTED`). Port 3000 is plain HTTP; put Traefik (the VPS template
@@ -24152,7 +24156,7 @@ if (result.toolErrors) console.warn(`${result.toolErrors} tool call(s) failed; t
 | `createTodoTools()` | `todo_write` / `todo_read` so an agent can plan multi-step work; see [Todo tools](#todo-tools). |
 | `askQuestionTool()`, `createAgent({ askQuestion: true })` | `ask_question`: the agent asks the user something and the run pauses until `agent.approvals.answer()`; see [Asking the user a question](https://github.com/LinuxDevil/lousho/blob/main/docs/approvals.md#asking-the-user-a-question). |
 | `createFsTools()`, `createShellTool()` | File system and shell tools for coding agents; see [Workspace tools](https://github.com/LinuxDevil/lousho/blob/main/docs/workspace-tools.md). |
-| `createEmailTool()`, `createSlackTool()`, `createGitHubTools()`, `createJiraTools()` (from `lousho/integrations`) | Integrations that need credentials, so they are built with options. `createSlackTool()` reads the webhook URL from `SLACK_WEBHOOK_URL` unless you pass `webhookUrl`; `createJiraTools()` takes `baseUrl`, `email` and `apiToken` explicitly (conventionally from `JIRA_BASE_URL`, `JIRA_EMAIL` and `JIRA_API_TOKEN`). |
+| `createEmailTool()`, `createSlackTool()`, `createGitHubTools()`, `createJiraTools()` (from `lousho/integrations`) | Integrations that need credentials, so they are built with options. `createSlackTool()` reads the webhook URL from `SLACK_WEBHOOK_URL` unless you pass `webhookUrl`; `createJiraTools()` takes `baseUrl`, `email` and `apiToken` explicitly (conventionally from `JIRA_BASE_URL`, `JIRA_EMAIL` and `JIRA_API_TOKEN`). `createGitHubTools()` takes `owner`, `repo` and either `token` (a string or a function returning one) or `app: { appId, privateKey, installationId? }` to authenticate as a GitHub App installation (tokens refresh automatically; the installation is looked up when omitted). Its `github_submit_review` posts one pull-request review: a summary, a verdict (`APPROVE`, `REQUEST_CHANGES`, `COMMENT`) and inline comments on lines of the diff. |
 | `createAgent({ mcpServers })`, `connectMcp(servers)` | Every tool of MCP servers given as config (stdio `command` or HTTP `url`), named `<server>__<tool>`; see [Use MCP servers in an agent](https://github.com/LinuxDevil/lousho/blob/main/docs/mcp.md#use-mcp-servers-in-an-agent). |
 | `openApiTools(document, options)` | One tool per operation of an OpenAPI 3.0 / 3.1 document; mutating operations ask for approval. See [OpenAPI tools](https://github.com/LinuxDevil/lousho/blob/main/docs/openapi-tools.md). |
 | `loadMcpTools(client, name)` | Every tool of a connected MCP server; see [MCP tools](https://github.com/LinuxDevil/lousho/blob/main/docs/mcp.md#tools-from-a-client-you-connected-yourself). |

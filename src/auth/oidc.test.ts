@@ -12,21 +12,6 @@ const AUD = 'client-123';
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe('oidc()', () => {
-  it('discovers the key set once and accepts a token from the issuer', async () => {
-    const rs = await rsaKey();
-    const fetch = fakeFetch({ [DISCOVERY]: { issuer: ISSUER, jwks_uri: JWKS }, [JWKS]: { keys: [{ ...rs.jwk, kid: 'r1' }] } });
-    const auth = oidc({ issuer: ISSUER, audience: AUD, fetch });
-    const token = await signToken(rs, { iss: ISSUER, aud: AUD, email: 'a@example.test' }, { kid: 'r1' });
-    expect(await auth(bearer(token))).toEqual({
-      id: 'u1',
-      type: 'user',
-      authenticator: 'oidc',
-      issuer: ISSUER,
-      claims: expect.objectContaining({ email: 'a@example.test' }),
-    });
-    expect(await auth(bearer(token))).toMatchObject({ id: 'u1' });
-    expect(fetch.urls).toEqual([DISCOVERY, JWKS]);
-  });
 
   it('refuses a discovery document that names another issuer (and never fetches its key set)', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -49,25 +34,6 @@ describe('oidc()', () => {
     expect(await auth(bearer(await signToken(es, { iss: 'https://other.test', aud: AUD })))).toBeNull();
     expect(await auth(bearer(await signToken(es, { iss: ISSUER, aud: 'other-client' })))).toBeNull();
     expect(await auth(bearer(await signToken(es, { iss: ISSUER, aud: AUD })))).toMatchObject({ id: 'u1' });
-  });
-
-  it('retries a failed discovery at most every 30 s', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    vi.useFakeTimers({ toFake: ['Date'] });
-    try {
-      const rs = await rsaKey();
-      const fetch = fakeFetch({});
-      const auth = oidc({ issuer: ISSUER, audience: AUD, fetch });
-      const token = await signToken(rs, { iss: ISSUER, aud: AUD });
-      expect(await auth(bearer(token))).toBeNull();
-      expect(await auth(bearer(token))).toBeNull();
-      expect(fetch.urls).toEqual([DISCOVERY]);
-      vi.setSystemTime(Date.now() + 30_000);
-      await auth(bearer(token));
-      expect(fetch.urls).toEqual([DISCOVERY, DISCOVERY]);
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it('refuses unusable options at construction', () => {

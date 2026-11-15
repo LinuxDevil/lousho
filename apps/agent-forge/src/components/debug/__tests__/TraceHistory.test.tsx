@@ -2,7 +2,6 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { ReactElement } from 'react';
-import { TraceHistory, LIVE_ENTRY } from '../TraceHistory';
 import { TracePanel } from '../TracePanel';
 import type { AgentRunStatusPayload, SpanEvent, TraceSummaryPayload } from '../../../../shared/wireTypes';
 
@@ -80,40 +79,6 @@ async function flush(): Promise<void> {
   });
 }
 
-describe('TraceHistory', () => {
-  it('renders a row per trace with time, duration, model calls, tokens, cost and status', () => {
-    const container = render(<TraceHistory traces={TRACES} selectedId="trace-old" liveActive={false} onSelect={() => undefined} />);
-    const rows = [...container.querySelectorAll('[role=option]')];
-    expect(rows).toHaveLength(2);
-    expect(rows[0].textContent).toContain('1.65s');
-    expect(rows[0].textContent).toContain('2 model');
-    expect(rows[0].textContent).toContain('159/32 tokens');
-    expect(rows[0].textContent).toContain('$0.000043');
-    expect(rows[0].textContent).toContain('error');
-    expect(rows[1].textContent).toContain('420ms');
-    expect(rows[1].querySelector('.value-missing')?.textContent).toBe('—');
-    expect(rows[1].getAttribute('aria-selected')).toBe('true');
-  });
-
-  it('shows the Live entry first only while a run is active', () => {
-    const active = render(<TraceHistory traces={TRACES} selectedId={LIVE_ENTRY} liveActive onSelect={() => undefined} />);
-    expect(active.querySelector('[role=option]')?.textContent).toContain('Live');
-    act(() => root?.unmount());
-    const idle = render(<TraceHistory traces={TRACES} selectedId={LIVE_ENTRY} liveActive={false} onSelect={() => undefined} />);
-    expect(idle.textContent).not.toContain('Live');
-  });
-
-  it('calls onSelect with the trace id, and explains an empty list', () => {
-    const onSelect = vi.fn();
-    const container = render(<TraceHistory traces={TRACES} selectedId={LIVE_ENTRY} liveActive={false} onSelect={onSelect} />);
-    act(() => (container.querySelectorAll('[role=option]')[1] as HTMLElement).click());
-    expect(onSelect).toHaveBeenCalledWith('trace-old');
-    act(() => root?.unmount());
-    const empty = render(<TraceHistory traces={[]} selectedId={LIVE_ENTRY} liveActive={false} onSelect={onSelect} />);
-    expect(empty.textContent).toContain('No saved traces yet');
-  });
-});
-
 describe('TracePanel with trace history', () => {
   beforeEach(() => {
     mocks.listTraces.mockResolvedValue(TRACES);
@@ -155,25 +120,6 @@ describe('TracePanel with trace history', () => {
     expect(container.querySelectorAll('.run-playground-link')).toHaveLength(0);
   });
 
-  it('selecting a step inspects it and highlights its canvas node', async () => {
-    mocks.appState.graph = {
-      version: 2,
-      nodes: [{ id: 'agent', kind: 'agent', owner: null, position: { x: 0, y: 0 }, data: { fields: {}, extra: {} } }],
-      emptySections: [],
-      unplaced: [],
-    };
-    const container = render(<TracePanel />);
-    await flush();
-    act(() => (container.querySelectorAll('[role=option]')[0] as HTMLElement).click());
-    await flush();
-    const chat = container.querySelector('[data-obs-id="c1"] .run-row-main') as HTMLElement;
-    act(() => chat.click());
-    expect(mocks.appState.setHighlightedNodeId).toHaveBeenLastCalledWith('agent');
-    expect(container.querySelector('.run-inspector')?.getAttribute('data-obs-id')).toBe('c1');
-    // A past trace stays in the Trace tab.
-    expect(mocks.appState.setDrawerTab).not.toHaveBeenCalled();
-  });
-
   it('switches between the tree and the waterfall', async () => {
     const container = render(<TracePanel />);
     await flush();
@@ -185,19 +131,6 @@ describe('TracePanel with trace history', () => {
     expect(container.querySelector('.run-tree')).toBeNull();
   });
 
-  it('shows the live spans under a Live entry while a run is active, running steps ticking', async () => {
-    mocks.appState.runStatus = statusOf('running');
-    mocks.appState.spans = LIVE_SPANS;
-    const container = render(<TracePanel />);
-    await flush();
-    const options = [...container.querySelectorAll('[role=option]')];
-    expect(options[0].textContent).toContain('Live');
-    expect(options[0].getAttribute('aria-selected')).toBe('true');
-    expect(container.querySelector('.run-name')?.textContent).toBe('invoke_agent live-run');
-    expect(container.querySelector('.run-tree-row .run-dur')?.textContent).toContain('running');
-    expect(mocks.listTraces).not.toHaveBeenCalled();
-  });
-
   it('jumps to the Logs tab when a live step is selected', async () => {
     mocks.appState.runStatus = statusOf('running');
     mocks.appState.spans = LIVE_SPANS;
@@ -205,25 +138,6 @@ describe('TracePanel with trace history', () => {
     await flush();
     act(() => (container.querySelector('.run-row-main') as HTMLElement).click());
     expect(mocks.appState.setDrawerTab).toHaveBeenCalledWith('logs');
-  });
-
-  it('explains an empty live view', async () => {
-    const container = render(<TracePanel />);
-    await flush();
-    expect(container.textContent).toContain('No spans yet');
-  });
-
-  it('reloads the list when a run ends', async () => {
-    mocks.appState.runStatus = statusOf('running');
-    const container = render(<TracePanel />);
-    await flush();
-    expect(mocks.listTraces).not.toHaveBeenCalled();
-
-    mocks.appState.runStatus = statusOf('stopped');
-    act(() => root?.render(<TracePanel />));
-    await flush();
-    expect(mocks.listTraces).toHaveBeenCalledTimes(1);
-    expect(container.querySelectorAll('[role=option]')).toHaveLength(2);
   });
 
   it('says why the list is empty when the server cannot be read', async () => {

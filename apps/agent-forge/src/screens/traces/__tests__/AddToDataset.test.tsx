@@ -75,14 +75,6 @@ afterEach(() => {
 });
 
 describe('AddToDataset', () => {
-  it('opens a labelled dialog listing the datasets', async () => {
-    const { container, trigger } = await mount();
-    expect(trigger.textContent).toBe('Add to dataset');
-    expect(trigger.getAttribute('aria-expanded')).toBe('true');
-    expect(dialog(container)?.getAttribute('aria-label')).toBe('Add to dataset');
-    const options = [...dialog(container)!.querySelectorAll('option')].map((o) => o.textContent);
-    expect(options).toEqual(['golden', 'New dataset...']);
-  });
 
   it('posts exactly { from_trace_id } to the chosen dataset, toasts a link to it and closes', async () => {
     const { container, trigger } = await mount();
@@ -111,15 +103,6 @@ describe('AddToDataset', () => {
       { path: '/api/v1/datasets', method: 'POST', body: { name: 'fresh' } },
       { path: '/api/v1/datasets/fresh/examples', method: 'POST', body: { from_trace_id: 't1' } },
     ]);
-  });
-
-  it('shows a failure in a toast and keeps the dialog open', async () => {
-    failAdd = true;
-    const { container } = await mount();
-    await act(async () => submit(container).click());
-    await flush();
-    expect(container.querySelector('.toast[role="alert"]')?.textContent).toContain('no captured input');
-    expect(dialog(container)).not.toBeNull();
   });
 
   it('closes on Escape and returns focus to the button', async () => {

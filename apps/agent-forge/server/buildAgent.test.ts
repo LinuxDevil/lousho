@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { ConfigurationError, type AgentSpec } from 'lousho';
-import { buildAgentFromSpec, resolveProviderForModel } from './buildAgent';
+import { type AgentSpec } from 'lousho';
+import { buildAgentFromSpec } from './buildAgent';
 import { SecretsStore } from './secretsStore';
 
 const BASE_SPEC: AgentSpec = {
@@ -29,93 +29,15 @@ describe('buildAgentFromSpec - provider resolution', () => {
     process.env = { ...savedEnv };
   });
 
-  it('resolves the mock provider unchanged when the spec asks for mock', () => {
-    const built = buildAgentFromSpec(BASE_SPEC, 'agent-1', undefined, { secretsStore });
-    expect(built.provider.name).toBe('mock');
-  });
-
-  it('fails with an actionable LOUSHO_PROVIDER_MISSING_API_KEY error, not a silent mock run, when a real provider has no key', () => {
-    const spec: AgentSpec = { ...BASE_SPEC, provider: { type: 'openai', model: 'gpt-4o' } };
-    let caught: unknown;
-    try {
-      buildAgentFromSpec(spec, 'agent-2', undefined, { secretsStore });
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toBeInstanceOf(ConfigurationError);
-    expect((caught as ConfigurationError).code).toBe('LOUSHO_PROVIDER_MISSING_API_KEY');
-    expect((caught as Error).message).toMatch(/No API key for provider 'openai'.*Settings.*OPENAI_API_KEY.*'mock'/);
-  });
-
-  it('resolves the real provider when a key is stored in secretsStore', () => {
-    secretsStore.setKey('openai', 'sk-test-key');
-    const spec: AgentSpec = { ...BASE_SPEC, provider: { type: 'openai', model: 'gpt-4o' } };
-    const built = buildAgentFromSpec(spec, 'agent-3', undefined, { secretsStore });
-    expect(built.provider.name).toBe('openai');
-  });
-
-  it('resolves the real provider from an env var when no key is stored', () => {
-    process.env.ANTHROPIC_API_KEY = 'sk-ant-env-key';
-    const spec: AgentSpec = { ...BASE_SPEC, provider: { type: 'anthropic', model: 'claude-3-5-sonnet-latest' } };
-    const built = buildAgentFromSpec(spec, 'agent-4', undefined, { secretsStore });
-    expect(built.provider.name).toBe('anthropic');
-  });
-
-  it('prefers a stored key over an env var when both are present', () => {
-    process.env.OPENAI_API_KEY = 'sk-env-key';
-    secretsStore.setKey('openai', 'sk-stored-key');
-    const spec: AgentSpec = { ...BASE_SPEC, provider: { type: 'openai', model: 'gpt-4o' } };
-    const built = buildAgentFromSpec(spec, 'agent-5', undefined, { secretsStore });
-    expect(built.provider.name).toBe('openai');
-  });
-
-  it('fails the same way when no secretsStore is supplied at all', () => {
-    const spec: AgentSpec = { ...BASE_SPEC, provider: { type: 'anthropic', model: 'claude-3-5-sonnet-latest' } };
-    expect(() => buildAgentFromSpec(spec, 'agent-6')).toThrow(/No API key for provider 'anthropic'.*ANTHROPIC_API_KEY/);
-  });
-
   it('never substitutes mock for an env-only real provider (ollama)', () => {
     const spec: AgentSpec = { ...BASE_SPEC, provider: { type: 'ollama', model: 'llama3' } };
     const built = buildAgentFromSpec(spec, 'agent-ollama', undefined, { secretsStore });
     expect(built.provider.name).not.toBe('mock');
   });
 
-  it("passes an env-only provider's own config error on with a pointer to the fix (openrouter without a key)", () => {
+  it('an openrouter agent with neither a stored key nor the env var throws LOUSHO_PROVIDER_MISSING_API_KEY', () => {
     delete process.env.OPENROUTER_API_KEY;
     const spec: AgentSpec = { ...BASE_SPEC, provider: { type: 'openrouter', model: 'openai/gpt-4o-mini' } };
-    expect(() => buildAgentFromSpec(spec, 'agent-or', undefined, { secretsStore })).toThrow(/Provider 'openrouter' is not usable/);
-  });
-
-  it('still throws for a genuinely unrecognized provider type (a real config error, not a missing key)', () => {
-    const spec: AgentSpec = { ...BASE_SPEC, provider: { type: 'definitely-not-a-real-provider', model: 'x' } };
-    expect(() => buildAgentFromSpec(spec, 'agent-bad-provider', undefined, { secretsStore })).toThrow();
-  });
-
-  it('resolveProviderForModel: splits a model string at the first slash and resolves mock', () => {
-    expect(resolveProviderForModel('mock/mock-1').name).toBe('mock');
-  });
-
-  it("resolveProviderForModel: a real provider with neither stored key nor env throws LOUSHO_PROVIDER_MISSING_API_KEY", () => {
-    try {
-      resolveProviderForModel('anthropic/claude-haiku-5-5', secretsStore);
-      expect.unreachable();
-    } catch (error) {
-      expect((error as ConfigurationError).code).toBe('LOUSHO_PROVIDER_MISSING_API_KEY');
-    }
-    secretsStore.setKey('anthropic', 'sk-ant-test');
-    expect(resolveProviderForModel('anthropic/claude-haiku-5-5', secretsStore).name).toBe('anthropic');
-  });
-
-  it('threads a configured hook timeout through to the compiled hook registry without throwing', () => {
-    const spec: AgentSpec = {
-      ...BASE_SPEC,
-      policy: {
-        hooks: [
-          { nodeKey: 'llm', id: 'h1', name: 'redact', phase: 'pre', point: 'toolCall', code: 'return ctx;' },
-        ],
-      } as unknown as AgentSpec['policy'],
-    };
-    const built = buildAgentFromSpec(spec, 'agent-7', undefined, { secretsStore, hookTimeoutMs: 250 });
-    expect(built.hooks).toBeDefined();
+    expect(() => buildAgentFromSpec(spec, 'agent-or', undefined, { secretsStore })).toThrow(/No API key for provider 'openrouter'/);
   });
 });

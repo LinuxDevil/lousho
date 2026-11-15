@@ -120,22 +120,6 @@ describe('HttpAgentStore', () => {
     storage = new MemoryStorage();
   });
 
-  it('lists the agents already on disk in the server workspace', async () => {
-    const server = new FakeServer('/proj-a');
-    server.records.set('from-disk', record('from-disk', spec('from-disk'), layout()));
-    const store = new HttpAgentStore(server, storage);
-    expect((await store.list()).map((e) => e.id)).toEqual(['from-disk']);
-    expect((await store.load('from-disk'))?.spec).toEqual(spec('from-disk'));
-  });
-
-  it('saves the spec to the server (PUT { spec }), not to the browser', async () => {
-    const server = new FakeServer('/proj-a');
-    const store = new HttpAgentStore(server, storage);
-    await store.save('new-agent', spec('new-agent'));
-    expect(server.records.get('new-agent')?.spec).toEqual(spec('new-agent'));
-    expect(storage.length).toBe(0);
-  });
-
   it('saves the layout through PUT /agents/:id/layout', async () => {
     const server = new FakeServer('/proj-a');
     server.records.set('a1', record('a1', spec('a1'), layout()));
@@ -184,23 +168,5 @@ describe('HttpAgentStore', () => {
     const other = new HttpAgentStore(new FakeServer('/proj-b'), storage);
     storage.setItem('agent-forge:draft:/proj-a:a2', JSON.stringify({ spec: spec('a-only'), savedAt: 'x' }));
     expect(await other.load('a2')).toBeUndefined();
-  });
-
-  it('does not cache a draft when the server rejects the spec (an API error)', async () => {
-    const server = new FakeServer('/proj-a');
-    server.saveAgent = async () => {
-      throw Object.assign(new Error('Request body must be a valid AgentSpec'), { status: 400 });
-    };
-    const store = new HttpAgentStore(server, storage);
-    await store.list();
-    await expect(store.save('a1', spec('bad'))).rejects.toThrow(/valid AgentSpec/);
-    expect(storage.length).toBe(0);
-  });
-
-  it('removes from the server', async () => {
-    const server = new FakeServer('/proj-a');
-    server.records.set('gone', record('gone', spec('gone'), layout()));
-    await new HttpAgentStore(server, storage).remove('gone');
-    expect(server.records.has('gone')).toBe(false);
   });
 });

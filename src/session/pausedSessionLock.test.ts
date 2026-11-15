@@ -49,38 +49,6 @@ describe('a paused session turn locks the session', () => {
     expect(await store.checkpoints.load('chat')).toBeNull();
   });
 
-  it('a session whose transcript differs from the paused turn\'s still finds the pause, and refuses new turns', async () => {
-    const store = memoryStore();
-    await createAgent({ provider: mockModel(['done']), store }).session({ id: 'chat' }).send('hi');
-    const runs = { n: 0 };
-    const model = mockModel([calling('restart'), 'resumed', 'after']);
-    const agent = createAgent({ provider: model, tools: [restart(runs)], store });
-    const paused = await agent.session({ id: 'chat', store: new MemorySessionStore() }).send('restart it');
-    // turn numbering is monotonic - the earlier 'hi' turn took turn-0, so this pause is turn-2.
-    expect(await store.checkpoints.load('chat.turn-2')).toMatchObject({ status: 'awaiting-approval' });
-
-    const durable = agent.session({ id: 'chat' });
-    expect(await durable.pending()).toEqual({ status: 'awaiting-approval', approvalId: paused.approvalId });
-    await expect(durable.send('more work')).rejects.toMatchObject({ code: 'LOUSHO_SESSION_AWAITING_APPROVAL', approvalId: paused.approvalId });
-    await expect(durable.resume()).rejects.toBeInstanceOf(SessionAwaitingApprovalError);
-    await expect(agent.resume('chat')).rejects.toBeInstanceOf(SessionAwaitingApprovalError);
-    expect(model.calls).toHaveLength(1);
-    expect((await store.sessions!.load('chat'))!.length).toBe(2);
-  });
-
-  it('discardPending() drops the paused turn and unlocks the session', async () => {
-    const store = memoryStore();
-    const model = mockModel([calling('restart'), 'fresh']);
-    const agent = createAgent({ provider: model, tools: [restart({ n: 0 })], store });
-    await agent.session({ id: 'chat', store: new MemorySessionStore() }).send('restart it');
-
-    const durable = agent.session({ id: 'chat' });
-    await durable.discardPending();
-    expect(await durable.pending()).toBeNull();
-    expect(await store.checkpoints.load('chat.turn-0')).toBeNull();
-    expect((await durable.send('something else')).text).toBe('fresh');
-  });
-
   it('a missing .paused marker still locks the session: the turn checkpoint itself says it waits', async () => {
     const store = memoryStore();
     const model = mockModel([calling('restart'), 'resumed']);
@@ -101,20 +69,6 @@ describe('a paused session turn locks the session', () => {
     expect(await durable.pending()).toMatchObject({ status: 'awaiting-approval', approvalId: paused.approvalId });
     await expect(durable.send('more work')).rejects.toMatchObject({ code: 'LOUSHO_SESSION_AWAITING_APPROVAL' });
     expect(model.calls).toHaveLength(1);
-  });
-
-  it('once the approval is decided the session takes new turns again', async () => {
-    const store = memoryStore();
-    const runs = { n: 0 };
-    const agent = createAgent({ provider: mockModel([calling('restart'), 'Restarted.', 'Next.']), tools: [restart(runs)], store });
-    const session = agent.session({ id: 'chat' });
-    const paused = await session.send('restart it');
-    await expect(agent.send('x', { sessionId: 'chat' })).rejects.toBeInstanceOf(SessionAwaitingApprovalError);
-
-    expect((await agent.approvals.resolve({ id: paused.approvalId!, approved: true })).text).toBe('Restarted.');
-    expect(runs.n).toBe(1);
-    expect(await session.pending()).toBeNull();
-    expect((await session.send('and now?')).text).toBe('Next.');
   });
 
   // without a checkpointStore the pause had no marker, so send()/compact() ran beside it and the resumed

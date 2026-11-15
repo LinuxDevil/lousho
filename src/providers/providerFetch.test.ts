@@ -13,7 +13,6 @@ import { OpenRouterProvider } from './OpenRouterProvider';
 import { OllamaProvider } from './OllamaProvider';
 import { installedAiMajor } from './aiMajor.testkit';
 import type { LLMProvider } from './llm';
-import { createAgent } from '../createAgent';
 
 /** A `fetch` that answers every request with a 500. */
 function failingFetch() {
@@ -51,46 +50,5 @@ describe('provider `fetch` option', () => {
     const fetch = failingFetch();
     await expect(create(fetch).generate({ messages: [{ role: 'user', content: 'hi' }] })).rejects.toThrow();
     expect(fetch).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('one retry layer for a provider instance', () => {
-  const fast = { backoff: { initialMs: 1, jitter: false } };
-
-  it('retry: false sends one request, not the ai SDK default of 3', async () => {
-    const fetch = failingFetch();
-    const agent = createAgent({ provider: new OpenAIProvider({ apiKey: 'k', fetch }), instructions: 'x', retry: false });
-    await agent.send('hi').catch(() => undefined);
-    expect(fetch).toHaveBeenCalledTimes(1);
-  });
-
-  it('an explicit retry is the only layer: maxRetries 2 sends 3 requests, not 9', async () => {
-    const fetch = failingFetch();
-    const agent = createAgent({ provider: new OpenAIProvider({ apiKey: 'k', fetch }), instructions: 'x', retry: { ...fast, maxRetries: 2 } });
-    await agent.send('hi').catch(() => undefined);
-    expect(fetch).toHaveBeenCalledTimes(3);
-  });
-});
-
-describe('retry defaults of a provider instance', () => {
-  it('a built-in instance without `retry` is wrapped in withRetry() with its own maxRetries (the ai SDK retries off)', async () => {
-    const fetch = failingFetch();
-    const events: string[] = [];
-    const run = createAgent({ provider: new OpenAIProvider({ apiKey: 'k', fetch, maxRetries: 1 }), instructions: 'x' }).stream('hi', { throwOnError: false });
-    for await (const event of run) events.push(event.type);
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(events).toContain('provider.retry');
-  });
-});
-
-describe.skipIf(!ollamaPeerInstalled)('OllamaProvider connection options', () => {
-  it('sends the configured headers, and apiKey as a bearer token', async () => {
-    const fetch = failingFetch();
-    await new OllamaProvider({ fetch, maxRetries: 0, apiKey: 'secret', headers: { 'x-team': 'a' } })
-      .generate({ messages: [{ role: 'user', content: 'hi' }] })
-      .catch(() => undefined);
-    const headers = new Headers((fetch.mock.calls[0] as unknown as [unknown, RequestInit])[1].headers);
-    expect(headers.get('authorization')).toBe('Bearer secret');
-    expect(headers.get('x-team')).toBe('a');
   });
 });

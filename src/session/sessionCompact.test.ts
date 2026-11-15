@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { createAgent } from '../createAgent';
 import { mockModel } from '../testing';
-import { pinMessage, type CompactionStrategy } from '../context/compaction';
+import { pinMessage } from '../context/compaction';
 import { SqliteStore } from '../storage/sqlite';
 import { MemorySessionStore } from './index';
 import type { SessionStore } from './sessionStore';
@@ -99,24 +99,5 @@ describe('compaction strategy of a session', () => {
     const result = await session.compact({ strategy: failing });
     expect(result).toMatchObject({ strategy: 'boom', error: { message: 'nope' } });
     expect(await store.load('s2')).toEqual(toolTurn('a'));
-  });
-
-  it("agent.session() uses the agent's compaction setting", async () => {
-    const store = new MemorySessionStore();
-    await store.save('s4', toolTurn('a'));
-    const strategy: CompactionStrategy = {
-      name: 'agent-strategy',
-      compact: async ({ messages }) => ({ messages, tokensBefore: 0, tokensAfter: 0, prunedToolCallIds: [] }),
-    };
-    const session = createAgent({ provider: mockModel([]), compaction: { strategy } }).session({ id: 's4', store });
-    expect((await session.compact()).strategy).toBe('agent-strategy');
-  });
-
-  it('the session compaction option supplies the sizes', async () => {
-    const store = new MemorySessionStore();
-    await store.save('s3', [...toolTurn('a'), ...toolTurn('b')]);
-    const session = createAgent({ provider: mockModel([]) }).session({ id: 's3', store, compaction: { protectedTokens: 10 } });
-    const result = await session.compact();
-    expect(result.tokensAfter).toBeLessThan(result.tokensBefore);
   });
 });

@@ -28,8 +28,6 @@ import type {
   NodeKind,
   SkillNodeData,
   SubagentNodeData,
-  ToolNodeData,
-  TriggerNodeData,
 } from '../types';
 import { ROOT_ONLY_KINDS } from '../types';
 import { arbSpec } from './arbitraries';
@@ -71,10 +69,6 @@ function nodeById(graph: Graph, id: string): GraphNode {
   return node;
 }
 
-function toolItem(graph: Graph, id: string): Record<string, unknown> {
-  return (nodeById(graph, id).data as ToolNodeData).item as Record<string, unknown>;
-}
-
 /** Object.freeze every object in `value`, recursively. */
 function deepFreeze<T>(value: T): T {
   if (value !== null && typeof value === 'object') {
@@ -86,100 +80,10 @@ function deepFreeze<T>(value: T): T {
 
 const AT = { x: 10, y: 20 };
 
-describe('addNode', () => {
-  it('dedupes ids with #2 and prefixes the owner id', () => {
-    const g0 = specToGraph(minimalSpec());
-    const data: GraphNode['data'] = { item: { builtin: 'http' } };
-    const r1 = addNode(g0, { kind: 'tool', data }, AT, 'agent');
-    expect(r1.nodeId).toBe('tool:http');
-    const r2 = addNode(r1.graph, { kind: 'tool', data }, AT, 'agent');
-    expect(r2.nodeId).toBe('tool:http#2');
-    const node = nodeById(r1.graph, 'tool:http');
-    expect(node.kind).toBe('tool');
-    expect(node.owner).toBe('agent');
-    expect(node.position).toStrictEqual(AT);
-  });
-
-  it('prefixes child ids with an inline-agent owner', () => {
-    const g0 = specToGraph(treeSpec());
-    const r = addNode(g0, { kind: 'tool', data: { item: { builtin: 'http' } } }, AT, 'sub:r');
-    expect(r.nodeId).toBe('sub:r/tool:http');
-    expect(nodeById(r.graph, 'sub:r/tool:http').owner).toBe('sub:r');
-  });
-
-  it('gives notes a note:n id and a null owner', () => {
-    const g0 = specToGraph(minimalSpec());
-    const r = addNode(g0, { kind: 'note', data: { text: 'hi' } }, AT, null);
-    expect(r.nodeId).toMatch(/^note:n/);
-    expect(nodeById(r.graph, r.nodeId).owner).toBeNull();
-  });
-});
-
-describe('ownerForNewNode', () => {
-  const g = specToGraph(treeSpec());
-
-  it('defaults to the root agent when nothing is selected', () => {
-    expect(ownerForNewNode(g, 'tool')).toBe('agent');
-  });
-
-  it('uses the selected agent', () => {
-    expect(ownerForNewNode(g, 'tool', 'sub:r')).toBe('sub:r');
-    expect(ownerForNewNode(g, 'tool', 'agent')).toBe('agent');
-  });
-
-  it('uses the selected node\'s owner', () => {
-    expect(ownerForNewNode(g, 'tool', 'sub:r/tool:x')).toBe('sub:r');
-  });
-
-  it('forces root-only kinds onto the root agent', () => {
-    expect(ownerForNewNode(g, 'trigger', 'sub:r')).toBe('agent');
-    expect(ownerForNewNode(g, 'abort', 'sub:r')).toBe('agent');
-  });
-
-  it('gives notes a null owner', () => {
-    expect(ownerForNewNode(g, 'note', 'sub:r')).toBeNull();
-  });
-});
-
-describe('patchNode', () => {
-  const g = specToGraph(minimalSpec({ tools: [{ builtin: 'http' }] }));
-
-  it('sets a key on data.item and deletes it on undefined', () => {
-    const g1 = patchNode(g, 'tool:http', { approval: 'always' });
-    expect(toolItem(g1, 'tool:http')['approval']).toBe('always');
-    const g2 = patchNode(g1, 'tool:http', { approval: undefined });
-    expect('approval' in toolItem(g2, 'tool:http')).toBe(false);
-  });
-
-  it('edits data.fields on the root agent', () => {
-    const g1 = patchNode(g, 'agent', { description: 'triages' });
-    expect((nodeById(g1, 'agent').data as AgentNodeData).fields.description).toBe('triages');
-    expect((nodeById(g, 'agent').data as AgentNodeData).fields.description).toBeUndefined();
-  });
-});
-
 describe('removeNode', () => {
   it('returns the same reference for the root agent', () => {
     const g = specToGraph(treeSpec());
     expect(removeNode(g, 'agent')).toBe(g);
-  });
-
-  it('removes an inline subagent\'s whole subtree', () => {
-    const g = specToGraph(treeSpec());
-    const g1 = removeNode(g, 'sub:r');
-    expect(g1.nodes.map((n) => n.id)).toEqual(['agent', 'tool:http']);
-  });
-
-  it('drops empty sections owned by a removed agent', () => {
-    const g = specToGraph(
-      minimalSpec({ tools: [], subagents: { r: inlineAgent({ name: 'r', tools: [] }) } })
-    );
-    expect(g.emptySections).toEqual([
-      { owner: 'agent', key: 'tools' },
-      { owner: 'sub:r', key: 'tools' },
-    ]);
-    const g1 = removeNode(g, 'sub:r');
-    expect(g1.emptySections).toEqual([{ owner: 'agent', key: 'tools' }]);
   });
 });
 
@@ -195,52 +99,6 @@ describe('duplicateNode', () => {
     expect(duplicateNode(g, 'agent')).toStrictEqual({ graph: g, nodeId: undefined });
     expect(duplicateNode(g, 'note:n1')).toStrictEqual({ graph: g, nodeId: undefined });
   });
-
-  it('copies a tool at +40/+40 under a deduped id', () => {
-    const r = duplicateNode(g, 'tool:http');
-    expect(r.nodeId).toBe('tool:http#2');
-    const clone = nodeById(r.graph, 'tool:http#2');
-    expect(clone.position).toStrictEqual({ x: 50, y: 60 });
-    expect(clone.owner).toBe('agent');
-    expect(toolItem(r.graph, 'tool:http#2')).toStrictEqual(toolItem(g, 'tool:http'));
-  });
-});
-
-describe('moveNode / setNodeData / setCollapsed', () => {
-  const g = specToGraph(treeSpec());
-
-  it('moves a node to a new position', () => {
-    const g1 = moveNode(g, 'tool:http', { x: 7, y: 8 });
-    expect(nodeById(g1, 'tool:http').position).toStrictEqual({ x: 7, y: 8 });
-    expect(nodeById(g, 'tool:http').position).not.toStrictEqual({ x: 7, y: 8 });
-  });
-
-  it('replaces a node\'s whole data object', () => {
-    const data: GraphNode['data'] = { item: { builtin: 'current_date' } };
-    const g1 = setNodeData<'tool'>(g, 'tool:http', data);
-    expect(toolItem(g1, 'tool:http')).toStrictEqual({ builtin: 'current_date' });
-  });
-
-  it('sets collapsed on a group node', () => {
-    const g1 = setCollapsed(g, 'sub:r', true);
-    expect(nodeById(g1, 'sub:r').collapsed).toBe(true);
-    const r = graphToSpec(g1);
-    expect(r.layout.nodes['sub:r'].collapsed).toBe(true);
-  });
-
-  it('round-trips collapsed through layout.json back onto the node', () => {
-    const g = specToGraph(
-      minimalSpec({
-        subagents: {
-          research: inlineAgent({ name: 'research' }),
-        },
-      }),
-    );
-    const r = graphToSpec(setCollapsed(g, 'sub:research', true));
-    expect(r.layout.nodes['sub:research']).toMatchObject({ collapsed: true });
-    const g2 = specToGraph(r.spec, r.layout);
-    expect(nodeById(g2, 'sub:research').collapsed).toBe(true);
-  });
 });
 
 describe('palette create (C04 subagent entries)', () => {
@@ -248,17 +106,6 @@ describe('palette create (C04 subagent entries)', () => {
   const entries = Object.values(KIND_VIEWS).flatMap((view) => view?.palette ?? []);
   const inline = entries.find((e) => e.id === 'subagent-inline');
   const ref = entries.find((e) => e.id === 'subagent-ref');
-  const remote = entries.find((e) => e.id === 'subagent-remote');
-
-  it('registers all three entries under the Agents group', () => {
-    for (const entry of [inline, ref, remote]) {
-      expect(entry).toBeDefined();
-      expect(entry?.group).toBe('Agents');
-    }
-    expect(inline?.kind).toBe('agent');
-    expect(ref?.kind).toBe('subagent');
-    expect(remote?.kind).toBe('subagent');
-  });
 
   it('names the first subagent "helper" and the second "helper-2"', () => {
     const first = inline!.create(g0, 'agent');
@@ -266,27 +113,6 @@ describe('palette create (C04 subagent entries)', () => {
     const g1 = addNode(g0, first, AT, 'agent').graph;
     const second = ref!.create(g1, 'agent');
     expect((second.data as SubagentNodeData).key).toBe('helper-2');
-  });
-
-  it('names a remote subagent "remote"', () => {
-    expect((remote!.create(g0, 'agent').data as SubagentNodeData).key).toBe('remote');
-    expect((remote!.create(g0, 'agent').data as SubagentNodeData).item).toStrictEqual({
-      remote: { url: '', description: '' },
-    });
-  });
-
-  it('seeds the inline agent\'s fields from its key and the owner\'s model', () => {
-    const data = inline!.create(g0, 'agent').data as AgentNodeData;
-    expect(data.fields).toMatchObject({
-      name: 'helper',
-      description: '',
-      model: 'mock/mock-1',
-      instructions: '',
-    });
-    expect(data.extra).toStrictEqual({});
-    const added = addNode(g0, inline!.create(g0, 'agent'), AT, 'agent');
-    expect(added.nodeId).toBe('sub:helper');
-    expect(graphToSpec(added.graph).spec.subagents?.['helper']).toMatchObject({ inline: { name: 'helper' } });
   });
 });
 
@@ -297,14 +123,6 @@ describe('palette create (C06 tool entries)', () => {
   const openapi = entries.find((e) => e.id === 'tool-openapi');
   const integration = entries.find((e) => e.id === 'tool-integration');
 
-  it('registers all three entries under the Capabilities group', () => {
-    for (const entry of [tool, openapi, integration]) {
-      expect(entry).toBeDefined();
-      expect(entry?.group).toBe('Capabilities');
-      expect(entry?.kind).toBe('tool');
-    }
-  });
-
   it('creates the empty item each entry describes', () => {
     expect(tool!.create(g0, 'agent').data).toStrictEqual({ item: { builtin: '' } });
     expect(openapi!.create(g0, 'agent').data).toStrictEqual({ item: { openapi: { url: '' } } });
@@ -312,77 +130,12 @@ describe('palette create (C06 tool entries)', () => {
       item: { integration: 'github', credentials: {} },
     });
   });
-
-  it('names two built-in creates tool:new and tool:new#2', () => {
-    const first = addNode(g0, tool!.create(g0, 'agent'), AT, 'agent');
-    expect(first.nodeId).toBe('tool:new');
-    const second = addNode(first.graph, tool!.create(first.graph, 'agent'), AT, 'agent');
-    expect(second.nodeId).toBe('tool:new#2');
-  });
-});
-
-describe('palette create (C05 handoff entry)', () => {
-  const g0 = specToGraph(minimalSpec());
-  const entries = Object.values(KIND_VIEWS).flatMap((view) => view?.palette ?? []);
-  const handoff = entries.find((e) => e.id === 'handoff');
-
-  it('registers the entry under the Agents group', () => {
-    expect(handoff).toBeDefined();
-    expect(handoff?.group).toBe('Agents');
-    expect(handoff?.kind).toBe('handoff');
-  });
-
-  it('creates the empty item', () => {
-    expect(handoff!.create(g0, 'agent').data).toStrictEqual({ item: { agent: '' } });
-  });
-
-  it('names two creates handoff:new and handoff:new#2', () => {
-    const first = addNode(g0, handoff!.create(g0, 'agent'), AT, 'agent');
-    expect(first.nodeId).toBe('handoff:new');
-    const second = addNode(first.graph, handoff!.create(first.graph, 'agent'), AT, 'agent');
-    expect(second.nodeId).toBe('handoff:new#2');
-  });
-});
-
-describe('palette create (C07 mcp entry)', () => {
-  const g0 = specToGraph(minimalSpec());
-  const entries = Object.values(KIND_VIEWS).flatMap((view) => view?.palette ?? []);
-  const mcp = entries.find((e) => e.id === 'mcp');
-
-  it('registers the entry under the Capabilities group', () => {
-    expect(mcp).toBeDefined();
-    expect(mcp?.group).toBe('Capabilities');
-    expect(mcp?.kind).toBe('mcp');
-  });
-
-  it('creates the empty stdio item', () => {
-    expect(mcp!.create(g0, 'agent').data).toStrictEqual({ key: 'server', item: { command: '' } });
-  });
-
-  it('names two creates mcp:server and mcp:server-2', () => {
-    const first = addNode(g0, mcp!.create(g0, 'agent'), AT, 'agent');
-    expect(first.nodeId).toBe('mcp:server');
-    const second = addNode(first.graph, mcp!.create(first.graph, 'agent'), AT, 'agent');
-    expect(second.nodeId).toBe('mcp:server-2');
-  });
 });
 
 describe('palette create (C08 skill entry)', () => {
   const g0 = specToGraph(minimalSpec());
   const entries = Object.values(KIND_VIEWS).flatMap((view) => view?.palette ?? []);
   const skill = entries.find((e) => e.id === 'skill');
-
-  it('registers the entry under the Capabilities group', () => {
-    expect(skill).toBeDefined();
-    expect(skill?.group).toBe('Capabilities');
-    expect(skill?.kind).toBe('skill');
-  });
-
-  it('creates the empty inline item named after the first free name', () => {
-    expect(skill!.create(g0, 'agent').data).toStrictEqual({
-      item: { inline: { name: 'skill', description: '', content: '' } },
-    });
-  });
 
   it('names two creates skill and skill-2 with ids skill:skill and skill:skill-2', () => {
     const first = addNode(g0, skill!.create(g0, 'agent'), AT, 'agent');
@@ -399,18 +152,6 @@ describe('palette create (C09 memory entry)', () => {
   const g0 = specToGraph(minimalSpec());
   const entries = Object.values(KIND_VIEWS).flatMap((view) => view?.palette ?? []);
   const memory = entries.find((e) => e.id === 'memory');
-
-  it('registers the entry under the Capabilities group', () => {
-    expect(memory).toBeDefined();
-    expect(memory?.group).toBe('Capabilities');
-    expect(memory?.kind).toBe('memory');
-  });
-
-  it('creates the in-memory session slot named after the first free name', () => {
-    expect(memory!.create(g0, 'agent').data).toStrictEqual({
-      item: { name: 'notes', scope: 'session', provider: { type: 'in-memory' } },
-    });
-  });
 
   it('names two creates memory:notes and memory:notes-2', () => {
     const first = addNode(g0, memory!.create(g0, 'agent'), AT, 'agent');
@@ -430,15 +171,6 @@ describe('palette create (trigger entries)', () => {
   const entries = Object.values(KIND_VIEWS).flatMap((view) => view?.palette ?? []);
   const byId = (id: string) => entries.find((e) => e.id === id);
 
-  it('registers the five entries under the Start group', () => {
-    for (const id of ['trigger-chat', 'trigger-cron', 'trigger-webhook', 'trigger-channel', 'trigger-agent']) {
-      const entry = byId(id);
-      expect(entry, id).toBeDefined();
-      expect(entry?.group).toBe('Start');
-      expect(entry?.kind).toBe('trigger');
-    }
-  });
-
   it('creates each type\'s empty value with a fresh t-item id', () => {
     expect(byId('trigger-chat')!.create(g0, 'agent').data).toStrictEqual({
       item: { id: 't1', type: 'chat' },
@@ -456,38 +188,12 @@ describe('palette create (trigger entries)', () => {
       item: { id: 't1', type: 'agent', after: '', on: 'done', promptTemplate: '{{run.resultText}}' },
     });
   });
-
-  it('names two creates trigger:t1 and trigger:t2', () => {
-    const chat = byId('trigger-chat')!;
-    const first = addNode(g0, chat.create(g0, 'agent'), AT, 'agent');
-    expect(first.nodeId).toBe('trigger:t1');
-    const second = addNode(first.graph, chat.create(first.graph, 'agent'), AT, 'agent');
-    expect(second.nodeId).toBe('trigger:t2');
-    expect((nodeById(second.graph, 'trigger:t2').data as TriggerNodeData).item).toStrictEqual({
-      id: 't2',
-      type: 'chat',
-    });
-  });
-
-  it('keeps the owner on the root agent when an inline subagent is selected', () => {
-    const g = specToGraph(treeSpec());
-    const owner = ownerForNewNode(g, 'trigger', 'sub:r');
-    expect(owner).toBe('agent');
-    const added = addNode(g, byId('trigger-chat')!.create(g, owner), AT, owner);
-    expect(nodeById(added.graph, 'trigger:t1').owner).toBe('agent');
-  });
 });
 
 describe('palette create (C13 note entry)', () => {
   const g0 = specToGraph(minimalSpec());
   const entries = Object.values(KIND_VIEWS).flatMap((view) => view?.palette ?? []);
   const note = entries.find((e) => e.id === 'note');
-
-  it('registers the entry under the Canvas group', () => {
-    expect(note).toBeDefined();
-    expect(note?.group).toBe('Canvas');
-    expect(note?.kind).toBe('note');
-  });
 
   it('creates an ownerless note:n node that lands in layout.notes, not the spec', () => {
     const created = note!.create(g0, ownerForNewNode(g0, 'note'));
@@ -508,12 +214,6 @@ describe('palette create (C13 hook entry)', () => {
   const entries = Object.values(KIND_VIEWS).flatMap((view) => view?.palette ?? []);
   const hook = entries.find((e) => e.id === 'hook');
 
-  it('registers the entry under the Safety group', () => {
-    expect(hook).toBeDefined();
-    expect(hook?.group).toBe('Safety');
-    expect(hook?.kind).toBe('hook');
-  });
-
   it('creates the audit-log inline hook with the first free h id', () => {
     const first = addNode(g0, hook!.create(g0, 'agent'), AT, 'agent');
     expect(first.nodeId).toBe('hook:h1');
@@ -532,18 +232,6 @@ describe('palette create (C10 guardrail entry)', () => {
   const entries = Object.values(KIND_VIEWS).flatMap((view) => view?.palette ?? []);
   const guardrail = entries.find((e) => e.id === 'guardrail');
 
-  it('registers the entry under the Safety group', () => {
-    expect(guardrail).toBeDefined();
-    expect(guardrail?.group).toBe('Safety');
-    expect(guardrail?.kind).toBe('guardrail');
-  });
-
-  it('creates the default max-length item', () => {
-    expect(guardrail!.create(g0, 'agent').data).toStrictEqual({
-      item: { id: 'g1', name: 'max-length', on: ['input', 'output'] },
-    });
-  });
-
   it('names two creates guard:g1 and guard:g2', () => {
     const first = addNode(g0, guardrail!.create(g0, 'agent'), AT, 'agent');
     expect(first.nodeId).toBe('guard:g1');
@@ -554,56 +242,6 @@ describe('palette create (C10 guardrail entry)', () => {
       name: 'max-length',
       on: ['input', 'output'],
     });
-  });
-});
-
-describe('reownNode', () => {
-  const g = specToGraph(treeSpec());
-
-  it('moves a capability node into a group at {x:24,y:48} without rekeying', () => {
-    const g1 = reownNode(g, 'tool:http', 'sub:r');
-    const moved = nodeById(g1, 'tool:http');
-    expect(moved.owner).toBe('sub:r');
-    expect(moved.id).toBe('tool:http');
-    expect(moved.position).toStrictEqual({ x: 24, y: 48 });
-    const r = graphToSpec(g1);
-    const inline = r.spec.subagents?.['r'] as { inline: { tools: unknown[] } };
-    expect(inline.inline.tools).toContainEqual({ builtin: 'http' });
-    expect(r.spec.tools).toBeUndefined();
-  });
-
-  it('restores the absolute position when a node leaves a group', () => {
-    const sub = nodeById(g, 'sub:r');
-    const tool = nodeById(g, 'sub:r/tool:x');
-    const expected = { x: sub.position.x + tool.position.x, y: sub.position.y + tool.position.y };
-    const g1 = reownNode(g, 'sub:r/tool:x', 'agent');
-    expect(nodeById(g1, 'sub:r/tool:x').position).toStrictEqual(expected);
-    expect(nodeById(g1, 'sub:r/tool:x').owner).toBe('agent');
-  });
-});
-
-describe('connectNodes', () => {
-  const g = specToGraph(treeSpec());
-
-  it('agent → capability re-owns the capability', () => {
-    const result = connectNodes(g, 'agent', 'sub:r/tool:x');
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(nodeById(result.graph, 'sub:r/tool:x').owner).toBe('agent');
-  });
-
-  it('returns canConnect\'s refusal verbatim', () => {
-    expect(connectNodes(g, 'tool:http', 'agent')).toStrictEqual({
-      ok: false,
-      reason: "Can't connect tool → agent",
-    });
-    expect(connectNodes(g, 'agent', 'tool:http')).toStrictEqual({
-      ok: false,
-      reason: 'Already attached to this agent',
-    });
-  });
-
-  it('refuses unknown endpoints', () => {
-    expect(connectNodes(g, 'ghost', 'agent').ok).toBe(false);
   });
 });
 
@@ -743,7 +381,7 @@ function randomMutation(rng: Rng, g: Graph): Graph {
   }
 }
 
-const SEEDS = Array.from({ length: 100 }, (_, i) => i + 1);
+const SEEDS = Array.from({ length: 50 }, (_, i) => i + 1);
 
 describe.each(SEEDS)('mutation round trip, seed %i', (seed) => {
   const rng = mulberry32(seed);

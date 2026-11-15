@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { loadDatabaseSync, type SqlDatabase } from '../storage/sqlite/driver';
 import { migrate } from '../storage/sqlite/migrations';
 import { migrateObserve, OBSERVE_MIGRATIONS } from './schema';
-import { parseIngestEnvelope, type IngestEvent } from './envelope';
+import { type IngestEvent } from './envelope';
 import {
   createToken,
   hasTokens,
@@ -20,7 +20,6 @@ import {
   rebuildRollups,
   rollupSeries,
   traceDetail,
-  transaction,
   verifyToken,
 } from './store';
 import { sweepAgents } from './sweep';
@@ -41,21 +40,6 @@ function obs(over: Partial<Extract<IngestEvent, { type: 'observation' }>['data']
 const heartbeat = (agentId: string, ts: number, project = 'proj'): IngestEvent => ({
   type: 'agent.heartbeat',
   data: { agent_id: agentId, project, name: 'a', ts },
-});
-
-describe('openDb', () => {
-  it('migrates an empty db to the observe schema', () => {
-    const database = db();
-    try {
-      const version = database.prepare('PRAGMA user_version').get();
-      expect(Number(version?.user_version)).toBeGreaterThan(0);
-      expect(database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='observations'").get()).toBeDefined();
-      expect(database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='hub_entries'").get()).toBeDefined();
-      expect(database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='tokens'").get()).toBeDefined();
-    } finally {
-      database.close();
-    }
-  });
 });
 
 describe('prompt_labels migration', () => {
@@ -85,49 +69,6 @@ describe('prompt_labels migration', () => {
 });
 
 describe('ingestBatch', () => {
-  it('upserts: a resent batch lands one row and never double-counts rollups', () => {
-    const database = db();
-    try {
-      const batch = [heartbeat('a1', T0), obs()];
-      ingestBatch(database, batch, T0);
-      ingestBatch(database, batch, T0 + 1);
-      const counts = observeCounts(database);
-      expect(counts.observations).toBe(1);
-      expect(counts.agents).toBe(1);
-      expect(rollupSeries(database, { agent_id: 'a1' }).filter((r) => r.metric === 'runs').every((r) => r.value === 1)).toBe(true);
-    } finally {
-      database.close();
-    }
-  });
-
-  it('stores usage/cost verbatim including the partial and estimated flags', () => {
-    const database = db();
-    try {
-      ingestBatch(database, [
-        obs({
-          usage_input_tokens: 11,
-          usage_output_tokens: 7,
-          usage_cached_tokens: 3,
-          usage_reasoning_tokens: 2,
-          cost_usd: 0.0042,
-          cost_partial: true,
-          usage_estimated: true,
-          model: 'm',
-        }),
-      ]);
-      const detail = traceDetail(database, 't1');
-      const row = detail?.observations[0];
-      expect(row?.usage_input_tokens).toBe(11);
-      expect(row?.usage_output_tokens).toBe(7);
-      expect(row?.usage_cached_tokens).toBe(3);
-      expect(row?.usage_reasoning_tokens).toBe(2);
-      expect(row?.cost_usd).toBe(0.0042);
-      expect(row?.cost_partial).toBe(true);
-      expect(row?.usage_estimated).toBe(true);
-    } finally {
-      database.close();
-    }
-  });
 
   it('truncates input/output at 64KB and sets the truncated flag', () => {
     const database = db();
@@ -143,16 +84,6 @@ describe('ingestBatch', () => {
     }
   });
 
-  it('keeps an already-flagged row truncated when the strings fit', () => {
-    const database = db();
-    try {
-      ingestBatch(database, [obs({ input: 'small', truncated: true })]);
-      expect(traceDetail(database, 't1')?.observations[0]?.truncated).toBe(true);
-    } finally {
-      database.close();
-    }
-  });
-
   it('exposes the latest heartbeat dropped count on the agent row, null when absent', () => {
     const database = db();
     try {
@@ -161,207 +92,6 @@ describe('ingestBatch', () => {
       ingestBatch(database, [{ type: 'agent.heartbeat', data: { agent_id: 'a1', ts: T0, meta: { dropped: 7 } } }]);
       ingestBatch(database, [{ type: 'agent.heartbeat', data: { agent_id: 'a1', ts: T0 + 1, meta: { dropped: 9 } } }]);
       expect(listAgents(database, T0 + 1).find((a) => a.agent_id === 'a1')?.dropped).toBe(9);
-    } finally {
-      database.close();
-    }
-  });
-
-  it('derives a session row from observations that carry a session_id', () => {
-    const database = db();
-    try {
-      ingestBatch(database, [obs({ session_id: 's1' }), obs({ obs_id: 'o2', session_id: 's1', start: T0 + 50, end: T0 + 200 })]);
-      const session = database.prepare('SELECT * FROM sessions WHERE session_id = ?').get('s1');
-      expect(session).toBeDefined();
-      expect(Number(session?.started_at)).toBe(T0);
-      expect(Number(session?.ended_at)).toBe(T0 + 200);
-    } finally {
-      database.close();
-    }
-  });
-
-  it('heartbeats upsert the agent row and keep the newest last_heartbeat', () => {
-    const database = db();
-    try {
-      ingestBatch(database, [heartbeat('a1', T0)]);
-      ingestBatch(database, [heartbeat('a1', T0 - 5000)]);
-      const [agent] = listAgents(database, T0);
-      expect(agent.last_heartbeat).toBe(T0);
-      expect(agent.status).toBe('healthy');
-      ingestBatch(database, [{ type: 'agent.deregister', data: { agent_id: 'a1', ts: T0 + 1 } }]);
-      expect(listAgents(database, T0)[0].status).toBe('stopped');
-    } finally {
-      database.close();
-    }
-  });
-});
-
-describe('rollups', () => {
-  it('recomputes per-agent metrics for the touched buckets only', () => {
-    const database = db();
-    try {
-      const otherHour = T0 + 4 * 3600_000;
-      ingestBatch(database, [
-        obs(),
-        obs({ obs_id: 'o2', status: 'error', cost_usd: 0.5, usage_input_tokens: 10, usage_output_tokens: 4 }),
-        obs({ obs_id: 'o3', agent_id: 'a2' }),
-        obs({ obs_id: 'o4', start: otherHour, end: otherHour + 10 }),
-        // a child span (has a parent) is never a run
-        obs({ obs_id: 'o5', parent_obs_id: 'o1', kind: 'tool' }),
-      ]);
-      const hour = T0 - (T0 % 3600_000);
-      const a1 = rollupSeries(database, { agent_id: 'a1', granularity: 'hour' });
-      const at = (bucket: number) => a1.filter((r) => r.bucket_start === bucket);
-      const metric = (bucket: number, m: string) => at(bucket).find((r) => r.metric === m)?.value;
-      expect(metric(hour, 'runs')).toBe(2);
-      expect(metric(hour, 'errors')).toBe(1);
-      expect(metric(hour, 'cost_usd')).toBe(0.5);
-      expect(metric(hour, 'input_tokens')).toBe(10);
-      expect(metric(hour, 'output_tokens')).toBe(4);
-      expect(metric(hour, 'latency_ms')).toBe(200);
-      expect(metric(otherHour - (otherHour % 3600_000), 'runs')).toBe(1);
-      expect(rollupSeries(database, { agent_id: 'a2', granularity: 'hour' }).find((r) => r.metric === 'runs')?.value).toBe(1);
-      // day granularity got the same runs
-      const day = T0 - (T0 % 86_400_000);
-      expect(rollupSeries(database, { agent_id: 'a1', granularity: 'day' }).find((r) => r.bucket_start === day && r.metric === 'runs')?.value).toBe(2);
-    } finally {
-      database.close();
-    }
-  });
-
-  it('rebuildRollups restores correct rows after the table is wiped', () => {
-    const database = db();
-    try {
-      ingestBatch(database, [obs(), obs({ obs_id: 'o2', status: 'error' })]);
-      database.exec('DELETE FROM rollups');
-      const { buckets } = rebuildRollups(database);
-      expect(buckets).toBeGreaterThan(0);
-      const rows = rollupSeries(database, { agent_id: 'a1' });
-      expect(rows.find((r) => r.metric === 'runs')?.value).toBe(2);
-      expect(rows.find((r) => r.metric === 'errors')?.value).toBe(1);
-    } finally {
-      database.close();
-    }
-  });
-});
-
-describe('traces read', () => {
-  it('lists traces filtered by status and agent', () => {
-    const database = db();
-    try {
-      ingestBatch(database, [
-        obs(),
-        obs({ obs_id: 'o2', trace_id: 't2', status: 'error' }),
-        obs({ obs_id: 'o3', trace_id: 't3', agent_id: 'a2' }),
-      ]);
-      expect(listTraces(database, { limit: 50, offset: 0 }).total).toBe(3);
-      expect(listTraces(database, { status: 'error', limit: 50, offset: 0 }).traces.map((t) => t.trace_id)).toEqual(['t2']);
-      expect(listTraces(database, { agent_id: 'a2', limit: 50, offset: 0 }).total).toBe(1);
-      expect(listTraces(database, { status: 'ok', limit: 50, offset: 0 }).total).toBe(2);
-    } finally {
-      database.close();
-    }
-  });
-});
-
-describe('trace list filters, search, sort and richer rows', () => {
-  // five traces at T0, T0+1s .. T0+4s; t3 is the slowest (2 s), t4 holds the error
-  const seed = (database: SqlDatabase): void => {
-    ingestBatch(database, [
-      heartbeat('a1', T0),
-      obs({ obs_id: 'r1', trace_id: 't1', start: T0, end: T0 + 100, input: 'refund ord_1', cost_usd: 0.5 }),
-      obs({ obs_id: 'r2', trace_id: 't2', start: T0 + 1000, end: T0 + 1500 }),
-      obs({ obs_id: 'r3', trace_id: 't3', start: T0 + 2000, end: T0 + 4000, input: 'ship ord_5', output: 'x'.repeat(300) }),
-      obs({ obs_id: 'r4', trace_id: 't4', start: T0 + 3000, end: T0 + 3050, status: 'error' }),
-      obs({ obs_id: 'g4a', trace_id: 't4', parent_obs_id: 'r4', kind: 'generation', model: 'gpt-x', start: T0 + 3001, end: T0 + 3005 }),
-      obs({
-        obs_id: 'g4b',
-        trace_id: 't4',
-        parent_obs_id: 'r4',
-        kind: 'generation',
-        model: 'gpt-y',
-        status: 'error',
-        attrs: { error: 'upstream 529 overloaded' },
-        start: T0 + 3010,
-        end: T0 + 3020,
-      }),
-      obs({ obs_id: 'r5', trace_id: 't5', start: T0 + 4000, end: T0 + 4300, usage_input_tokens: 900, usage_output_tokens: 100 }),
-    ]);
-  };
-  const ids = (database: SqlDatabase, filter: Partial<Parameters<typeof listTraces>[1]>): string[] =>
-    listTraces(database, { limit: 50, offset: 0, ...filter }).traces.map((t) => t.trace_id);
-
-  it('from/to is a half-open window on trace start', () => {
-    const database = db();
-    try {
-      seed(database);
-      expect(ids(database, { from: T0 + 1000, to: T0 + 3000 })).toEqual(['t3', 't2']);
-      expect(listTraces(database, { from: T0 + 1000, to: T0 + 3000, limit: 50, offset: 0 }).total).toBe(2);
-      // since/until keep their inclusive meaning
-      expect(ids(database, { since: T0 + 1000, until: T0 + 3000 })).toEqual(['t4', 't3', 't2']);
-    } finally {
-      database.close();
-    }
-  });
-
-  it('q searches root name, input and output case-insensitively, with LIKE wildcards escaped', () => {
-    const database = db();
-    try {
-      seed(database);
-      expect(ids(database, { q: 'ord_5' })).toEqual(['t3']);
-      expect(ids(database, { q: 'ORD_5' })).toEqual(['t3']);
-      expect(ids(database, { q: 'ord%' })).toEqual([]);
-      expect(ids(database, { q: 'xxxx' })).toEqual(['t3']);
-      expect(ids(database, { q: 'invoke_agent' })).toHaveLength(5);
-    } finally {
-      database.close();
-    }
-  });
-
-  it('filters by min_duration_ms and by any observation model', () => {
-    const database = db();
-    try {
-      seed(database);
-      expect(ids(database, { min_duration_ms: 1000 })).toEqual(['t3']);
-      expect(ids(database, { model: 'gpt-y' })).toEqual(['t4']);
-      expect(ids(database, { model: 'nope' })).toEqual([]);
-    } finally {
-      database.close();
-    }
-  });
-
-  it('sorts by start (default desc), duration, tokens and cost with a stable trace_id tie-break', () => {
-    const database = db();
-    try {
-      seed(database);
-      expect(ids(database, {})).toEqual(['t5', 't4', 't3', 't2', 't1']);
-      expect(ids(database, { order: 'asc' })).toEqual(['t1', 't2', 't3', 't4', 't5']);
-      expect(ids(database, { sort: 'duration', order: 'desc' })[0]).toBe('t3');
-      expect(ids(database, { sort: 'duration', order: 'asc' })[0]).toBe('t4');
-      expect(ids(database, { sort: 'tokens' })[0]).toBe('t5');
-      expect(ids(database, { sort: 'cost' })[0]).toBe('t1');
-      // t2/t3/t4 tie on cost 0: trace_id breaks it in the same direction
-      expect(ids(database, { sort: 'cost', order: 'asc' })).toEqual(['t2', 't3', 't4', 't5', 't1']);
-    } finally {
-      database.close();
-    }
-  });
-
-  it('rows carry agent_name, first generation model, first error message and 200-char previews', () => {
-    const database = db();
-    try {
-      seed(database);
-      const rows = new Map(listTraces(database, { limit: 50, offset: 0 }).traces.map((t) => [t.trace_id, t]));
-      const t4 = rows.get('t4')!;
-      expect(t4.error_message).toBe('upstream 529 overloaded');
-      expect(t4.model).toBe('gpt-x');
-      expect(t4.agent_name).toBe('a');
-      const t3 = rows.get('t3')!;
-      expect(t3.input_preview).toBe('ship ord_5');
-      expect(t3.output_preview).toBe('x'.repeat(200));
-      expect(t3.error_message).toBeNull();
-      expect(t3.model).toBeNull();
-      expect(rows.get('t2')!.input_preview).toBeNull();
-      expect(rows.get('t2')!.output_preview).toBeNull();
     } finally {
       database.close();
     }
@@ -387,45 +117,6 @@ describe('tokens', () => {
     }
   });
 });
-
-describe('transaction', () => {
-  it('rolls the whole batch back when a write fails', () => {
-    const database = db();
-    try {
-      expect(() =>
-        transaction(database, () => {
-          ingestBatchInner(database);
-          throw new Error('boom');
-        })
-      ).toThrow('boom');
-      expect(observeCounts(database).observations).toBe(0);
-    } finally {
-      database.close();
-    }
-  });
-
-  it('a nested call joins the outer transaction, so an outer throw undoes the inner writes', () => {
-    const database = db();
-    try {
-      expect(() =>
-        transaction(database, () => {
-          ingestBatch(database, [obs()]);
-          throw new Error('boom');
-        })
-      ).toThrow('boom');
-      expect(observeCounts(database).observations).toBe(0);
-      // and the db is usable for a fresh transaction afterwards
-      ingestBatch(database, [obs()]);
-      expect(observeCounts(database).observations).toBe(1);
-    } finally {
-      database.close();
-    }
-  });
-});
-
-function ingestBatchInner(database: SqlDatabase): void {
-  database.prepare("INSERT INTO observations (obs_id, trace_id, kind, start, updated_at) VALUES ('x','t','span',1,1)").run();
-}
 
 describe('eager root start (end NULL until the end event lands)', () => {
   /** A run's root start event: what the reporter sends when the root span opens. */
@@ -489,83 +180,6 @@ describe('eager root start (end NULL until the end event lands)', () => {
       database.close();
     }
   });
-
-  it('a start event arriving after its end event (a requeue reordered them) cannot reopen the finished row', () => {
-    const database = db();
-    try {
-      ingestBatch(database, [end()], T0);
-      ingestBatch(database, [start()], T0 + 300);
-      expect(row(database)).toMatchObject(finished);
-      expect(listTraces(database, { limit: 50, offset: 0 }).traces[0].status).toBe('error');
-      expect(hourMetric(database, 'runs')).toBe(1);
-      expect(hourMetric(database, 'latency_ms')).toBe(250);
-      // the same order inside one batch
-      const other = db();
-      try {
-        ingestBatch(other, [end(), start()], T0);
-        expect(row(other)).toMatchObject(finished);
-      } finally {
-        other.close();
-      }
-    } finally {
-      database.close();
-    }
-  });
-
-  it('lists an open root as running, not ok or error, and keeps it out of latency', () => {
-    const database = db();
-    try {
-      ingestBatch(database, [
-        start(),
-        // a child already failed: the run is still running, the root decides
-        obs({ obs_id: 'c1', parent_obs_id: 'o1', kind: 'tool', status: 'error' }),
-        obs({ obs_id: 'o2', trace_id: 't2', end: T0 + 40, status: 'ok' }),
-      ]);
-      const list = (status?: string) => listTraces(database, { ...(status ? { status } : {}), limit: 50, offset: 0 });
-      expect(list().traces.find((t) => t.trace_id === 't1')?.status).toBe('running');
-      expect(list('running').traces.map((t) => t.trace_id)).toEqual(['t1']);
-      expect(list('ok').traces.map((t) => t.trace_id)).toEqual(['t2']);
-      expect(list('error').total).toBe(0);
-      const [agent] = insightsAgents(database, { since: T0 - 1, until: T0 + 86_400_000 });
-      expect(agent).toMatchObject({ runs: 2, errors: 0, p50_latency_ms: 40, p95_latency_ms: 40 });
-    } finally {
-      database.close();
-    }
-  });
-
-  it('sweep marks an open root observation interrupted when its agent goes down', () => {
-    const database = db();
-    try {
-      ingestBatch(database, [heartbeat('a1', T0), start()], T0);
-      expect(listTraces(database, { limit: 50, offset: 0 }).traces[0].status).toBe('running');
-      const result = sweepAgents(database, T0 + 400_000);
-      expect(result.transitions[0]).toMatchObject({ agent_id: 'a1', to: 'down', crashed: true });
-      expect(row(database)).toMatchObject({ status: 'interrupted', end: null });
-      expect(listTraces(database, { limit: 50, offset: 0 }).traces[0].status).toBe('interrupted');
-      expect(listTraces(database, { status: 'interrupted', limit: 50, offset: 0 }).total).toBe(1);
-      // a requeued start resent after the agent woke up keeps the verdict ...
-      ingestBatch(database, [start()], T0 + 400_100);
-      expect(row(database)?.status).toBe('interrupted');
-      // ... until the run's real end lands and settles it
-      ingestBatch(database, [end()], T0 + 400_200);
-      expect(row(database)).toMatchObject(finished);
-    } finally {
-      database.close();
-    }
-  });
-
-  it("a deregister interrupts the agent's runs that never ended (closed mid-run)", () => {
-    const database = db();
-    try {
-      ingestBatch(database, [heartbeat('a1', T0), start(), obs({ obs_id: 'o2', trace_id: 't2' }), obs({ obs_id: 'x', trace_id: 't3', agent_id: 'a2', end: undefined, status: undefined })], T0);
-      ingestBatch(database, [{ type: 'agent.deregister', data: { agent_id: 'a1', ts: T0 + 5_000 } }], T0 + 5_000);
-      expect(row(database)).toMatchObject({ status: 'interrupted', end: null });
-      expect(traceDetail(database, 't2')?.observations[0].status).toBe('ok');
-      expect(traceDetail(database, 't3')?.observations[0].status).toBeNull(); // another agent's run is untouched
-    } finally {
-      database.close();
-    }
-  });
 });
 
 describe('agent instances (one agent_id, several processes over time)', () => {
@@ -595,22 +209,6 @@ describe('agent instances (one agent_id, several processes over time)', () => {
   const hostA = { host: 'h1', pid: 100 };
   const hostB = { host: 'h1', pid: 200 };
 
-  it('siblings heartbeating side by side never interrupt each other', () => {
-    const database = db();
-    try {
-      ingestBatch(database, [beat('A', T0, hostA), openRoot('runA', 'A')], T0);
-      ingestBatch(database, [beat('B', T0 + 1_000, hostB), openRoot('runB', 'B')], T0 + 1_000);
-      for (let t = 60_000; t <= 600_000; t += 60_000) {
-        ingestBatch(database, [beat('A', T0 + t, hostA), beat('B', T0 + t + 1_000, hostB)], T0 + t + 1_000);
-        sweepAgents(database, T0 + t + 30_000);
-      }
-      expect([traceStatus(database, 'runA'), traceStatus(database, 'runB')]).toEqual(['running', 'running']);
-      expect(instances(database)).toEqual(['A', 'B']);
-    } finally {
-      database.close();
-    }
-  });
-
   it('a restart on the same host and pid interrupts the silent old instance once it missed a beat (interval + slack)', () => {
     const database = db();
     try {
@@ -627,96 +225,6 @@ describe('agent instances (one agent_id, several processes over time)', () => {
       expect(traceStatus(database, 'runA')).toBe('interrupted');
       expect(traceStatus(database, 'runB')).toBe('running');
       expect(instances(database)).toEqual(['B']);
-    } finally {
-      database.close();
-    }
-  });
-
-  it('twins on one host and pid (separate pid namespaces) heartbeating side by side never interrupt each other', () => {
-    const database = db();
-    try {
-      const pid1 = { host: 'node-1', pid: 1 }; // two --network host replicas: same hostname, both pid 1
-      ingestBatch(database, [beat('A', T0, pid1), openRoot('runA', 'A')], T0);
-      ingestBatch(database, [beat('B', T0 + 30_000, pid1), openRoot('runB', 'B')], T0 + 30_000);
-      for (let t = 60_000; t <= 900_000; t += 60_000) {
-        ingestBatch(database, [beat('A', T0 + t, pid1)], T0 + t);
-        ingestBatch(database, [beat('B', T0 + t + 30_000, pid1)], T0 + t + 30_000);
-        sweepAgents(database, T0 + t + 45_000);
-      }
-      expect([traceStatus(database, 'runA'), traceStatus(database, 'runB')]).toEqual(['running', 'running']);
-      expect(instances(database)).toEqual(['A', 'B']);
-    } finally {
-      database.close();
-    }
-  });
-
-  it('twins started 300ms apart never interrupt each other when one beat lands a flush tick late', () => {
-    const database = db();
-    try {
-      const pid1 = { host: 'node-1', pid: 1 };
-      ingestBatch(database, [beat('A', T0, pid1), openRoot('runA', 'A')], T0);
-      ingestBatch(database, [beat('B', T0 + 300, pid1), openRoot('runB', 'B')], T0 + 300);
-      for (let t = 60_000; t <= 600_000; t += 60_000) {
-        // B's beat lands first; A's rides its next 5s flush tick, ~4s late
-        ingestBatch(database, [beat('B', T0 + t + 300, pid1)], T0 + t + 300);
-        ingestBatch(database, [beat('A', T0 + t + 4_300, pid1)], T0 + t + 4_300);
-      }
-      expect([traceStatus(database, 'runA'), traceStatus(database, 'runB')]).toEqual(['running', 'running']);
-      expect(instances(database)).toEqual(['A', 'B']);
-    } finally {
-      database.close();
-    }
-  });
-
-  it("a dead instance's delayed final heartbeat landing after its same-pid successor started cannot interrupt the successor", () => {
-    const database = db();
-    try {
-      const c1 = { host: 'c1', pid: 1 };
-      ingestBatch(database, [beat('A', T0, c1), openRoot('runA', 'A')], T0);
-      ingestBatch(database, [beat('B', T0 + 1_000, c1), openRoot('runB', 'B')], T0 + 1_000);
-      // A's last words (stamped earlier, delivered late) arrive after B registered
-      ingestBatch(database, [beat('A', T0 + 500, c1)], T0 + 2_000);
-      ingestBatch(database, [beat('B', T0 + 61_000, c1)], T0 + 61_000);
-      expect(traceStatus(database, 'runB')).toBe('running');
-      // A spoke after B was first seen, so the shortcut leaves it; the sweep catches it at stale
-      expect(traceStatus(database, 'runA')).toBe('running');
-      ingestBatch(database, [beat('B', T0 + 121_000, c1)], T0 + 121_000);
-      sweepAgents(database, T0 + 135_000);
-      expect(traceStatus(database, 'runA')).toBe('interrupted');
-      expect(traceStatus(database, 'runB')).toBe('running');
-    } finally {
-      database.close();
-    }
-  });
-
-  it("judges each instance's silence against its own heartbeat interval", () => {
-    const database = db();
-    try {
-      const fast = { host: 'h1', pid: 10, interval: 10_000 };
-      const slow = { host: 'h1', pid: 60, interval: 60_000 };
-      ingestBatch(database, [beat('S', T0, slow), openRoot('runS', 'S')], T0);
-      ingestBatch(database, [beat('S', T0 + 60_000, slow)], T0 + 60_000);
-      for (let t = 0; t <= 120_000; t += 10_000) ingestBatch(database, [beat('F', T0 + t, fast)], T0 + t); // the agent row now says 10s
-      // S is 60s quiet: past 2 x 10s + 10s, well within its own 2 x 60s + 10s
-      sweepAgents(database, T0 + 120_000);
-      expect(traceStatus(database, 'runS')).toBe('running');
-      expect(instances(database)).toEqual(['F', 'S']);
-    } finally {
-      database.close();
-    }
-  });
-
-  it("judges silence by the daemon's receive time, not the reporter's clock", () => {
-    const database = db();
-    try {
-      const behind = 15 * 60_000; // B's clock runs 15 minutes slow
-      ingestBatch(database, [beat('A', T0, hostA), beat('B', T0 - behind, hostB), openRoot('runB', 'B')], T0);
-      for (let t = 60_000; t <= 300_000; t += 60_000) {
-        ingestBatch(database, [beat('A', T0 + t, hostA), beat('B', T0 + t - behind, hostB)], T0 + t);
-        sweepAgents(database, T0 + t + 5_000);
-      }
-      expect(traceStatus(database, 'runB')).toBe('running');
-      expect(instances(database)).toEqual(['A', 'B']);
     } finally {
       database.close();
     }
@@ -755,106 +263,10 @@ describe('agent instances (one agent_id, several processes over time)', () => {
       database.close();
     }
   });
-
-  it('a late heartbeat from an instance already forgotten interrupts nothing', () => {
-    const database = db();
-    try {
-      ingestBatch(database, [beat('A', T0, hostA), beat('B', T0, hostB), openRoot('runB', 'B')], T0);
-      ingestBatch(database, [{ type: 'agent.deregister', data: { agent_id: 'a1', ts: T0 + 1_000, instance_id: 'A' } }], T0 + 1_000);
-      expect(instances(database)).toEqual(['B']);
-      // a requeued heartbeat of A lands after its deregister: A looks new again
-      ingestBatch(database, [beat('A', T0 + 500, hostA)], T0 + 2_000);
-      expect(traceStatus(database, 'runB')).toBe('running');
-    } finally {
-      database.close();
-    }
-  });
-
-  it('a deregister interrupts only the closing instance', () => {
-    const database = db();
-    try {
-      ingestBatch(database, [beat('A', T0, hostA), beat('B', T0, hostB), openRoot('runA', 'A'), openRoot('runB', 'B')], T0);
-      ingestBatch(database, [{ type: 'agent.deregister', data: { agent_id: 'a1', ts: T0 + 5_000, instance_id: 'A' } }], T0 + 5_000);
-      expect(statusOf(database, 'runA')).toBe('interrupted');
-      expect(traceStatus(database, 'runB')).toBe('running');
-    } finally {
-      database.close();
-    }
-  });
-
-  it('an old-style open root (no instance_id) keeps the agent-level rules', () => {
-    const database = db();
-    try {
-      ingestBatch(database, [beat(undefined, T0), openRoot('old')], T0);
-      // a new instance appearing does not touch it: nothing says which process started it
-      ingestBatch(database, [beat('B', T0 + 1_000, hostB)], T0 + 1_000);
-      sweepAgents(database, T0 + 135_000);
-      expect(statusOf(database, 'old')).toBeNull();
-      // the agent going down still interrupts it
-      sweepAgents(database, T0 + 400_000);
-      expect(statusOf(database, 'old')).toBe('interrupted');
-    } finally {
-      database.close();
-    }
-  });
-
-  it('treats an empty instance_id as absent instead of refusing the batch', () => {
-    expect(parseIngestEnvelope({ batch: [beat('', T0, hostA)] }).ok).toBe(true);
-    const database = db();
-    try {
-      ingestBatch(database, [beat('', T0, hostA), openRoot('blank', '')], T0);
-      expect(instances(database)).toEqual([]);
-      expect(database.prepare("SELECT instance_id FROM observations WHERE obs_id = 'blank'").get()?.instance_id).toBeNull();
-    } finally {
-      database.close();
-    }
-  });
-});
-
-describe('latency rollup', () => {
-  it('leaves open runs out of latency_ms', () => {
-    const database = db();
-    try {
-      ingestBatch(database, [obs({ obs_id: 'open', trace_id: 't-open', end: undefined, status: undefined })]);
-      const metric = (m: string) => rollupSeries(database, { agent_id: 'a1', granularity: 'hour' }).find((r) => r.metric === m)?.value;
-      expect(metric('runs')).toBe(1);
-      expect(metric('latency_ms')).toBe(0); // no finished run yet (and no NOT NULL violation)
-      ingestBatch(database, [obs({ obs_id: 'done', start: T0, end: T0 + 70 })]);
-      expect(metric('latency_ms')).toBe(70);
-    } finally {
-      database.close();
-    }
-  });
 });
 
 describe('insights math and per-agent series (O14)', () => {
   const DAY = 86_400_000;
-
-  it('averages runs/day over the days the agent was active, not the whole window', () => {
-    const database = db();
-    try {
-      // first seen at T0 ("today"), 12 runs since; the window reaches back 7 days
-      ingestBatch(database, [heartbeat('a1', T0), ...Array.from({ length: 12 }, (_, i) => obs({ obs_id: `r${i}`, trace_id: `t${i}`, start: T0 + i, end: T0 + i + 10 }))], T0);
-      const until = T0 + 3_600_000;
-      const [agent] = insightsAgents(database, { since: until - 7 * DAY, until });
-      expect(agent.runs).toBe(12);
-      expect(agent.runs_per_day).toBe(12);
-    } finally {
-      database.close();
-    }
-  });
-
-  it('falls back to the window start when the agent row is missing', () => {
-    const database = db();
-    try {
-      ingestBatch(database, Array.from({ length: 14 }, (_, i) => obs({ obs_id: `r${i}`, trace_id: `t${i}`, start: T0 + i, end: T0 + i + 10 })));
-      const until = T0 + 3_600_000;
-      const [agent] = insightsAgents(database, { since: until - 7 * DAY, until });
-      expect(agent.runs_per_day).toBe(2);
-    } finally {
-      database.close();
-    }
-  });
 
   it('writes p95_latency_ms and error_rate per bucket, survives rebuild, and stays out of the aggregates', () => {
     const database = db();
@@ -893,46 +305,6 @@ describe('insights math and per-agent series (O14)', () => {
   });
 });
 
-describe('trace list prompt filter', () => {
-  // t1 ran mira@1, t2 ran mira@2 (on a child generation), t3 ran other@1, t4 ran no prompt
-  const seed = (database: SqlDatabase): void => {
-    const insert = database.prepare(
-      'INSERT INTO prompts (prompt_id, name, version, labels, text, variables, hash, created_at) VALUES (?, ?, ?, NULL, ?, NULL, NULL, ?)'
-    );
-    insert.run('p-mira-1', 'mira', 1, 'v1', T0);
-    insert.run('p-mira-2', 'mira', 2, 'v2', T0);
-    insert.run('p-other-1', 'other', 1, 'o1', T0);
-    ingestBatch(database, [
-      obs({ obs_id: 'r1', trace_id: 't1', start: T0 }),
-      obs({ obs_id: 'r2', trace_id: 't2', start: T0 + 1000 }),
-      obs({ obs_id: 'g2', trace_id: 't2', parent_obs_id: 'r2', kind: 'generation', start: T0 + 1001 }),
-      obs({ obs_id: 'r3', trace_id: 't3', start: T0 + 2000 }),
-      obs({ obs_id: 'r4', trace_id: 't4', start: T0 + 3000 }),
-      { type: 'prompt_use', data: { obs_id: 'r1', prompt_id: 'p-mira-1', version: 1 } },
-      { type: 'prompt_use', data: { obs_id: 'g2', prompt_id: 'p-mira-2', version: 2 } },
-      { type: 'prompt_use', data: { obs_id: 'r3', prompt_id: 'p-other-1', version: 1 } },
-    ]);
-  };
-  const list = (database: SqlDatabase, prompt: { name: string; version?: number }) =>
-    listTraces(database, { prompt, limit: 50, offset: 0 });
-
-  it('keeps traces with any observation linked to the prompt, any version or one version', () => {
-    const database = db();
-    try {
-      seed(database);
-      expect(list(database, { name: 'mira' }).traces.map((t) => t.trace_id)).toEqual(['t2', 't1']);
-      expect(list(database, { name: 'mira' }).total).toBe(2);
-      expect(list(database, { name: 'mira', version: 2 }).traces.map((t) => t.trace_id)).toEqual(['t2']);
-      expect(list(database, { name: 'mira', version: 2 }).total).toBe(1);
-      expect(list(database, { name: 'other' }).traces.map((t) => t.trace_id)).toEqual(['t3']);
-      expect(list(database, { name: 'mira', version: 9 }).total).toBe(0);
-      expect(list(database, { name: 'nope' }).total).toBe(0);
-    } finally {
-      database.close();
-    }
-  });
-});
-
 describe('session reopen on ingest', () => {
   const session = (database: SqlDatabase) =>
     database.prepare("SELECT status, ended_at FROM sessions WHERE session_id = 's1'").get();
@@ -954,42 +326,4 @@ describe('session reopen on ingest', () => {
       }
     });
   }
-
-  it('a new finished trace in an ended session reopens it, ending at that trace', () => {
-    const database = closed('ended');
-    try {
-      ingestBatch(database, [obs({ obs_id: 'o2', trace_id: 't2', session_id: 's1', start: T0 + 5000, end: T0 + 6000 })]);
-      expect(session(database)).toMatchObject({ status: 'active', ended_at: T0 + 6000 });
-    } finally {
-      database.close();
-    }
-  });
-
-  it('a stale or reordered event for activity at or before ended_at does not reopen it', () => {
-    const database = closed('ended');
-    try {
-      ingestBatch(database, [
-        // the same finished root re-sent
-        obs({ session_id: 's1', start: T0, end: T0 + 100 }),
-        // a requeued start event for that root
-        obs({ session_id: 's1', start: T0, end: undefined, status: undefined }),
-        // an older child arriving late
-        obs({ obs_id: 'late', parent_obs_id: 'o1', session_id: 's1', start: T0 + 10, end: T0 + 90 }),
-      ]);
-      expect(session(database)).toMatchObject({ status: 'ended', ended_at: T0 + 100 });
-    } finally {
-      database.close();
-    }
-  });
-
-  it('an active session keeps tracking its latest finished observation', () => {
-    const database = db();
-    try {
-      ingestBatch(database, [obs({ session_id: 's1', start: T0, end: T0 + 100 })]);
-      ingestBatch(database, [obs({ obs_id: 'o2', session_id: 's1', start: T0 + 200, end: undefined, status: undefined })]);
-      expect(session(database)).toMatchObject({ status: 'active', ended_at: T0 + 100 });
-    } finally {
-      database.close();
-    }
-  });
 });

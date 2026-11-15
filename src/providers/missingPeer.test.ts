@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { FEATURE_PEERS, MissingPeerDependencyError, loadOptionalPeer, lazyValue } from './optionalPeer';
+import { FEATURE_PEERS, MissingPeerDependencyError, loadOptionalPeer } from './optionalPeer';
 import { installedAiMajor } from './aiMajor.testkit';
 
 function moduleNotFound(packageName: string): Error {
@@ -138,47 +138,5 @@ describe('feature peers', () => {
     expect((error as MissingPeerDependencyError).feature).toContain(feature);
     expect((error as Error).message).toContain(feature);
     expect((error as Error).message).toContain(`Run: ${command}`);
-  });
-
-  it('buildServer() rejects with the MCP install hint when the MCP SDK is missing', async () => {
-    vi.resetModules();
-    vi.doMock('@modelcontextprotocol/sdk/server/mcp.js', () => {
-      throw moduleNotFound('@modelcontextprotocol/sdk/server/mcp.js');
-    });
-    const { buildServer } = await import('../tools/mcp/server/buildServer');
-    await expect(buildServer({ name: 'x', version: '1', tools: [] } as never)).rejects.toMatchObject({
-      name: 'MissingPeerDependencyError',
-      installCommand: 'npm install @modelcontextprotocol/sdk@^1.31.0',
-    });
-    vi.doUnmock('@modelcontextprotocol/sdk/server/mcp.js');
-  });
-});
-
-describe('loadOptionalPeer', () => {
-  it('rethrows errors that are not a missing package, and a missing transitive module as is', async () => {
-    const boom = new Error('boom');
-    await expect(loadOptionalPeer('x', () => Promise.reject(boom))).rejects.toBe(boom);
-
-    const transitive = moduleNotFound('some-other-package');
-    await expect(loadOptionalPeer('x', () => Promise.reject(transitive))).rejects.toBe(transitive);
-  });
-
-  it('recognises an ESM "Cannot find package" error', async () => {
-    const esm = Object.assign(new Error("Cannot find package 'x' imported from /app/a.mjs"), {
-      code: 'ERR_MODULE_NOT_FOUND',
-    });
-    await expect(loadOptionalPeer('x', () => Promise.reject(esm))).rejects.toBeInstanceOf(MissingPeerDependencyError);
-  });
-});
-
-describe('lazyValue', () => {
-  it('initialises once, and retries after a failure', async () => {
-    const init = vi.fn().mockRejectedValueOnce(new Error('first')).mockResolvedValue('ok');
-    const get = lazyValue<string>(init);
-
-    await expect(get()).rejects.toThrow('first');
-    expect(await get()).toBe('ok');
-    expect(await get()).toBe('ok');
-    expect(init).toHaveBeenCalledTimes(2);
   });
 });

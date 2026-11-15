@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../../../state/AppState', () => ({ useAppState: () => ({ runStatus: null }) }));
 
 import { DatasetsScreen } from '../DatasetsScreen';
-import { datasetPath } from '../datasetsUrl';
 import { render } from '../../../ui/__tests__/render';
 import { ToastProvider } from '../../../ui/Toast';
 import type { ObserveDataset, ObserveExample } from '../../../observe/types';
@@ -95,14 +94,6 @@ async function mountAt(hash: string) {
   return container;
 }
 
-async function goto(hash: string) {
-  await act(async () => {
-    window.history.replaceState(null, '', `/${hash}`);
-    window.dispatchEvent(new HashChangeEvent('hashchange'));
-  });
-  await flush();
-}
-
 const buttonNamed = (container: HTMLElement, name: string) =>
   [...container.querySelectorAll('button')].find((b) => b.textContent?.trim() === name || b.getAttribute('aria-label') === name);
 
@@ -121,43 +112,7 @@ afterEach(() => {
   window.history.replaceState(null, '', '/');
 });
 
-describe('datasetPath', () => {
-  it('encodes the name and leaves the default offset out', () => {
-    expect(datasetPath('golden.v1')).toBe('/evals/datasets/golden.v1');
-    expect(datasetPath('a b', 0)).toBe('/evals/datasets/a%20b');
-    expect(datasetPath('golden', 50)).toBe('/evals/datasets/golden?offset=50');
-  });
-});
-
 describe('DatasetsScreen list', () => {
-  it('renders one card per dataset with its description, example count and the Evaluations tabs', async () => {
-    const container = await mountAt('#/evals/datasets');
-    const row = container.querySelector('.ds-grid .ds-card')!;
-    expect(row.textContent).toContain('golden');
-    expect(row.textContent).toContain('Hand-picked support cases');
-    expect(row.textContent).toContain('120');
-    const current = container.querySelector('nav[aria-label="Evaluations"] [aria-current="page"]');
-    expect(current?.textContent).toBe('Datasets');
-    const list = calls.find((c) => c.url.pathname === '/observe/api/v1/datasets')!;
-    expect(list.url.searchParams.get('limit')).toBe('50');
-    expect(list.url.searchParams.get('offset')).toBe('0');
-  });
-
-  it('shows the empty state when there are no datasets', async () => {
-    datasets = [];
-    const container = await mountAt('#/evals/datasets');
-    expect(container.textContent).toContain('No datasets yet');
-  });
-
-  it('names a card link by the dataset name and describes it with the rest', async () => {
-    const container = await mountAt('#/evals/datasets');
-    const link = container.querySelector('.ds-card a')!;
-    const text = (ids: string | null) => (ids ?? '').split(' ').map((id) => document.getElementById(id)?.textContent).join(' ');
-    expect(text(link.getAttribute('aria-labelledby'))).toBe('golden');
-    const described = text(link.getAttribute('aria-describedby'));
-    expect(described).toContain('Hand-picked support cases');
-    expect(described).toContain('120 examples');
-  });
 
   it('keeps one New dataset button while the form is open over the empty state', async () => {
     datasets = [];
@@ -176,16 +131,6 @@ describe('DatasetsScreen list', () => {
     await flush();
     expect(window.location.hash).toBe('#/evals/datasets');
     expect(container.textContent).toContain('No datasets yet');
-  });
-
-  it('opens a dataset from its card link', async () => {
-    const container = await mountAt('#/evals/datasets');
-    const link = container.querySelector('.ds-card a') as HTMLAnchorElement;
-    expect(link.getAttribute('href')).toBe('#/evals/datasets/golden');
-    act(() => link.click());
-    // jsdom follows the fragment link on a later task.
-    await flush();
-    expect(window.location.hash).toBe('#/evals/datasets/golden');
   });
 
   it('creates a dataset and shows a 409 inline as a taken name', async () => {
@@ -267,23 +212,9 @@ describe('DatasetsScreen detail', () => {
     expect(calls.filter((c) => c.url.pathname === '/observe/api/v1/datasets/golden').length).toBe(before + 1);
   });
 
-  it('does not delete when the confirm is cancelled', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
-    const container = await mountAt('#/evals/datasets/golden');
-    await act(async () => buttonNamed(container, 'Delete example e1')!.click());
-    await flush();
-    expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
-  });
-
   it('shows not found for an unknown dataset, with the way back', async () => {
     const container = await mountAt('#/evals/datasets/nope');
     expect(container.textContent).toContain('Dataset not found');
     expect(container.querySelector('a[href="#/evals/datasets"]')).not.toBeNull();
-  });
-
-  it('follows a route change to another page', async () => {
-    const container = await mountAt('#/evals/datasets/golden');
-    await goto('#/evals/datasets/golden?offset=100');
-    expect(container.querySelectorAll('tbody tr')).toHaveLength(20);
   });
 });

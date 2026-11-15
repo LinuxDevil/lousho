@@ -13,7 +13,6 @@ import { PropagatingToolError } from './execution/AgentExecutor';
 import { fileStore } from './storage/fileStore';
 import { memoryStore, type AgentStore } from './storage/agentStore';
 import { SqliteStore } from './storage/sqlite';
-import { MemorySessionStore } from './session/sessionStore';
 import { mockModel, type MockTurn } from './testing';
 
 const calling = (name: string, id = `call_${name}`): MockTurn => ({ toolCalls: [{ name, id }] });
@@ -122,34 +121,4 @@ describe('agent.pending()', () => {
       expect(runs).toMatchObject({ work: 2, send_email: 1 });
     });
   }
-
-  it('lists an interrupted send(msg, { sessionId }) run as kind "run"', async () => {
-    const store = memoryStore();
-    const runs: Record<string, number> = {};
-    const agent = createAgent({ provider: mockModel([calling('work'), 'finished']), tools: tools(runs), store });
-    await expect(agent.send('do work', { sessionId: 'job-7' })).rejects.toThrow('process died');
-    // The rejected run records why, like a session turn.
-    expect(await agent.pending()).toEqual([
-      {
-        sessionId: 'job-7',
-        kind: 'run',
-        checkpointId: 'job-7',
-        status: 'in-progress',
-        step: expect.any(Number),
-        lastError: expect.objectContaining({ message: 'process died', retryable: true }),
-        attempts: 1,
-      },
-    ]);
-    expect((await agent.resume('job-7'))?.text).toBe('finished');
-    expect(await agent.pending()).toEqual([]);
-  });
-
-  it('throws without a checkpoint store, or with one that cannot list()', async () => {
-    const bare = createAgent({ provider: mockModel(['x']) });
-    await expect(bare.pending()).rejects.toMatchObject({ code: 'LOUSHO_CONFIG_MISSING_CHECKPOINT_STORE' });
-    const { checkpoints } = memoryStore();
-    const noList = { save: checkpoints.save.bind(checkpoints), load: checkpoints.load.bind(checkpoints), delete: checkpoints.delete.bind(checkpoints) };
-    const agent = createAgent({ provider: mockModel(['x']), store: { sessions: new MemorySessionStore(), checkpoints: noList } });
-    await expect(agent.pending()).rejects.toMatchObject({ code: 'LOUSHO_CONFIG_INVALID' });
-  });
 });

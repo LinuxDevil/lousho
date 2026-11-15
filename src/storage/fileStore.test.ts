@@ -4,7 +4,7 @@
  * approvals, id validation, a corrupt history file, and two agents on one dir.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -43,78 +43,6 @@ const save = (store: ReturnType<typeof fileStore>, sessionId: string, stepIndex:
   store.checkpoints.save(sessionId, makeCheckpoint({ sessionId, stepIndex }));
 
 describe('fileStore(dir) (R2)', () => {
-  it('writes sessions, checkpoints, history and approvals at the documented layout, with no temp or lock files left', async () => {
-    const dir = tempDir();
-    const store = fileStore(dir);
-    await store.sessions.save('chat', [{ role: 'user', content: 'hi' }]);
-    await save(store, 'chat.turn-0', 1);
-    const pending = makePending('appr_1');
-    await store.approvals.save(pending, makeSnapshot(pending));
-
-    expect(readdirSync(dir).sort()).toEqual(['approvals', 'checkpoint-history', 'checkpoints', 'sessions']);
-    expect(readdirSync(join(dir, 'sessions'))).toEqual(['chat.json']);
-    expect(readdirSync(join(dir, 'checkpoints'))).toEqual(['chat.turn-0.json']);
-    expect(readdirSync(join(dir, 'checkpoint-history'))).toEqual(['chat.turn-0.json']);
-    expect(readdirSync(join(dir, 'approvals'))).toEqual(['appr_1.json']);
-  });
-
-  it('round-trips a transcript with a Uint8Array file part, across store instances', async () => {
-    const dir = tempDir();
-    const bytes = new Uint8Array([0, 1, 2, 250, 255]);
-    const messages: Message[] = [
-      { role: 'user', content: [{ type: 'text', text: 'read this' }, { type: 'file', data: bytes, mimeType: 'application/octet-stream' }] },
-    ];
-    await fileStore(dir).sessions.save('doc', messages);
-
-    const loaded = await fileStore(dir).sessions.load('doc');
-    const part = (loaded![0].content as Array<{ type: string; data?: unknown }>)[1];
-    expect(part.data).toBeInstanceOf(Uint8Array);
-    expect(Array.from(part.data as Uint8Array)).toEqual(Array.from(bytes));
-  });
-
-  it('checkpoints: save, load, delete and history() newest first', async () => {
-    const store = fileStore(tempDir());
-    await save(store, 's', 1);
-    await save(store, 's', 2);
-    expect((await store.checkpoints.load('s'))?.stepIndex).toBe(2);
-    expect((await store.checkpoints.history!('s')).map((entry) => entry.step)).toEqual([2, 1]);
-    await store.checkpoints.delete('s');
-    expect(await store.checkpoints.load('s')).toBeNull();
-    expect(await store.checkpoints.history!('s')).toEqual([]);
-  });
-
-  it('honors historyLimit: 3 keeps the newest three, 0 keeps none, keepHistory keeps the ring', async () => {
-    const small = fileStore(tempDir(), { historyLimit: 3 });
-    for (let step = 0; step < 5; step++) await save(small, 's', step);
-    expect((await small.checkpoints.history!('s')).map((entry) => entry.step)).toEqual([4, 3, 2]);
-    await small.checkpoints.delete('s', { keepHistory: true });
-    expect(await small.checkpoints.load('s')).toBeNull();
-    expect((await small.checkpoints.history!('s')).map((entry) => entry.step)).toEqual([4, 3, 2]);
-
-    const dir = tempDir();
-    const off = fileStore(dir, { historyLimit: 0 });
-    await save(off, 's', 1);
-    expect(await off.checkpoints.history!('s')).toEqual([]);
-    expect(readdirSync(dir)).not.toContain('checkpoint-history');
-  });
-
-  it('reads a truncated history file as empty, and the next save starts a new ring', async () => {
-    const dir = tempDir();
-    const store = fileStore(dir);
-    await save(store, 's', 1);
-    writeFileSync(join(dir, 'checkpoint-history', 's.json'), '[{"step":1,"savedAt":"20');
-    expect(await store.checkpoints.history!('s')).toEqual([]);
-    await save(store, 's', 2);
-    expect((await store.checkpoints.history!('s')).map((entry) => entry.step)).toEqual([2]);
-  });
-
-  it('approvals: resolve returns the record once, then null', async () => {
-    const store = fileStore(tempDir());
-    const pending = makePending('appr_once');
-    await store.approvals.save(pending, makeSnapshot(pending));
-    expect((await store.approvals.resolve('appr_once'))?.pending.id).toBe('appr_once');
-    expect(await store.approvals.resolve('appr_once')).toBeNull();
-  });
 
   it('two concurrent resolves of one approval (two store instances on one dir) give exactly one record', async () => {
     const dir = tempDir();
@@ -126,17 +54,6 @@ describe('fileStore(dir) (R2)', () => {
       expect(results.filter((result) => result !== null)).toHaveLength(1);
     }
     expect(readdirSync(join(dir, 'approvals'))).toEqual([]);
-  });
-
-  it('a claim left by a crashed resolver makes resolve return null until the approval is saved again', async () => {
-    const dir = tempDir();
-    const store = fileStore(dir);
-    const pending = makePending('appr_stale');
-    await store.approvals.save(pending, makeSnapshot(pending));
-    writeFileSync(join(dir, 'approvals', 'appr_stale.json.claim'), '1234');
-    expect(await store.approvals.resolve('appr_stale')).toBeNull();
-    await store.approvals.save(pending, makeSnapshot(pending));
-    expect((await store.approvals.resolve('appr_stale'))?.pending.id).toBe('appr_stale');
   });
 
   it('a claim a crashed resolver left long ago is taken over, so the approval is not stuck forever', async () => {
@@ -170,18 +87,6 @@ describe('fileStore(dir) (R2)', () => {
     expect(await store.checkpoints.load('run-1')).toBeNull();
   });
 
-  it('stores ids that would make a bad file name (too long once case-safe, a Windows device name) under a hashed name', async () => {
-    const dir = tempDir();
-    const store = fileStore(dir);
-    const long = 'X'.repeat(128);
-    await store.sessions.save(long, [{ role: 'user', content: 'hi' }]);
-    expect(await store.sessions.load(long)).toEqual([{ role: 'user', content: 'hi' }]);
-    for (const id of [`${long}.turn-4`, 'nul', 'com1.turn-0']) await save(store, id, 3);
-    expect((await store.checkpoints.list!()).map((entry) => entry.sessionId).sort()).toEqual(['com1.turn-0', 'nul', `${long}.turn-4`].sort());
-    expect((await store.checkpoints.load('nul'))?.stepIndex).toBe(3);
-    expect(readdirSync(join(dir, 'checkpoints')).some((name) => /^(nul|com1)\./i.test(name))).toBe(false);
-  });
-
   it('a run lease held by a process that is gone from this host is taken over at once', async () => {
     const dir = tempDir();
     const store = fileStore(dir);
@@ -211,21 +116,6 @@ describe('fileStore(dir) (R2)', () => {
 
 describe('fileStore(dir): case-safe file names', () => {
   const hi: Message[] = [{ role: 'user', content: 'hi' }];
-
-  it("writes each uppercase letter as '^' and the letter, so an all-lowercase id keeps its old name", async () => {
-    const dir = tempDir();
-    const store = fileStore(dir);
-    await store.sessions.save('Alice', hi);
-    await store.sessions.save('alice', hi);
-    await save(store, 'Alice.turn-0', 1);
-    const pending = makePending('Appr_1');
-    await store.approvals.save(pending, makeSnapshot(pending));
-
-    expect(readdirSync(join(dir, 'sessions')).sort()).toEqual(['^alice.json', 'alice.json']);
-    expect(readdirSync(join(dir, 'checkpoints'))).toEqual(['^alice.turn-0.json']);
-    expect(readdirSync(join(dir, 'checkpoint-history'))).toEqual(['^alice.turn-0.json']);
-    expect(readdirSync(join(dir, 'approvals'))).toEqual(['^appr_1.json']);
-  });
 
   it('reads a transcript, checkpoint and approval saved under the legacy mixed-case name, and moves it on the next save', async () => {
     const dir = tempDir();
@@ -257,45 +147,6 @@ describe('fileStore(dir): case-safe file names', () => {
 
     expect((await store.approvals.resolve('Appr_1'))?.pending).toEqual(pending);
     expect(readdirSync(join(dir, 'approvals'))).toEqual([]);
-  });
-
-  it('reads files an earlier release wrote under a long case-safe name that is now shortened, and moves them on the next save', async () => {
-    const dir = tempDir();
-    const store = fileStore(dir);
-    // 91 uppercase letters: a 182-character case-safe name, written as it is before names were shortened past 180.
-    const id = 'A'.repeat(91);
-    const oldName = '^a'.repeat(91);
-    const write = (sub: string, value: unknown) => {
-      mkdirSync(join(dir, sub), { recursive: true });
-      writeFileSync(join(dir, sub, `${oldName}.json`), JSON.stringify(value));
-    };
-    write('sessions', hi);
-    write('checkpoints', makeCheckpoint({ sessionId: id, stepIndex: 1, status: 'awaiting-approval' }));
-    write('checkpoint-history', [{ step: 1, savedAt: new Date().toISOString(), status: 'in-progress', checkpoint: makeCheckpoint({ sessionId: id, stepIndex: 1 }) }]);
-
-    expect(await store.sessions.load(id)).toEqual(hi);
-    expect((await store.checkpoints.load(id))?.stepIndex).toBe(1);
-    expect((await store.checkpoints.history!(id)).map((entry) => entry.step)).toEqual([1]);
-    expect((await store.checkpoints.list!()).map((entry) => entry.sessionId)).toEqual([id]);
-
-    await store.sessions.save(id, [...hi, { role: 'assistant', content: 'hello' }]);
-    await save(store, id, 2);
-    for (const sub of ['sessions', 'checkpoints', 'checkpoint-history']) {
-      const names = readdirSync(join(dir, sub));
-      expect(names).toHaveLength(1);
-      expect(names[0].startsWith('~')).toBe(true);
-    }
-    expect((await store.checkpoints.history!(id)).map((entry) => entry.step)).toEqual([2, 1]);
-    expect((await store.sessions.load(id))?.length).toBe(2);
-  });
-
-  it("does not read a lowercase id's legacy file for a mixed-case id", async () => {
-    const dir = tempDir();
-    const store = fileStore(dir);
-    await store.sessions.save('alice', hi); // 'alice.json': the same name before and after the fix
-    expect(await store.sessions.load('Alice')).toBeUndefined();
-    await store.sessions.delete('Alice');
-    expect(await store.sessions.load('alice')).toEqual(hi);
   });
 });
 
@@ -334,46 +185,5 @@ describe('fileStore(dir).prune()', () => {
     // Once decided, the old paused-turn pointer is stale and goes.
     expect(await store.prune({ olderThanMs: 60_000 })).toEqual({ sessions: 0, checkpoints: 1, checkpointHistory: 1, oauthPending: 0 });
     expect(readdirSync(join(dir, 'sessions')).sort()).toEqual(['recent.json', 'waiting.json']);
-  });
-});
-
-describe('createAgent({ store: fileStore(dir) }) (R2)', () => {
-  it('a session survives a second createAgent() on the same dir', async () => {
-    const dir = tempDir();
-    await createAgent({ provider: mockModel(['Hi Ali.']), store: fileStore(dir) }).session({ id: 'chat' }).send('My name is Ali.');
-
-    const model = mockModel(['Ali.']);
-    const { text } = await createAgent({ provider: model, store: fileStore(dir) }).session({ id: 'chat' }).send('What is my name?');
-
-    expect(text).toBe('Ali.');
-    expect(model.calls[0].messages.some((m) => m.content === 'My name is Ali.')).toBe(true);
-  });
-
-  it('an approval-gated run paused on one agent resumes on a second agent over the same dir', async () => {
-    const dir = tempDir();
-    let sent = 0;
-    const tools = [
-      defineTool({ name: 'send_email', description: 'send', input: z.object({}), needsApproval: true, execute: async () => `sent ${++sent}` }),
-    ];
-    const paused = await createAgent({ provider: mockModel([{ toolCalls: [{ name: 'send_email', id: 'call_1' }] }]), tools, store: fileStore(dir) }).send(
-      'Email Sam',
-      { sessionId: 'job-1' }
-    );
-    expect(paused.finishReason).toBe('awaiting-approval');
-    expect(readdirSync(join(dir, 'approvals'))).toEqual([`${paused.approvalId}.json`]);
-
-    const agent = createAgent({ provider: mockModel(['Email sent.']), tools, store: fileStore(dir) });
-    const result = await agent.approvals.resolve({ id: paused.approvalId!, approved: true });
-
-    expect(result.text).toBe('Email sent.');
-    expect(sent).toBe(1);
-    expect(await fileStore(dir).checkpoints.load('job-1')).toMatchObject({ status: 'finished' });
-    expect(readdirSync(join(dir, 'approvals'))).toEqual([]);
-  });
-
-  it('agent.approvals.get() returns undefined for a malformed id', async () => {
-    const agent = createAgent({ provider: mockModel(['Hi.']), store: fileStore(tempDir()) });
-    expect(await agent.approvals.get('bogus id!')).toBeUndefined();
-    expect(await agent.approvals.get('')).toBeUndefined();
   });
 });

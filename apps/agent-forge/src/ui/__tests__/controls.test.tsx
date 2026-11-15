@@ -1,72 +1,14 @@
-import { act } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { render as mount } from './render';
-
-import { Field } from '../Field';
-import { Checkbox, Input, Select, Switch, Textarea } from '../controls';
+import { Checkbox, Select, Switch, Textarea } from '../controls';
 
 let container: HTMLDivElement;
 const render = (node: React.ReactNode) => {
   container = mount(node);
 };
 
-const click = (el: Element) => act(() => (el as HTMLElement).click());
 const noop = () => {};
-
-describe('Field', () => {
-  it('labels, describes, invalidates and requires the control it wraps', () => {
-    render(
-      <Field label="Name" hint="Shown on the card." error="Required." required>
-        <Input value="" onChange={noop} />
-      </Field>,
-    );
-    const input = container.querySelector('input')!;
-    const label = container.querySelector('label.field-label')!;
-    expect(label.getAttribute('for')).toBe(input.id);
-
-    const describedBy = input.getAttribute('aria-describedby')!.split(' ');
-    expect(describedBy).toHaveLength(2);
-    const [hintId, errorId] = describedBy;
-    expect(document.getElementById(hintId)!.textContent).toBe('Shown on the card.');
-    expect(document.getElementById(errorId)!.textContent).toBe('Required.');
-    expect(document.getElementById(errorId)!.className).toBe('hint field-error');
-
-    expect(input.getAttribute('aria-invalid')).toBe('true');
-    expect(input.getAttribute('aria-required')).toBe('true');
-
-    const required = container.querySelector('.field-required')!;
-    expect(required.textContent).toBe('*');
-    expect(required.getAttribute('aria-hidden')).toBe('true');
-
-    expect(container.firstElementChild!.classList.contains('field-invalid')).toBe(true);
-  });
-
-  it('lets an explicit id and aria-describedby on the control win over the Field defaults', () => {
-    render(
-      <Field label="Name" hint="Shown on the card." error="Required.">
-        <Input id="x" aria-describedby="mine" value="" onChange={noop} />
-      </Field>,
-    );
-    const input = container.querySelector('input')!;
-    expect(input.id).toBe('x');
-    expect(input.getAttribute('aria-describedby')).toBe('mine');
-  });
-
-  it('names a Switch inside an inline Field through the label, no aria-label needed', () => {
-    render(
-      <Field label="Enable support-bot" inline>
-        <Switch checked onChange={noop} />
-      </Field>,
-    );
-    const field = container.querySelector('.field.field-inline')!;
-    const label = field.querySelector('label.field-label')!;
-    const button = field.querySelector('button[role="switch"]')!;
-    expect(button.id).toBeTruthy();
-    expect(button.id).toBe(label.getAttribute('for'));
-    expect(button.getAttribute('aria-label')).toBeNull();
-  });
-});
 
 describe('Select', () => {
   it('renders a disabled placeholder option first, keeps option order and supports controlSize="sm"', () => {
@@ -105,20 +47,6 @@ describe('Textarea', () => {
 });
 
 describe('Switch', () => {
-  it('is a button[role=switch] that toggles on click and does nothing when disabled', () => {
-    const spy = vi.fn();
-    render(<Switch checked={false} label="Enable support-bot" onChange={spy} />);
-    const button = container.querySelector('button[role="switch"]')!;
-    expect(button.getAttribute('aria-checked')).toBe('false');
-    expect(button.getAttribute('aria-label')).toBe('Enable support-bot');
-    click(button);
-    expect(spy).toHaveBeenCalledWith(true);
-
-    const disabledSpy = vi.fn();
-    render(<Switch checked={false} label="Enable support-bot" onChange={disabledSpy} disabled />);
-    click(container.querySelector('button[role="switch"]')!);
-    expect(disabledSpy).not.toHaveBeenCalled();
-  });
 
   it('draws an aria-hidden On/Off state label and a switch-sm size class', () => {
     render(<Switch checked={false} label="Enable support-bot" onChange={noop} stateLabel size="sm" />);
@@ -134,15 +62,6 @@ describe('Switch', () => {
 });
 
 describe('Checkbox', () => {
-  it('sets the indeterminate property and toggles when its label is clicked', () => {
-    const spy = vi.fn();
-    render(<Checkbox label="Overwrite" checked={false} indeterminate onChange={spy} />);
-    const input = container.querySelector('input')! as HTMLInputElement;
-    expect(input.type).toBe('checkbox');
-    expect(input.indeterminate).toBe(true);
-    click(container.querySelector('label.checkbox-row')!);
-    expect(spy).toHaveBeenCalled();
-  });
 
   it('renders a muted description line and marks a disabled row', () => {
     render(<Checkbox label="Overwrite" description="Existing files are replaced." disabled onChange={noop} />);

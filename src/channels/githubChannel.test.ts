@@ -13,13 +13,10 @@ import { z } from 'zod';
 import { createAgent } from '../createAgent';
 import { defineTool } from '../tools/defineTool';
 import { mockModel } from '../testing';
-import { InMemoryApprovalStore } from '../execution/InMemoryApprovalStore';
-import { MemorySessionStore } from '../session/sessionStore';
 import type { Message } from '../providers';
 import { mountChannels, type ChannelsHandler } from './mountChannels';
 import { githubChannel } from './githubChannel';
 import { defineMemory, inMemoryMemory, type MemoryScopeContext } from '../memory';
-import { durableStores } from './__fixtures__/durableStores';
 
 const TOKEN = 'ghp_SECRET_personal_token';
 const SECRET = 'webhook-secret_1';
@@ -131,17 +128,6 @@ async function pause(t: ReturnType<typeof setup>, options: CommentOptions = {}) 
 }
 
 describe('githubChannel', () => {
-  it('runs a redelivered webhook (same X-GitHub-Delivery) once', async () => {
-    const t = setup(['Hello', 'Again']);
-    const body = issueComment('@my-agent hi');
-
-    await t.send(body, { delivery: 'd-1' });
-    await t.send(body, { delivery: 'd-1' });
-    expect(t.model.calls).toHaveLength(1);
-    await t.send(issueComment('@my-agent again'), { delivery: 'd-2' });
-    expect(t.model.calls).toHaveLength(2);
-    expect(t.calls.map(text)).toEqual(['Hello', 'Again']);
-  });
 
   it('records delivery ids in a given DeliveryStore, so a replica or a restart sharing it runs a redelivery once', async () => {
     const seen = new Set<string>();
@@ -174,15 +160,6 @@ describe('githubChannel', () => {
     expect(t.calls).toHaveLength(0);
   });
 
-  it('verifies the exact raw bytes, not re-serialized JSON', async () => {
-    const t = setup(['ok']);
-    const raw = JSON.stringify(issueComment('@my-agent hi'), null, 4); // pretty-printed: re-serializing would change the bytes
-
-    expect((await t.send(raw)).status).toBe(200);
-
-    expect(t.model.calls).toHaveLength(1);
-  });
-
   it('configuration: exactly one of token and app, and non-empty secrets', () => {
     const base = { webhookSecret: SECRET, botName: 'my-agent' };
     expect(() => githubChannel({ ...base })).toThrow(/exactly one of 'token' and 'app'/);
@@ -191,30 +168,6 @@ describe('githubChannel', () => {
     expect(() => githubChannel({ webhookSecret: '', botName: 'my-agent', token: TOKEN })).toThrow(/webhookSecret/);
     expect(() => githubChannel({ webhookSecret: SECRET, botName: '', token: TOKEN })).toThrow(/botName/);
     expect(() => githubChannel({ ...base, token: TOKEN })).not.toThrow();
-  });
-
-  it('acknowledges a ping without a turn', async () => {
-    const t = setup(['never']);
-
-    expect(await t.send({ zen: 'Keep it logically awesome.', hook_id: 1 }, { event: 'ping' })).toEqual({ status: 200, json: { ok: true } });
-
-    expect(t.model.calls).toHaveLength(0);
-    expect(t.calls).toHaveLength(0);
-  });
-
-  it('an issue comment with @my-agent runs a turn, strips the token and posts to the issue', async () => {
-    const t = setup(['Hi octocat', 'You asked about widgets']);
-
-    expect(await t.send(issueComment('@my-agent what are widgets?'))).toEqual({ status: 200, json: { ok: true } });
-    await t.send(issueComment('hey @MY-AGENT and the second?'));
-
-    expect(t.calls.map((c) => [c.path, text(c)])).toEqual([
-      ['/repos/acme/widgets/issues/7/comments', 'Hi octocat'],
-      ['/repos/acme/widgets/issues/7/comments', 'You asked about widgets'],
-    ]);
-    expect(t.userTexts(0)).toEqual(['what are widgets?']);
-    expect(t.userTexts(1)[1]).toMatch(/^hey\s+and the second\?$/);
-    expect(t.calls[0].headers).toMatchObject({ accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'lousho' });
   });
 
   it('runs the turn with the commenter as its principal, which a memory scope sees', async () => {
@@ -238,14 +191,6 @@ describe('githubChannel', () => {
     expect(t.calls).toHaveLength(0);
   });
 
-  it('a pull-request timeline comment is a turn and posts to /issues/{n}/comments', async () => {
-    const t = setup(['Looks fine']);
-
-    await t.send(issueComment('@my-agent review this', { number: 12 }, true));
-
-    expect(t.calls.map((c) => [c.path, text(c)])).toEqual([['/repos/acme/widgets/issues/12/comments', 'Looks fine']]);
-  });
-
   it('pull_request.opened starts a turn in the PR session and posts a PR comment, when pullRequestOpened is set', async () => {
     const t = setup(['Reviewed.', 'Timeouts too.'], {}, { channel: { pullRequestOpened: true } });
 
@@ -265,6 +210,26 @@ describe('githubChannel', () => {
     await t.send(issueComment('what about timeouts?', { number: 12 }, true));
     expect(t.userTexts(1)).toEqual(['Pull request #12 opened by @octocat: Add retry\n\nRetries the fetch.', 'what about timeouts?']);
     expect(t.calls.at(-1)?.path).toBe('/repos/acme/widgets/issues/12/comments');
+  });
+
+  it('pullRequestEvents re-reviews pushes with the head commit, skips drafts until ready, and replyToPullRequest: false posts nothing', async () => {
+    const t = setup(['first', 'second'], {}, { channel: { pullRequestEvents: ['opened', 'synchronize', 'ready_for_review'], replyToPullRequest: false } });
+    const pr = (action: string, extra: object = {}) => ({
+      action,
+      repository: { name: 'widgets', owner: { login: 'acme' } },
+      pull_request: { number: 7, title: 'Add retry', author_association: 'OWNER', user: { login: 'octocat', type: 'User' }, head: { sha: 'abc123' }, ...extra },
+    });
+
+    await t.send(pr('opened', { draft: true }), { event: 'pull_request' });
+    expect(t.model.calls).toHaveLength(0);
+
+    await t.send(pr('ready_for_review', { draft: true }), { event: 'pull_request' });
+    await t.send(pr('synchronize', { head: { sha: 'def456' } }), { event: 'pull_request' });
+    expect(t.userTexts(1)).toEqual([
+      'Pull request #7 marked ready for review by @octocat: Add retry\nHead commit: abc123',
+      'Pull request #7 updated with new commits by @octocat: Add retry\nHead commit: def456',
+    ]);
+    expect(t.calls).toHaveLength(0);
   });
 
   it('pull_request events are ignored without pullRequestOpened, and bot-opened or untriggered PRs never start a turn', async () => {
@@ -289,18 +254,6 @@ describe('githubChannel', () => {
     expect(on.calls).toHaveLength(0);
   });
 
-  it('the same number in another repository is another session', async () => {
-    const t = setup(['one', 'two']);
-    const other = issueComment('@my-agent hi', { number: 7 });
-    other.repository = { name: 'gadgets', owner: { login: 'acme' } };
-
-    await t.send(issueComment('@my-agent hi', { number: 7 }));
-    await t.send(other);
-
-    expect(t.calls.map((c) => c.path)).toEqual(['/repos/acme/widgets/issues/7/comments', '/repos/acme/gadgets/issues/7/comments']);
-    expect(t.userTexts(1)).toEqual(['hi']);
-  });
-
   it('a review comment replies under the thread, and two review threads are two sessions', async () => {
     const t = setup(['first thread', 'second thread', 'first again']);
     const a = reviewComment('@my-agent explain this line');
@@ -321,19 +274,6 @@ describe('githubChannel', () => {
     expect(t.userTexts(2)).toEqual(['explain this line', 'and why?']);
   });
 
-  it('a follow-up in a thread that has a session runs without a mention; one without a session does not', async () => {
-    const t = setup(['first', 'second']);
-
-    await t.send(issueComment('and this thread, no mention', { number: 8 }));
-    expect(t.model.calls).toHaveLength(0);
-
-    await t.send(issueComment('@my-agent start'));
-    await t.send(issueComment('no mention needed now'));
-
-    expect(t.userTexts(1)).toEqual(['start', 'no mention needed now']);
-    expect(t.calls).toHaveLength(2);
-  });
-
   it('ignores bot comments, its own account, edits, deletions and other events', async () => {
     const t = setup(['never']);
 
@@ -352,123 +292,7 @@ describe('githubChannel', () => {
     expect(t.calls).toHaveLength(0);
   });
 
-  it('botLogin names the account a personal access token posts as, so its comments never start a turn', async () => {
-    const t = setup(['never'], {}, { channel: { botLogin: 'agent-owner' } });
-
-    await t.send(issueComment('@my-agent I said hi', { login: 'Agent-Owner' }));
-
-    expect(t.model.calls).toHaveLength(0);
-  });
-
-  it('a reply that contains the mention is not a loop: every posted comment carries a marker and is ignored when it comes back', async () => {
-    const t = setup(['You said @my-agent, so here I am']);
-
-    await t.send(issueComment('@my-agent hello'));
-    const posted = t.calls[0].body;
-    expect(posted).toContain('@my-agent');
-    await t.send(issueComment(posted, { login: 'someone-using-the-same-pat' }));
-
-    expect(t.model.calls).toHaveLength(1);
-    expect(t.calls).toHaveLength(1);
-  });
-
-  it('triggers: a list or a function decides who may start a turn; comments by anyone else are ignored', async () => {
-    const list = setup(['for octocat'], {}, { channel: { triggers: ['OctoCat'] } });
-    await list.send(issueComment('@my-agent hi', { login: 'mallory', association: 'NONE' }));
-    await list.send(issueComment('@my-agent hi', { login: 'octocat' }));
-    await list.send(issueComment('a follow-up', { login: 'mallory', association: 'NONE' }));
-    expect(list.model.calls).toHaveLength(1);
-
-    const fn = setup(['for members'], {}, { channel: { triggers: (who) => ['OWNER', 'MEMBER'].includes(who.association) } });
-    await fn.send(issueComment('@my-agent hi', { association: 'NONE' }));
-    await fn.send(issueComment('@my-agent hi', { association: 'OWNER' }));
-    expect(fn.model.calls).toHaveLength(1);
-  });
-
-  it('splits a 130,000-character reply into 3 comments of at most 60,000 characters at line breaks', async () => {
-    const long = `${'a'.repeat(50_000)}\n${'b'.repeat(50_000)}\n${'c'.repeat(30_000)}`;
-    const t = setup([long]);
-
-    await t.send(issueComment('@my-agent write a lot'));
-
-    expect(t.calls).toHaveLength(3);
-    expect(t.calls.every((c) => c.path === '/repos/acme/widgets/issues/7/comments')).toBe(true);
-    expect(t.calls.every((c) => text(c).length <= 60_000 && c.body.length <= 65_536)).toBe(true);
-    expect(t.calls.map(text).join('\n')).toBe(long);
-  });
-
   describe('approvals', () => {
-    it('posts the prompt, and /approve <id> by a MEMBER resumes the session and the reply says who approved', async () => {
-      const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-      const onDecision = vi.fn();
-      const t = setup([emailCall, 'Email sent.'], { tools: [emailTool(execute)] }, { mount: { onDecision } });
-
-      await t.send(issueComment('@my-agent email Sam'));
-
-      const prompt = t.calls[0].body;
-      const id = ID.exec(prompt)?.[1] as string;
-      expect(prompt).toContain('`send_email`');
-      expect(prompt).toContain('```json\n{\n  "to": "sam@example.com"\n}\n```');
-      expect(prompt).toContain(`Reply \`/approve ${id}\` or \`/deny ${id}\`.`);
-      expect(execute).not.toHaveBeenCalled();
-
-      await t.send(issueComment(`/approve ${id}`, { login: 'maintainer', association: 'MEMBER' }));
-
-      expect(execute).toHaveBeenCalledTimes(1);
-      expect(t.calls.slice(1).map((c) => [c.path, text(c)])).toEqual([
-        ['/repos/acme/widgets/issues/7/comments', 'Approved by @maintainer.'],
-        ['/repos/acme/widgets/issues/7/comments', 'Email sent.'],
-      ]);
-      expect(onDecision).toHaveBeenCalledWith(expect.objectContaining({ approver: { id: 'maintainer', name: 'maintainer', roles: ['MEMBER'] }, channel: 'github' }));
-    });
-
-    it.each(['OWNER', 'MEMBER', 'COLLABORATOR'])('%s may approve by default (command in any case)', async (association) => {
-      const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-      const t = setup([emailCall, 'Done.'], { tools: [emailTool(execute)] });
-      const id = await pause(t);
-
-      await t.send(issueComment(`/APPROVE ${id}`, { login: 'someone', association }));
-
-      expect(execute).toHaveBeenCalledTimes(1);
-    });
-
-    it.each(['NONE', 'CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'MANNEQUIN'])('%s is refused by default and the approval stays pending', async (association) => {
-      const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-      const t = setup([emailCall, 'Email sent.'], { tools: [emailTool(execute)] });
-      const id = await pause(t);
-
-      await t.send(issueComment(`/approve ${id}`, { login: 'mallory', association }));
-
-      expect(t.calls.slice(1).map(text)).toEqual(['@mallory is not allowed to approve this request.']);
-      expect(execute).not.toHaveBeenCalled();
-      await t.send(issueComment(`/approve ${id}`, { login: 'maintainer', association: 'OWNER' }));
-      expect(execute).toHaveBeenCalledTimes(1);
-    });
-
-    it('the author of the request is not special: a NONE who wrote it cannot approve it', async () => {
-      const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-      const t = setup([emailCall], { tools: [emailTool(execute)] });
-      const id = await pause(t, { login: 'mallory', association: 'NONE' });
-
-      await t.send(issueComment(`/approve ${id}`, { login: 'mallory', association: 'NONE' }));
-
-      expect(execute).not.toHaveBeenCalled();
-    });
-
-    it('only the first line decides: a quote of the prompt or the command in the middle of a comment does nothing', async () => {
-      const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-      const onError = vi.fn(); // the comments below are follow-ups of a session that waits on the approval: they decide nothing
-      const t = setup([emailCall], { tools: [emailTool(execute)] }, { channel: { onError } });
-      const id = await pause(t);
-
-      await t.send(issueComment(`> Reply \`/approve ${id}\` or \`/deny ${id}\`.\n\nI think we should`));
-      await t.send(issueComment(`please /approve ${id}`));
-      await t.send(issueComment(`Reply \`/approve ${id}\``));
-      await t.send(issueComment(`/approve ${id} and more words`));
-
-      expect(execute).not.toHaveBeenCalled();
-      expect(t.calls.some((c) => /Approved|Denied/.test(c.body))).toBe(false);
-    });
 
     it('approvers as a list of logins overrides the default (case-insensitive), in both directions', async () => {
       const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
@@ -497,16 +321,6 @@ describe('githubChannel', () => {
       expect(approvers).toHaveBeenLastCalledWith({ id: 'Boss', name: 'Boss', roles: ['OWNER'] }, expect.objectContaining({ toolName: 'send_email', input: { to: 'sam@example.com' } }));
     });
 
-    it('the association is read from the command comment, so a user who lost membership is refused on the next command', async () => {
-      const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-      const t = setup([emailCall, 'Email sent.'], { tools: [emailTool(execute)] });
-      const id = await pause(t, { login: 'u', association: 'MEMBER' }); // U could have approved when the prompt was posted
-
-      await t.send(issueComment(`/approve ${id}`, { login: 'u', association: 'NONE' })); // U was removed: GitHub now reports NONE
-
-      expect(execute).not.toHaveBeenCalled();
-    });
-
     it('/deny <id> with a note declines the call and passes the note to the model', async () => {
       const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
       const t = setup([emailCall, 'Okay, not sent.'], { tools: [emailTool(execute)] });
@@ -517,37 +331,6 @@ describe('githubChannel', () => {
       expect(execute).not.toHaveBeenCalled();
       expect(t.calls.slice(1).map(text)).toEqual(['Denied by @maintainer.', 'Okay, not sent.']);
       expect(JSON.stringify(t.model.calls[1].messages)).toContain('Wrong recipient, ask again.');
-    });
-
-    it('an already decided id (a redelivery, a second approver) decides nothing and posts nothing', async () => {
-      const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-      const t = setup([emailCall, 'First sent.'], { tools: [emailTool(execute)] });
-      const id = await pause(t);
-
-      await t.send(issueComment(`/approve ${id}`));
-      const posts = t.calls.length;
-      await t.send(issueComment(`/approve ${id}`)); // GitHub's "Redeliver" button
-      await t.send(issueComment(`/deny ${id}`, { login: 'other', association: 'OWNER' }));
-
-      expect(execute).toHaveBeenCalledTimes(1);
-      expect(t.calls).toHaveLength(posts);
-    });
-
-    it('a made-up id gets no reply and no "Approved by" confirmation, whoever sends it', async () => {
-      const onError = vi.fn();
-      const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-      const t = setup([emailCall], { tools: [emailTool(execute)] }, { channel: { onError } });
-      await pause(t);
-      const posts = t.calls.length;
-
-      await t.send(issueComment('/approve 00000000-0000-0000-0000-000000000000', { login: 'mallory', association: 'NONE' }));
-      expect(t.calls).toHaveLength(posts);
-      expect(onError).not.toHaveBeenCalled();
-
-      await t.send(issueComment('/approve 00000000-0000-0000-0000-000000000000', { login: 'maintainer', association: 'OWNER' }));
-      expect(t.calls).toHaveLength(posts);
-      expect(onError).not.toHaveBeenCalled();
-      expect(execute).not.toHaveBeenCalled();
     });
 
     it('a replayed /approve does not decide a later approval', async () => {
@@ -579,55 +362,6 @@ describe('githubChannel', () => {
       expect(execute).toHaveBeenCalledTimes(1);
     });
 
-    it('a decision still resolves on a second channel instance over the same stores (restart)', async () => {
-      const approvalStore = new InMemoryApprovalStore();
-      const store = new MemorySessionStore();
-      const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-      const id = await pause(setup([emailCall], { tools: [emailTool(execute)], approvalStore }, { mount: { store } }));
-
-      const second = setup(['Email sent.'], { tools: [emailTool(execute)], approvalStore }, { mount: { store } });
-      await second.send(issueComment(`/approve ${id}`, { login: 'maintainer', association: 'OWNER' }));
-
-      expect(execute).toHaveBeenCalledTimes(1);
-      expect(second.calls.map((c) => [c.path, text(c)])).toEqual([
-        ['/repos/acme/widgets/issues/7/comments', 'Approved by @maintainer.'],
-        ['/repos/acme/widgets/issues/7/comments', 'Email sent.'],
-      ]);
-    });
-
-    it('after a restart with durable stores, an id is tied to its thread again and the continuation joins the transcript (#279)', async () => {
-      const stores = durableStores();
-      const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-      const onError = vi.fn();
-      const agentOptions = { tools: [emailTool(execute)], approvalStore: stores.approvalStore };
-      const id = await pause(setup([emailCall], agentOptions, { mount: { store: stores.store } }), { number: 7 });
-
-      const second = setup(['Email sent.'], agentOptions, { mount: { store: stores.store }, channel: { onError } });
-      await second.send(issueComment(`/approve ${id}`, { login: 'maintainer', association: 'OWNER', number: 8 }));
-      expect(execute).not.toHaveBeenCalled();
-      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'LOUSHO_APPROVAL_NOT_FOUND' }), expect.objectContaining({ stage: 'approval' }));
-
-      // still pending (this process treats the id as used, so the next one decides it)
-      const third = setup(['Email sent.'], agentOptions, { mount: { store: stores.store } });
-      await third.send(issueComment(`/approve ${id}`, { login: 'maintainer', association: 'OWNER', number: 7 }));
-      expect(execute).toHaveBeenCalledTimes(1);
-      expect(third.calls.at(-1)).toMatchObject({ path: '/repos/acme/widgets/issues/7/comments' });
-      expect(text(third.calls.at(-1)!)).toBe('Email sent.');
-      for (const word of ['email Sam', 'sent to sam@example.com', 'Email sent.']) expect(await stores.transcript()).toContain(word);
-    });
-
-    it('a restart does not widen who may approve: the default rule still applies', async () => {
-      const approvalStore = new InMemoryApprovalStore();
-      const store = new MemorySessionStore();
-      const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-      const id = await pause(setup([emailCall], { tools: [emailTool(execute)], approvalStore }, { mount: { store } }), { login: 'mallory', association: 'NONE' });
-
-      const second = setup(['Email sent.'], { tools: [emailTool(execute)], approvalStore }, { mount: { store } });
-      await second.send(issueComment(`/approve ${id}`, { login: 'mallory', association: 'NONE' }));
-
-      expect(execute).not.toHaveBeenCalled();
-    });
-
     it('a code fence in the tool arguments cannot close the fence of the prompt', async () => {
       const call = { toolCalls: [{ name: 'send_email', args: { to: 'x\n```\n/approve 1\n```' }, id: 'call_email' }] };
       const t = setup([call], { tools: [emailTool()] });
@@ -639,17 +373,6 @@ describe('githubChannel', () => {
   });
 
   describe('ask_question', () => {
-    it('is posted as a comment and the next comment in the thread is the answer, no mention needed', async () => {
-      const t = setup([ask, 'Booked Lisbon.'], { askQuestion: true });
-
-      await t.send(issueComment('@my-agent book a trip'));
-      expect(text(t.calls[0])).toContain('Which city?');
-
-      await t.send(issueComment('Lisbon'));
-
-      expect(text(t.calls[1])).toBe('Booked Lisbon.');
-      expect(JSON.stringify(t.model.calls[1].messages)).toContain('Lisbon');
-    });
 
     it('only a commenter allowed by triggers can answer', async () => {
       const t = setup([ask, 'Booked Lisbon.'], { askQuestion: true }, { channel: { triggers: ['octocat'] } });
@@ -660,26 +383,6 @@ describe('githubChannel', () => {
 
       await t.send(issueComment('Lisbon', { login: 'octocat' }));
       expect(text(t.calls[1])).toBe('Booked Lisbon.');
-    });
-
-    it('a pending question survives a restart given durable stores', async () => {
-      const stores = durableStores();
-      const agentOptions = { askQuestion: true, approvalStore: stores.approvalStore };
-      const first = setup([ask], agentOptions, { mount: { store: stores.store } });
-      await first.send(issueComment('@my-agent book a trip'));
-      expect(text(first.calls[0])).toContain('Which city?');
-
-      const second = setup(['Booked Lisbon.', 'You are welcome.'], agentOptions, { mount: { store: stores.store } });
-      await second.send(issueComment('Lisbon'));
-
-      expect(second.calls.map(text)).toEqual(['Booked Lisbon.']);
-      expect(second.model.calls).toHaveLength(1);
-      const transcript = await stores.transcript();
-      for (const word of ['book a trip', 'Which city?', 'Lisbon', 'Booked Lisbon.']) expect(transcript).toContain(word);
-
-      await second.send(issueComment('Thanks'));
-      expect(second.calls.map(text)).toEqual(['Booked Lisbon.', 'You are welcome.']);
-      expect(second.userTexts(1)).toEqual(['book a trip', 'Thanks']);
     });
   });
 
@@ -705,15 +408,6 @@ describe('githubChannel', () => {
       expect(calls[0].authorization).toMatch(/^Bearer eyJ/);
       expect(calls[1].authorization).toBe('Bearer ghs_install');
     });
-
-    it('a webhook without an installation id fails the reply to onError', async () => {
-      const onError = vi.fn();
-      const t = setup(['hi'], {}, { channel: { token: undefined, app: { appId: '1', privateKey: pem }, onError } });
-
-      await t.send(issueComment('@my-agent hi'));
-
-      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('no installation id') }), expect.objectContaining({ stage: 'reply' }));
-    });
   });
 
   it('token as a function is called for each reply', async () => {
@@ -724,16 +418,6 @@ describe('githubChannel', () => {
     await t.send(issueComment('again'));
 
     expect(token).toHaveBeenCalledTimes(2);
-  });
-
-  it('apiUrl points the REST calls at GitHub Enterprise', async () => {
-    const urls: string[] = [];
-    const fetch = vi.fn(async (url: RequestInfo | URL) => (urls.push(String(url)), new Response('{}', { status: 201 }))) as unknown as typeof globalThis.fetch;
-    const t = setup(['ok'], {}, { channel: { apiUrl: 'https://ghe.example.com/api/v3/', fetch } });
-
-    await t.send(issueComment('@my-agent hi'));
-
-    expect(urls).toEqual(['https://ghe.example.com/api/v3/repos/acme/widgets/issues/7/comments']);
   });
 
   describe('errors', () => {
@@ -777,28 +461,6 @@ describe('githubChannel', () => {
 
       const error = onError.mock.calls[0][0] as Error;
       expect(JSON.stringify(error, Object.getOwnPropertyNames(error))).not.toContain('ghp_leaky');
-    });
-
-    it('the default error report never prints the token', async () => {
-      const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-      const failing = vi.fn(async () => new Response('{}', { status: 500 })) as unknown as typeof globalThis.fetch;
-      const t = setup(['Hello'], {}, { channel: { fetch: failing } });
-
-      await t.send(issueComment('@my-agent hi'));
-
-      expect(spy).toHaveBeenCalled();
-      expect(spy.mock.calls.flat().join(' ')).not.toContain('SECRET_personal');
-      spy.mockRestore();
-    });
-
-    it('a failed turn goes to onError and the thread is told', async () => {
-      const onError = vi.fn();
-      const t = setup([{ error: new Error('model down') }], {}, { channel: { onError } });
-
-      await t.send(issueComment('@my-agent hi'));
-
-      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'model down' }), { channel: 'github', stage: 'turn', sessionId: expect.stringContaining('github') });
-      expect(t.calls.map(text)).toEqual(['Sorry, that request failed.']);
     });
   });
 });

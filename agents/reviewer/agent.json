@@ -1,0 +1,7 @@
+{
+  "name": "lousho-reviewer",
+  "description": "Reviews every pull request on the lousho repository with one GitHub review: a verdict plus severity-tagged inline comments.",
+  "model": "openrouter/nvidia/nemotron-3.5-lightning:free",
+  "maxSteps": 40,
+  "limits": { "maxCostUsd": 1 }
+}

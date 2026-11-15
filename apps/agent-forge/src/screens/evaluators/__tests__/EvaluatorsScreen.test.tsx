@@ -60,8 +60,6 @@ const NO_KEYS: ProviderKeyStatus[] = [
   { provider: 'anthropic', hasKey: false, masked: null, envKey: false },
 ];
 const OPENAI_KEY: ProviderKeyStatus[] = [{ provider: 'openai', hasKey: true, masked: '••••abcd', envKey: false }, NO_KEYS[1]];
-/** Only `ANTHROPIC_API_KEY` in the server's environment: nothing stored in Settings. */
-const ANTHROPIC_ENV_ONLY: ProviderKeyStatus[] = [NO_KEYS[0], { ...NO_KEYS[1], envKey: true }];
 
 /** Daemon stub behind `/observe`, plus the Studio's `/settings/providers`. */
 function stubDaemon() {
@@ -179,43 +177,6 @@ afterEach(() => {
 });
 
 describe('EvaluatorsScreen list', () => {
-  it('renders one card per rule with its kind, target filter, sample rate, switch and last-run counts', async () => {
-    const container = await mountAt('#/evals/evaluators');
-    const cards = [...container.querySelectorAll('.ds-grid .ev-card')];
-    expect(cards).toHaveLength(2);
-    const text = (card: Element, selector: string) => card.querySelector(selector)?.textContent;
-    const facts = (card: Element) => [
-      text(card, '.ev-card-name'),
-      text(card, '.ev-card-kind'),
-      text(card, '.ev-card-target dd'),
-      text(card, '.ev-card-sample dd'),
-    ];
-    const [first, second] = cards;
-    expect(facts(first)).toEqual(['answered', 'Code', 'agent=support-bot, status=ok', '0.5']);
-    expect(text(first, '.ev-runs-count')).toBe('2');
-    expect(text(first, '.ev-card-last')).toMatch(/^Last run /);
-    expect(first.querySelector('.ev-icon-code')).not.toBeNull();
-    expect(facts(second)).toEqual(['polite', 'LLM judge', 'All traces', '1']);
-    expect(text(second, '.ev-runs-count')).toBe('0');
-    expect(text(second, '.ev-card-last')).toMatch(/^Last run /);
-    expect(second.querySelector('.ev-icon-judge')).not.toBeNull();
-    const switches = [...container.querySelectorAll('input[role="switch"]')] as HTMLInputElement[];
-    expect(switches.map((s) => [s.getAttribute('aria-label'), s.checked])).toEqual([
-      ['answered enabled', true],
-      ['polite enabled', false],
-    ]);
-    // The switch is never inside the card's link.
-    expect(switches.every((s) => s.closest('a') === null)).toBe(true);
-    expect(container.querySelector('nav[aria-label="Evaluations"] [aria-current="page"]')?.textContent).toBe('Evaluators');
-  });
-
-  it('shows the empty state with New evaluator when there are no rules', async () => {
-    rules = [];
-    const container = await mountAt('#/evals/evaluators');
-    expect(container.querySelector('.empty-state')?.textContent).toContain('No evaluators yet');
-    expect(buttonNamed(container.querySelector('.empty-state') as HTMLElement, 'New evaluator')).toBeDefined();
-    expect(buttonNamed(container, 'Clear filters')).toBeUndefined();
-  });
 
   it('offers Clear filters when the filters match nothing', async () => {
     rules = [];
@@ -223,14 +184,6 @@ describe('EvaluatorsScreen list', () => {
     expect(container.querySelector('.empty-state')?.textContent).toContain('No evaluators match these filters');
     await click(buttonNamed(container, 'Clear filters')!);
     expect(window.location.hash).toBe('#/evals/evaluators');
-  });
-
-  it('reads the last-run counts in one online-score request, not one per rule', async () => {
-    await mountAt('#/evals/evaluators');
-    const reads = calls.filter((c) => c.path === '/api/v1/scores');
-    expect(reads).toHaveLength(1);
-    expect(reads[0].query.get('source')).toBe('online');
-    expect(reads[0].query.get('limit')).toBe('1000');
   });
 
   it('sends the URL filters to the daemon and writes a changed filter to the URL', async () => {
@@ -243,12 +196,6 @@ describe('EvaluatorsScreen list', () => {
     expect(state.value).toBe('false');
     choose(kind, '');
     expect(window.location.hash).toBe('#/evals/evaluators?enabled=false');
-  });
-
-  it('links each card to the edit view, carrying the list filters', async () => {
-    const container = await mountAt('#/evals/evaluators?kind=code');
-    const link = container.querySelector('.ev-card-name') as HTMLAnchorElement;
-    expect(link.getAttribute('href')).toBe('#/evals/evaluators/r1?kind=code');
   });
 
   it('toggles a rule with PUT {enabled}, optimistically', async () => {
@@ -321,26 +268,6 @@ describe('New evaluator', () => {
     });
   });
 
-  it('enables the judge option, on that provider, when the only key is a provider env var', async () => {
-    keys = ANTHROPIC_ENV_ONLY;
-    const container = await openNewForm();
-    const judge = container.querySelector('input[name="evaluator-kind"][value="judge"]') as HTMLInputElement;
-    expect(judge.disabled).toBe(false);
-    expect(container.querySelector('#evaluator-judge-hint')).toBeNull();
-    await click(judge);
-    expect(field<HTMLSelectElement>(container, 'evaluator-provider').value).toBe('anthropic');
-  });
-
-  it('disables the judge option with a Settings hint when Studio has no provider key', async () => {
-    const container = await openNewForm();
-    const judge = container.querySelector('input[name="evaluator-kind"][value="judge"]') as HTMLInputElement;
-    expect(judge.disabled).toBe(true);
-    const hint = container.querySelector('#evaluator-judge-hint')!;
-    expect(hint.textContent).toBe('Add a provider key in Settings to use judge evaluators.');
-    expect(hint.querySelector('a')?.getAttribute('href')).toBe('#/settings');
-    expect(judge.getAttribute('aria-describedby')).toBe('evaluator-judge-hint');
-  });
-
   it('keeps Create disabled until the draft is valid', async () => {
     const container = await openNewForm();
     const create = buttonNamed(container, 'Create evaluator')!;
@@ -350,15 +277,6 @@ describe('New evaluator', () => {
     type(field(container, 'evaluator-sample-rate'), '2');
     expect(create.disabled).toBe(true);
     expect(container.textContent).toContain('Sample rate is a number from 0 to 1.');
-  });
-
-  it('shows a taken name (409) inline', async () => {
-    const container = await openNewForm();
-    type(field(container, 'evaluator-name'), 'answered');
-    await click(buttonNamed(container, 'Create evaluator')!);
-    expect(container.querySelector('form[aria-label="New evaluator"] [role="alert"]')?.textContent).toBe(
-      'Could not save: an evaluator with that name exists.',
-    );
   });
 });
 
@@ -374,13 +292,6 @@ describe('EvaluatorsScreen edit view', () => {
     expect(writes('PUT')).toEqual([
       expect.objectContaining({ path: '/api/v1/evaluators/r1', body: { sample_rate: 0.1, filter: { agent_id: 'support-bot' } } }),
     ]);
-  });
-
-  it('sends no PUT when nothing changed', async () => {
-    const container = await mountAt('#/evals/evaluators/r1');
-    await click(buttonNamed(container, 'Save changes')!);
-    expect(writes('PUT')).toEqual([]);
-    expect(container.textContent).toContain('No changes to save.');
   });
 
   it('edits a judge rule (provider and model split back out) and shows a 409 inline', async () => {

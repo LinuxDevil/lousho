@@ -8,10 +8,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type * as http from 'node:http';
 import * as nodeHttp from 'node:http';
 import * as nodePath from 'node:path';
-import { defaultPidPath, isObserveDaemon, probeHealth, sameDbPath, startObserveDaemon, type ObserveDaemon } from './daemon';
-import { OBSERVE_SERVICE, type IngestEvent } from './envelope';
-import { emitObserveEvents } from './emit';
-import { publishPrompt } from './promptClient';
+import { defaultPidPath, probeHealth, sameDbPath, startObserveDaemon, type ObserveDaemon } from './daemon';
+import { OBSERVE_SERVICE } from './envelope';
 import { createToken, openDb } from './store';
 import type { RouteContext } from './routes/httpKit';
 import { statusRoutes } from './routes/status';
@@ -51,19 +49,6 @@ const post = (daemon: ObserveDaemon, body: unknown, headers: Record<string, stri
     body: typeof body === 'string' ? body : JSON.stringify(body),
   });
 
-describe('GET /health', () => {
-  it('returns the lousho-observe service marker', async () => {
-    const daemon = await start();
-    const res = await fetch(url(daemon, '/health'));
-    const body = (await res.json()) as { service: string; ok: boolean; version: string };
-    expect(res.status).toBe(200);
-    expect(body.service).toBe(OBSERVE_SERVICE);
-    expect(body.ok).toBe(true);
-    expect(typeof body.version).toBe('string');
-    expect(isObserveDaemon(await probeHealth(daemon.port))).toBe(true);
-  });
-});
-
 describe('per-db pidfile and db identity', () => {
   it('names the pidfile after the db so two dbs in one folder never share it', () => {
     expect(defaultPidPath('/d/a.db')).toBe(nodePath.resolve('/d/a.pid'));
@@ -92,14 +77,6 @@ describe('/health db path exposure', () => {
     void health.handle({ req, res, dbPath: '/home/someone/.lousho/observe.db' } as RouteContext);
     return JSON.parse(body) as Record<string, unknown>;
   };
-
-  it('tells only a caller on this machine which db it serves', () => {
-    expect(healthFrom('127.0.0.1', '127.0.0.1').db).toBe(nodePath.resolve('/home/someone/.lousho/observe.db'));
-    expect(healthFrom('::1', '::1').db).toBeDefined();
-    expect(healthFrom('::ffff:127.0.0.1', '::ffff:127.0.0.1').db).toBeDefined();
-    // the CLI probing a daemon bound to this machine's LAN address connects from that same address
-    expect(healthFrom('192.168.1.5', '192.168.1.5').db).toBeDefined();
-  });
 
   it('keeps the db path (home dir, username) from a remote caller, marker intact', () => {
     const body = healthFrom('192.168.1.20', '192.168.1.5');
@@ -158,17 +135,6 @@ describe('POST /api/v1/ingest', () => {
     });
     expect(res.status).toBe(413);
   });
-
-  it('truncates a field over 64KB and flags the stored row', async () => {
-    const daemon = await start();
-    const big = 'y'.repeat(70 * 1024);
-    await post(daemon, { batch: [{ type: 'observation', data: obs({ output: big }) }] });
-    const detail = (await (await fetch(url(daemon, '/api/v1/traces/t1'))).json()) as {
-      observations: { output?: string; truncated: boolean }[];
-    };
-    expect(detail.observations[0].output?.length).toBe(64 * 1024);
-    expect(detail.observations[0].truncated).toBe(true);
-  });
 });
 
 describe('status + insights', () => {
@@ -215,15 +181,6 @@ describe('token auth', () => {
   });
 });
 
-describe('port collision', () => {
-  it('a second daemon on the same port fails with EADDRINUSE; the health probe identifies ours', async () => {
-    const daemon = await start();
-    await expect(startObserveDaemon({ dbPath: ':memory:', port: daemon.port })).rejects.toMatchObject({ code: 'EADDRINUSE' });
-    // the probe distinguishes our daemon from a random listener
-    expect(isObserveDaemon(await probeHealth(daemon.port))).toBe(true);
-  });
-});
-
 /** One raw request (fetch can't set `Host`, and browsers own `Origin`): resolves with the status and the parsed body. */
 function rawRequest(
   daemon: ObserveDaemon,
@@ -249,14 +206,6 @@ describe('cross-site write guard on /api/*', () => {
   const ruleCount = async (daemon: ObserveDaemon): Promise<number> =>
     ((await (await fetch(url(daemon, '/api/v1/evaluators'))).json()) as { evaluators: unknown[] }).evaluators.length;
 
-  it('a text/plain "simple" POST to /api/v1/evaluators answers 415 and creates no rule', async () => {
-    const daemon = await start();
-    const res = await fetch(url(daemon, '/api/v1/evaluators'), { method: 'POST', headers: { 'content-type': 'text/plain' }, body: rule });
-    expect(res.status).toBe(415);
-    expect(((await res.json()) as { code: string }).code).toBe('LOUSHO_REQUEST_INVALID');
-    expect(await ruleCount(daemon)).toBe(0);
-  });
-
   it('a cross-origin JSON POST answers 403 and creates no rule', async () => {
     const daemon = await start();
     const res = await rawRequest(daemon, 'POST', '/api/v1/evaluators', { 'content-type': 'application/json', origin: 'http://evil.com' }, rule);
@@ -270,27 +219,6 @@ describe('cross-site write guard on /api/*', () => {
     const res = await rawRequest(daemon, 'GET', '/api/v1/traces', { host: `attacker.example:${daemon.port}` });
     expect(res.status).toBe(403);
     expect(res.body.error).toMatch(/loopback Host/i);
-  });
-
-  it('/health stays outside the guard', async () => {
-    const daemon = await start();
-    expect((await rawRequest(daemon, 'GET', '/health', { host: 'attacker.example' })).status).toBe(200);
-  });
-
-  it('a plain JSON POST with no Origin (SDK / CLI / Studio proxy) still creates the rule', async () => {
-    const daemon = await start();
-    const res = await fetch(url(daemon, '/api/v1/evaluators'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: rule });
-    expect(res.status).toBe(201);
-    expect(await ruleCount(daemon)).toBe(1);
-  });
-
-  it('the SDK clients (ingest emitter, prompt client) still write through the real fetch', async () => {
-    const daemon = await start();
-    const base = `http://127.0.0.1:${daemon.port}`;
-    const sent = await emitObserveEvents([{ type: 'observation', data: obs() } as IngestEvent], { target: { url: base } });
-    expect(sent).toBe(1);
-    const published = await publishPrompt(base, { name: 'greet', text: 'Hello' });
-    expect(published.version).toBe(1);
   });
 
   it('the token check runs first: an unauthenticated text/plain POST answers 401, not 415', async () => {

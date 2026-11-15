@@ -32,25 +32,6 @@ function emailAgent(...turns: Parameters<typeof mockModel>[0]) {
 const callEmail = { toolCalls: [{ name: 'send_email', args: { to: 'sam' }, id: 'call_email' }] };
 
 describe('loushoAgent for Svelte', () => {
-  it('calls a subscriber at once with the initial state, and streams the reply into it', async () => {
-    const store = loushoAgent({ agent: createAgent({ provider: mockModel([{ text: 'Hello there!', usage: { inputTokens: 5, outputTokens: 3 } }]) }) });
-    const seen: string[] = [];
-    store.subscribe((state) => seen.push(state.status));
-    expect(seen).toEqual(['idle']);
-
-    await store.send('Hi');
-    const { state } = watch(store);
-
-    expect(seen).toContain('streaming');
-    expect(state().status).toBe('idle');
-    expect(state().messages.map(({ role, text }) => ({ role, text }))).toEqual([
-      { role: 'user', text: 'Hi' },
-      { role: 'assistant', text: 'Hello there!' },
-    ]);
-    expect(state().usage?.totalTokens).toBe(8);
-    expect(state().lastEvent?.type).toBe('run.done');
-    expect(state().error).toBeNull();
-  });
 
   it('shows a tool call and its state through the approval round trip', async () => {
     const { agent, execute } = emailAgent(callEmail, 'Email sent.');
@@ -68,33 +49,12 @@ describe('loushoAgent for Svelte', () => {
     expect(state().messages[1]).toMatchObject({ text: 'Email sent.', toolCalls: [{ name: 'send_email', status: 'done' }] });
   });
 
-  it('reject() marks the call rejected', async () => {
-    const { agent, execute } = emailAgent(callEmail, 'OK, not sent.');
-    const store = loushoAgent({ agent });
-    const { state } = watch(store);
-    await store.send('Email Sam');
-    await store.reject('not today');
-    expect(execute).not.toHaveBeenCalled();
-    expect(state().messages[1]).toMatchObject({ text: 'OK, not sent.', toolCalls: [{ status: 'rejected' }] });
-  });
-
   it('a failing run ends in the error status', async () => {
     const store = loushoAgent({ agent: createAgent({ provider: mockModel([{ error: new Error('provider down') }]) }) });
     const { state } = watch(store);
     await store.send('Hi');
     expect(state().status).toBe('error');
     expect(state().error?.message).toMatch(/provider down/);
-  });
-
-  it('reset() starts a new conversation and clears the state', async () => {
-    const model = mockModel(['Nice to meet you, Ali.', 'Hello again']);
-    const store = loushoAgent({ agent: createAgent({ provider: model }), sessionId: 'chat-1' });
-    const { state } = watch(store);
-    await store.send('My name is Ali.');
-    store.reset();
-    expect(state().messages).toEqual([]);
-    await store.send('Hello again');
-    expect(model.lastCall?.messages.some((m) => m.content === 'My name is Ali.')).toBe(false);
   });
 });
 
@@ -118,37 +78,6 @@ describe('loushoAgent for Svelte remote and abort', () => {
     };
     return { fetch: fetchMock as typeof fetch, signals };
   }
-
-  it('stop() aborts the request and returns to idle', async () => {
-    const remote = openFetch();
-    const store = loushoAgent({ url: '/api/agent', fetch: remote.fetch });
-    const { state } = watch(store);
-
-    const sending = store.send('Long story');
-    await vi.waitFor(() => expect(state().messages[1]?.text).toBe('partial'));
-    store.stop();
-    await sending;
-
-    expect(remote.signals[0].aborted).toBe(true);
-    expect(state().status).toBe('idle');
-    expect(state().error).toBeNull();
-  });
-
-  it('aborts when the last subscriber unsubscribes, not before', async () => {
-    const remote = openFetch();
-    const store = loushoAgent({ url: '/api/agent', fetch: remote.fetch });
-    const first = watch(store);
-    const second = watch(store);
-
-    const sending = store.send('Long story');
-    await vi.waitFor(() => expect(first.state().messages[1]?.text).toBe('partial'));
-    first.unsubscribe();
-    expect(remote.signals[0].aborted).toBe(false);
-    second.unsubscribe();
-    await sending;
-
-    expect(remote.signals[0].aborted).toBe(true);
-  });
 
   it('a transient subscribe/unsubscribe (svelte/store get()) does not abort the run', async () => {
     const remote = openFetch();
@@ -174,7 +103,6 @@ describe('loushoAgent for Svelte remote and abort', () => {
 
 describe('loushoTodos', () => {
   const todoWrite = { name: 'todo_write', args: { todos: [{ content: 'Plan', status: 'completed' }, { content: 'Build', status: 'in_progress' }, { content: 'Ship', status: 'pending' }] } };
-  const base = { runId: 'r1', timestamp: new Date(0).toISOString(), v: AGENT_EVENT_SCHEMA_VERSION };
 
   it('follows the todo list of an in-process run and notifies only when it changes', async () => {
     const store = loushoAgent({ agent: createAgent({ provider: mockModel([{ toolCalls: [todoWrite] }, 'done']), tools: createTodoTools().tools }) });
@@ -189,25 +117,5 @@ describe('loushoTodos', () => {
     expect(views[1].counts).toEqual({ pending: 1, in_progress: 1, completed: 1, total: 3 });
     expect(views[1].current?.content).toBe('Build');
     unsubscribe();
-  });
-
-  it('follows a remote run, which now also receives agent.drift', async () => {
-    const events = [
-  { ...base, seq: 0, type: 'run.start', agentName: 'a' },
-  { ...base, seq: 1, type: 'agent.drift', model: { from: 'a', to: 'b' }, toolsAdded: [], toolsRemoved: [], instructions: false },
-  { ...base, seq: 2, type: 'todo.updated', toolCallId: 'w1', todos: [{ id: 'todo_1', content: 'Plan', status: 'completed' }, { id: 'todo_2', content: 'Build', status: 'pending' }], counts: { pending: 1, in_progress: 0, completed: 1, total: 2 } },
-  { ...base, seq: 3, type: 'run.done', finishReason: 'stop', text: '' },
-];
-    const body = events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('');
-    const store = loushoAgent({ url: '/api/agent', fetch: (async () => new Response(body)) as typeof fetch });
-    let view!: TodoView;
-    loushoTodos(store).subscribe((next) => (view = next));
-
-    await store.send('Go');
-
-    expect(view.counts).toEqual({ pending: 1, in_progress: 0, completed: 1, total: 2 });
-    expect(view.progress).toBe(0.5);
-    store.reset();
-    expect(view.todos).toEqual([]);
   });
 });

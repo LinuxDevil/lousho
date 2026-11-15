@@ -34,6 +34,7 @@ import type {
 } from '../../shared/wireTypes';
 import { asyncRoute, sendError } from '../http/routeUtils';
 import { sdkRootDir } from '../sdkRoot';
+import { hasOpenRouterKey, withOpenRouterModels } from './openRouterCatalog';
 import { isSecretProvider, type SecretsStore } from '../secretsStore';
 import { workspaceOf } from '../workspace/middleware';
 
@@ -43,6 +44,7 @@ export interface CatalogRouteDeps {
   secretsStore: SecretsStore;
   /** Defaults to `<sdkRoot>/registry/dist/index.json`. */
   registryIndexPath?: string;
+  openRouterModels?: () => Promise<CatalogModel[]>;
 }
 
 /**
@@ -151,7 +153,8 @@ export function registerCatalogRoutes(app: Express, deps: CatalogRouteDeps): voi
       const { models } = await workspaceOf(req).host.catalog();
       const filtered =
         parsed.provider === undefined ? models : models.filter((model) => model.provider === parsed.provider);
-      res.json(withStoredKeyAvailability(filtered, deps.secretsStore));
+      const sdk = withStoredKeyAvailability(filtered, deps.secretsStore);
+      res.json(deps.openRouterModels === undefined ? sdk : await withOpenRouterModels(sdk, parsed.provider, hasOpenRouterKey(deps.secretsStore), deps.openRouterModels));
     })
   );
 

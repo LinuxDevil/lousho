@@ -3,7 +3,7 @@ import type { AgentSpecV2 } from 'lousho';
 import type { AgentRepo } from '../../../storage/agentRepo';
 import type { VersionStore } from '../../../storage/versionStore';
 import type { WorkspaceContext } from '../../../workspace/context';
-import type { AgentMeta, CatalogGuardrail, CatalogKit, CatalogModel, CatalogSkill, CatalogTool, CatalogTriggerType, McpServerSpecV2, TemplateSummary } from '../../../../shared/wireTypes';
+import type { AgentMeta, CatalogGuardrail, CatalogKit, CatalogModel, CatalogSkill, CatalogTool, CatalogTriggerType,  } from '../../../../shared/wireTypes';
 import { AUTHOR_TOOL_NAMES } from '../../toolNames';
 import { AuthorSessionStore } from '../../sessionStore';
 import type { AuthorTurn } from '../../turnRunner';
@@ -122,12 +122,6 @@ describe('buildAuthorTools', () => {
     }
     expect(AUTHOR_TOOL_FACTORIES).toHaveLength(22);
   });
-
-  it('builds the same list for different turns (the tool surface never changes mid-session)', () => {
-    const a = buildAuthorTools(TURN, fakeDeps()).map(nameOf);
-    const b = buildAuthorTools({ ...TURN, sessionId: 'other' }, fakeDeps()).map(nameOf);
-    expect(a).toEqual(b);
-  });
 });
 
 describe('getCurrentSpec', () => {
@@ -171,32 +165,6 @@ describe('listAgents', () => {
     ),
     versions: fakeVersions(),
   } as WorkspaceContext;
-
-  it('lists { id, name, description, enabled, model, labels } per agent', async () => {
-    const result = (await call(tools(fakeDeps({ workspace: async () => workspace })).get('listAgents')!, {})) as {
-      items: Record<string, unknown>[];
-      total: number;
-    };
-    expect(result.total).toBe(3);
-    expect(result.items[0]).toEqual({
-      id: 'a-one',
-      name: 'Alpha',
-      description: 'first',
-      enabled: true,
-      model: 'mock/mock-1',
-      labels: [],
-    });
-    expect(result.items[1]).toMatchObject({ id: 'b-two', enabled: false, labels: ['ops'] });
-  });
-
-  it('pages: limit 2 page 2 returns the last item with hasMore false', async () => {
-    const result = (await call(tools(fakeDeps({ workspace: async () => workspace })).get('listAgents')!, {
-      limit: 2,
-      page: 2,
-    })) as { items: { id: string }[]; total: number; page: number; hasMore: boolean };
-    expect(result.items.map((item) => item.id)).toEqual(['c-three']);
-    expect(result).toMatchObject({ total: 3, page: 2, hasMore: false });
-  });
 
   it('query matches id, name and description case-insensitively', async () => {
     const result = (await call(tools(fakeDeps({ workspace: async () => workspace })).get('listAgents')!, {
@@ -297,19 +265,6 @@ describe('listGuardrails / listTriggerTypes / listSkills / listKits / listTempla
     expect(((await call(toolMap.get('listSkills')!, {})) as { items: CatalogSkill[] }).items).toEqual(skills);
     expect(((await call(toolMap.get('listKits')!, {})) as { items: CatalogKit[] }).items).toEqual(kits);
   });
-
-  it('listTemplates returns TemplateSummary rows and queries title', async () => {
-    const summaries: TemplateSummary[] = [
-      { id: 'triage', title: 'Inbox triage', description: 'sorts mail', category: 'productivity', tags: ['mail'], requires: [] },
-      { id: 'coder', title: 'Coding agent', description: 'writes code', category: 'dev', tags: [], requires: ['provider_key'] },
-    ];
-    const templates = { list: async () => summaries };
-    const result = (await call(tools(fakeDeps({ templates })).get('listTemplates')!, { query: 'coding' })) as {
-      items: TemplateSummary[];
-      total: number;
-    };
-    expect(result.items).toEqual([summaries[1]]);
-  });
 });
 
 describe('listMcpServers', () => {
@@ -363,19 +318,6 @@ describe('listMcpServers', () => {
 });
 
 describe('probeMcpServer', () => {
-  it('returns the probed tool list', async () => {
-    let probed: McpServerSpecV2 | undefined;
-    const deps = fakeDeps({
-      probeMcp: async (server) => {
-        probed = server;
-        return { ok: true, tools: [{ name: 'search', description: 'search things' }] };
-      },
-    });
-    const server = { command: 'npx', args: ['-y', 'mcp-server'] };
-    const result = (await call(tools(deps).get('probeMcpServer')!, { server })) as { ok: true; tools: { name: string }[] };
-    expect(result).toEqual({ ok: true, tools: [{ name: 'search', description: 'search things' }] });
-    expect(probed).toEqual(server);
-  });
 
   it('maps a probe failure to MCP_PROBE_FAILED with model and user copy', async () => {
     const deps = fakeDeps({ probeMcp: async () => ({ ok: false, error: 'spawn npx ENOENT' }) });

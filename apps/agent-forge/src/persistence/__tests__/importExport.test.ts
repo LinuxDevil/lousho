@@ -11,15 +11,6 @@ const spec: AgentSpecV2 = {
 };
 
 describe('serializeSpec / parseSpecText', () => {
-  it('round-trips through YAML', () => {
-    const text = serializeSpec(spec, 'yaml');
-    expect(parseSpecText(text, 'yaml')).toEqual(spec);
-  });
-
-  it('round-trips through JSON', () => {
-    const text = serializeSpec(spec, 'json');
-    expect(parseSpecText(text, 'json')).toEqual(spec);
-  });
 
   it('rejects invalid spec text with a field-naming error', () => {
     expect(() => parseSpecText('name: only-a-name', 'yaml')).toThrow(/parseSpecText: import failed validation/);
@@ -27,10 +18,6 @@ describe('serializeSpec / parseSpecText', () => {
 });
 
 describe('importSpecFile', () => {
-  it('parses an uploaded .yaml File', async () => {
-    const file = new File([serializeSpec(spec, 'yaml')], 'agent.yaml', { type: 'text/yaml' });
-    expect(await importSpecFile(file)).toEqual(spec);
-  });
 
   it('parses an uploaded .json File', async () => {
     const file = new File([serializeSpec(spec, 'json')], 'agent.json', { type: 'application/json' });

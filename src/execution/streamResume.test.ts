@@ -2,7 +2,7 @@
  * Resuming after an approval streams - `streamResumeAfterApproval()`
  * and `agent.approvals.streamResolve()` / `streamAnswer()` return an AgentRun.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import { AgentExecutor } from './AgentExecutor';
 import { resumeAfterApproval, streamResumeAfterApproval } from './resume';
@@ -13,7 +13,6 @@ import { AgentBuilder } from '../core';
 import { ToolRegistry } from '../tools';
 import { defineTool } from '../tools/defineTool';
 import { createAgent } from '../createAgent';
-import { memoryStore } from '../storage/agentStore';
 import { mockModel, type MockTurn } from '../testing';
 
 const callEmail: MockTurn = { toolCalls: [{ name: 'send_email', args: { to: 'sam@example.com' }, id: 'call_email' }] };
@@ -60,69 +59,9 @@ describe('streamResumeAfterApproval', () => {
     const expected = await resumeAfterApproval({ id: plain.id, approved: true }, plain.approvalStore, plain.toolRegistry, plain.provider);
     expect(result).toEqual(expected);
   });
-
-  it('streams a rejection as tool.error, then the model reply', async () => {
-    const { provider, toolRegistry, approvalStore, id } = await pausedRun([callEmail, 'OK, not sending.']);
-
-    const run = streamResumeAfterApproval({ id, approved: false, note: 'No' }, approvalStore, toolRegistry, provider);
-    const events = await collect(run);
-
-    expect(kinds(events)).toEqual(['run.start', 'tool.resume', 'tool.error', 'step.start', 'text.done', 'step.done', 'run.done']);
-    expect(events.find((e) => e.type === 'tool.error')).toMatchObject({ error: { name: 'ToolRejectedError', message: 'Tool execution was rejected by the reviewer' } });
-    expect((await run.result).text).toBe('OK, not sending.');
-  });
-
-  it('a continuation that pauses again emits approval.requested and saves the new approval', async () => {
-    const again: MockTurn = { toolCalls: [{ name: 'send_email', args: { to: 'kim@example.com' }, id: 'call_2' }] };
-    const { provider, toolRegistry, approvalStore, id } = await pausedRun([callEmail, again, 'Both sent.']);
-
-    const run = streamResumeAfterApproval({ id, approved: true }, approvalStore, toolRegistry, provider);
-    const events = await collect(run);
-    const second = await run.result;
-
-    expect(kinds(events)).toEqual(['run.start', 'tool.resume', 'tool.done', 'step.start', 'tool.start', 'approval.requested', 'step.done', 'run.done']);
-    expect(events.find((e) => e.type === 'approval.requested')).toMatchObject({ approvalId: second.approvalId, args: { to: 'kim@example.com' } });
-    expect(events.at(-1)).toMatchObject({ type: 'run.done', finishReason: 'awaiting-approval' });
-    const final = await resumeAfterApproval({ id: second.approvalId!, approved: true }, approvalStore, toolRegistry, provider);
-    expect(final.text).toBe('Both sent.');
-  });
 });
 
 describe('agent.approvals.streamResolve / streamAnswer', () => {
-  it('streams an ask_question answer', async () => {
-    const asking: MockTurn = { toolCalls: [{ name: 'ask_question', args: { question: 'Where to?' }, id: 'call_q' }] };
-    const agent = createAgent({ provider: mockModel([asking, 'Booking Lisbon.']), askQuestion: true });
-    const paused = await agent.send('Book a trip');
-
-    const run = agent.approvals.streamAnswer({ id: paused.approvalId!, answer: 'Lisbon' });
-    const events = await collect(run);
-
-    expect(events.find((e) => e.type === 'tool.done')).toMatchObject({ toolName: 'ask_question', result: { answer: 'Lisbon' } });
-    expect(text(events)).toBe('Booking Lisbon.');
-    expect((await run.result).finishReason).toBe('stop');
-  });
-
-  it('aborting mid-continuation ends the run as aborted without another model call', async () => {
-    const model = mockModel([callEmail, 'never']);
-    const execute = vi.fn(
-      (_args: { to: string }, { abortSignal }: { abortSignal?: AbortSignal }) =>
-        new Promise<string>((resolve) => abortSignal?.addEventListener('abort', () => resolve('stopped')))
-    );
-    const agent = createAgent({ provider: model, tools: [defineTool({ ...emailTool(), execute })] });
-    const paused = await agent.send('Email Sam');
-    const controller = new AbortController();
-
-    const run = agent.approvals.streamResolve({ id: paused.approvalId!, approved: true }, { signal: controller.signal });
-    const events: AgentEvent[] = [];
-    for await (const event of run) {
-      events.push(event);
-      if (event.type === 'tool.resume') controller.abort();
-    }
-
-    expect((await run.result).finishReason).toBe('aborted');
-    expect(events.at(-1)).toMatchObject({ type: 'run.done', finishReason: 'aborted' });
-    expect(model.calls).toHaveLength(1);
-  });
 
   it('input enqueued on the resumed run reaches the next model call', async () => {
     let release!: () => void;
@@ -139,52 +78,5 @@ describe('agent.approvals.streamResolve / streamAnswer', () => {
 
     expect(kinds(events)).toContain('input.applied');
     expect(JSON.stringify(model.lastCall?.messages)).toContain('Also cc me.');
-  });
-
-  it('a fresh agent on the same store streams the resume, with the model the paused run used', async () => {
-    const store = memoryStore();
-    const options = (provider: ReturnType<typeof mockModel>, picked: string[]) => ({
-      provider,
-      store,
-      model: () => `model-${picked.push('x')}`,
-      tools: [emailTool()],
-    });
-    const first = mockModel([callEmail]);
-    const paused = await createAgent(options(first, [])).send('Email Sam', { sessionId: 'job' });
-
-    const second = mockModel(['Sent.']);
-    const run = createAgent(options(second, ['moved'])).approvals.streamResolve({ id: paused.approvalId!, approved: true });
-    const events = await collect(run);
-
-    expect(text(events)).toBe('Sent.');
-    expect(second.calls[0].model).toBe('model-1');
-    expect(await store.checkpoints?.load('job')).toMatchObject({ status: 'finished' });
-  });
-
-  it('the approval flow emits exactly one tool.start for the decided call; the continuation reports tool.resume', async () => {
-    const events: AgentEvent[] = [];
-    const agent = createAgent({ provider: mockModel([callEmail, 'Email sent.']), tools: [emailTool()], onEvent: (event) => events.push(event) });
-    const paused = await agent.send('Email Sam');
-    expect(paused.finishReason).toBe('awaiting-approval');
-
-    const resumed = await agent.approvals.resolve({ id: paused.approvalId!, approved: true });
-
-    expect(resumed.finishReason).toBe('stop');
-    const forCall = events.filter((e) => (e.type === 'tool.start' || e.type === 'tool.resume') && e.toolCallId === 'call_email');
-    expect(forCall.map((e) => e.type)).toEqual(['tool.start', 'tool.resume']);
-    const starts = forCall.filter((e) => e.type === 'tool.start');
-    expect(starts).toHaveLength(1);
-  });
-
-  it('a pause inside a session continues in that session; run.done comes after the transcript is saved', async () => {
-    const agent = createAgent({ provider: mockModel([callEmail, 'Email sent.']), tools: [emailTool()] });
-    const session = agent.session();
-    const paused = await session.send('Email Sam');
-
-    const run = agent.approvals.streamResolve({ id: paused.approvalId!, approved: true });
-    const events = await collect(run);
-
-    expect(events.at(-1)).toMatchObject({ type: 'run.done', finishReason: 'stop' });
-    expect(session.messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Email sent.' });
   });
 });

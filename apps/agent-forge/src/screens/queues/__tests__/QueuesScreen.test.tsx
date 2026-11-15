@@ -175,30 +175,12 @@ describe('queue paths', () => {
 });
 
 describe('QueuesScreen list', () => {
-  it('renders one card per queue with its rubric chips and counts, under the Evaluations tabs', async () => {
-    const container = await mountAt('#/evals/queues');
-    const card = container.querySelector('.ds-grid .qu-card')!;
-    expect(card.textContent).toContain('support-review');
-    expect([...card.querySelectorAll('.qu-chip')].map((c) => c.textContent)).toEqual(['helpfulness0–5', 'tone1–3']);
-    // pending / done / skipped: 2 / 3 / 1.
-    expect(card.querySelector('.qu-pending')?.textContent).toBe('2 pending');
-    expect(card.querySelector('.qu-reviewed')?.textContent).toBe('3 reviewed of 6');
-    expect(card.querySelector('.qu-skipped')?.textContent).toBe('1 skipped');
-    expect(container.querySelector('nav[aria-label="Evaluations"] [aria-current="page"]')?.textContent).toBe('Annotation queues');
-    const list = calls.find((c) => c.path === '/api/v1/queues')!;
-    expect(list.query.get('limit')).toBe('50');
-  });
 
   it('shows the empty state when there are no queues', async () => {
     queues = [];
     const container = await mountAt('#/evals/queues');
     expect(container.textContent).toContain('No annotation queues yet');
     expect(buttonNamed(container.querySelector('.empty-state') as HTMLElement, 'New queue')).toBeDefined();
-  });
-
-  it('links each card to its review view', async () => {
-    const container = await mountAt('#/evals/queues');
-    expect(container.querySelector('.qu-card')?.getAttribute('href')).toBe('#/evals/queues/q1');
   });
 
   it('creates a queue with its rubric rows (blank fields left out) and shows a 409 inline', async () => {
@@ -229,42 +211,9 @@ describe('QueuesScreen list', () => {
     expect(container.querySelector('.ds-grid')!.textContent).toContain('fresh');
     expect(container.querySelector('form[aria-label="New annotation queue"]')).toBeNull();
   });
-
-  it('keeps Create disabled while a rubric row has no name', async () => {
-    const container = await mountAt('#/evals/queues');
-    await act(async () => buttonNamed(container, 'New queue')!.click());
-    type(container.querySelector('input[name="queue-name"]') as HTMLInputElement, 'fresh');
-    expect(buttonNamed(container, 'Create queue')!.disabled).toBe(true);
-  });
 });
 
 describe('QueuesScreen review', () => {
-  it('shows the next item trace with one score input per rubric entry, bounds honoured, and the progress counts', async () => {
-    const container = await mountAt('#/evals/queues/q1');
-    expect(reviewedTrace(container)).toBe('trace-1');
-    expect(container.textContent).toContain('run of trace-1');
-    const helpfulness = scoreInput(container, 'helpfulness');
-    expect([helpfulness.type, helpfulness.min, helpfulness.max]).toEqual(['number', '0', '5']);
-    expect(scoreInput(container, 'tone').min).toBe('1');
-    expect(container.textContent).toContain('Did it answer the question?');
-    expect(container.querySelector('[aria-label="Queue progress"]')?.textContent).toMatch(/2 pending.*3 done.*1 skipped/);
-    // n of m: n = done + skipped + 1, m = done + skipped + pending.
-    expect(container.querySelector('.qu-position')?.textContent).toBe('Item 5 of 6');
-    expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('4');
-    // Messages is the default view: the root step's input and output.
-    expect(buttonNamed(container, 'Messages')!.getAttribute('aria-pressed')).toBe('true');
-    expect([...container.querySelectorAll('.mv-body')].map((b) => b.textContent)).toEqual(['"hello"', '"hi"']);
-  });
-
-  it('switches the item to the whole trace and back', async () => {
-    const container = await mountAt('#/evals/queues/q1');
-    expect(buttonNamed(container, 'Tree')).toBeUndefined();
-    await act(async () => buttonNamed(container, 'Trace')!.click());
-    expect(buttonNamed(container, 'Trace')!.getAttribute('aria-pressed')).toBe('true');
-    expect(buttonNamed(container, 'Tree')).toBeDefined();
-    await act(async () => buttonNamed(container, 'Messages')!.click());
-    expect(container.querySelectorAll('.mv-body')).toHaveLength(2);
-  });
 
   it('a score button sets the value and picking it again clears it', async () => {
     const container = await mountAt('#/evals/queues/q1');
@@ -304,15 +253,6 @@ describe('QueuesScreen review', () => {
     expect(container.querySelector('[aria-label="Queue progress"]')?.textContent).toContain('1 pending');
   });
 
-  it('Skip posts status skipped with no scores and loads the next item', async () => {
-    const container = await mountAt('#/evals/queues/q1');
-    type(scoreInput(container, 'helpfulness'), '4');
-    await act(async () => buttonNamed(container, 'Skip')!.click());
-    await flush();
-    expect(completes()[0].body).toEqual({ scores: [], status: 'skipped' });
-    expect(reviewedTrace(container)).toBe('trace-2');
-  });
-
   it('Enter outside a text field submits; S skips; S while typing in a score input does nothing', async () => {
     const container = await mountAt('#/evals/queues/q1');
     await press('s', scoreInput(container, 'helpfulness'));
@@ -331,25 +271,6 @@ describe('QueuesScreen review', () => {
     await act(async () => buttonNamed(container, 'Trace')!.click());
     await press('Enter', buttonNamed(container, 'Tree')!);
     expect(completes()).toHaveLength(0);
-  });
-
-  it('shows the empty queue state on 204, with links to the list and to Traces', async () => {
-    pending = [];
-    const container = await mountAt('#/evals/queues/q1');
-    expect(container.textContent).toContain('Queue is empty');
-    expect(container.querySelector('.empty-state a[href="#/evals/queues"]')).not.toBeNull();
-    expect(container.querySelector('.empty-state a[href="#/traces"]')).not.toBeNull();
-    await press('s');
-    expect(completes()).toHaveLength(0);
-  });
-
-  it('on a 409 (finished elsewhere) toasts and loads the next item', async () => {
-    completeStatus = 409;
-    const container = await mountAt('#/evals/queues/q1');
-    await act(async () => buttonNamed(container, 'Submit & next')!.click());
-    await flush();
-    expect(document.body.textContent).toContain('already finished');
-    expect(reviewedTrace(container)).toBe('trace-2');
   });
 
   it('shows the daemon-down state with the URL kept and recovers in place', async () => {

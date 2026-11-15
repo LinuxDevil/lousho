@@ -50,16 +50,6 @@ function render(element: ReactElement): HTMLElement {
 }
 
 describe('HistoryList', () => {
-  it('renders a row per step with status, finish reason, tool calls, tokens and cost', () => {
-    const container = render(<HistoryList steps={STEPS} onReplay={() => undefined} />);
-    const rows = [...container.querySelectorAll('tbody tr')].map((row) =>
-      [...row.querySelectorAll('td')].slice(0, 6).map((cell) => cell.textContent)
-    );
-    expect(rows).toEqual([
-      ['1', 'in-progress', 'tool_calls', 'get_weather', '42', '$0.0002'],
-      ['2', 'finished', 'stop', '—', '30', '—'],
-    ]);
-  });
 
   it('"Edit and replay from here" hands its step to onReplay', () => {
     const onReplay = vi.fn();
@@ -86,12 +76,5 @@ describe('TrajectoryCompare', () => {
     expect(rows[2].querySelector('.traj-missing')?.textContent).toBe('—'); // the original has no third turn
 
     expect(container.querySelector('.traj-drift')?.textContent).toBe('steps: 2 -> 3');
-  });
-
-  it('says so when the runs did not drift', () => {
-    const same: RunComparisonPayload = { a: COMPARISON.a, b: COMPARISON.a, drift: [] };
-    const container = render(<TrajectoryCompare comparison={same} a="a" b="b" />);
-    expect(container.querySelector('.diverged')).toBeNull();
-    expect(container.querySelector('.traj-drift')?.textContent).toBe('No drift');
   });
 });

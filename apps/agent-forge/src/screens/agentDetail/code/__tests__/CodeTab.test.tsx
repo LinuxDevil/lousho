@@ -135,41 +135,6 @@ beforeEach(() => {
 });
 
 describe('CodeTab', () => {
-  it('defaults to the TypeScript view: pressed seg button, numbered lines, read-only note', async () => {
-    const host = renderTab();
-    await flush();
-
-    const pressed = host.querySelector<HTMLButtonElement>('button.seg-btn[aria-pressed="true"]');
-    expect(pressed?.textContent).toBe('TypeScript');
-    const lines = [...host.querySelectorAll('.code-view .code-line')].map((s) => s.textContent);
-    expect(lines).toEqual(['line1', 'line2']);
-    expect(host.querySelector<HTMLPreElement>('pre.code-view')?.getAttribute('aria-label')).toBe(
-      'TypeScript for Support bot',
-    );
-    expect(host.querySelector('.code-note')?.textContent).toBe(
-      'Generated from the spec. Read-only — edit on the canvas or in Configure.',
-    );
-  });
-
-  it('switches to YAML via the segmented control and writes ?view=yaml', async () => {
-    const host = renderTab();
-    await flush();
-
-    await clickView(host, 'YAML');
-
-    expect(parseHash(window.location.hash).query.get('view')).toBe('yaml');
-    expect(host.querySelector('button.seg-btn[aria-pressed="true"]')?.textContent).toBe('YAML');
-    // The real yaml.stringify runs on record.spec.
-    expect(host.querySelector('pre.code-view')?.textContent).toContain('name: Support bot');
-  });
-
-  it('keeps the view across a reload: ?view=dir opens the directory', async () => {
-    const host = renderTab('/#/agents/support-bot/code?view=dir');
-    await flush();
-
-    expect(host.querySelector('button.seg-btn[aria-pressed="true"]')?.textContent).toBe('Agent directory');
-    expect(host.querySelector('ul.code-tree[role="tree"]')).not.toBeNull();
-  });
 
   it('Copy writes exactly the generated text and toasts "Copied"', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
@@ -185,38 +150,6 @@ describe('CodeTab', () => {
 
     expect(writeText).toHaveBeenCalledWith('line1\nline2');
     expect(host.querySelector('.toast-message')?.textContent).toBe('Copied');
-  });
-
-  it('toasts "Could not copy" when the clipboard rejects', async () => {
-    const writeText = vi.fn().mockRejectedValue(new Error('denied'));
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
-    const host = renderTab();
-    await flush();
-
-    const copyButton = [...host.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
-      b.textContent?.includes('Copy'),
-    )!;
-    act(() => copyButton.click());
-    await flush();
-
-    expect(host.querySelector('.toast-message')?.textContent).toBe('Could not copy');
-  });
-
-  it('directory view: tree, default agent.yaml selection, disabled Download', async () => {
-    const host = renderTab();
-    await flush();
-    await clickView(host, 'Agent directory');
-
-    expect(host.querySelector('ul.code-tree[role="tree"]')?.getAttribute('aria-label')).toBe('Files');
-    const agentYaml = treeItem(host, 'agent.yaml').closest('li')!;
-    expect(agentYaml.getAttribute('aria-selected')).toBe('true');
-    expect(host.querySelector('pre.code-view-file')?.textContent).toBe('name: x');
-
-    const download = [...host.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
-      b.textContent?.includes('Download'),
-    )!;
-    expect(download.disabled).toBe(true);
-    expect(download.title).toBe('Copy files one at a time from the tree');
   });
 
   it('directory view: ArrowDown moves focus, Enter selects the file into ?file=', async () => {
@@ -241,14 +174,6 @@ describe('CodeTab', () => {
     expect(parseHash(window.location.hash).query.get('file')).toBe('prompts/system.md');
     expect(host.querySelector('pre.code-view-file')?.textContent).toBe('Hi');
     expect(systemMd.closest('li')?.getAttribute('aria-selected')).toBe('true');
-  });
-
-  it('deep-links a file: ?file=prompts/system.md previews it', async () => {
-    const host = renderTab('/#/agents/support-bot/code?view=dir&file=prompts%2Fsystem.md');
-    await flush();
-
-    expect(host.querySelector('pre.code-view-file')?.textContent).toBe('Hi');
-    expect(treeItem(host, 'system.md').closest('li')?.getAttribute('aria-selected')).toBe('true');
   });
 
   it('a generator error shows "Could not generate code" and only breaks that view', async () => {

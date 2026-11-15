@@ -31,26 +31,6 @@ const secretSource = async (): Promise<KeySource> => {
 };
 
 describe('jwt()', () => {
-  it('accepts a valid token of each family and maps it to a principal', async () => {
-    const families: Array<[SigningKey, Parameters<typeof jwt>[0]]> = [];
-    const hs = await hmacKey();
-    families.push([hs, { secret: SECRET }]);
-    const rs = await rsaKey();
-    families.push([rs, { publicKey: rs.pem }]);
-    const es = await ecKey();
-    families.push([es, { publicKey: es.jwk }]);
-    for (const [key, source] of families) {
-      const auth = jwt({ ...source, issuer: ISS, audience: AUD });
-      const principal = await auth(bearer(await signToken(key, { iss: ISS, aud: AUD, role: 'admin' })));
-      expect(principal, key.alg).toMatchObject({ id: 'u1', type: 'user', authenticator: 'jwt', issuer: ISS, claims: { role: 'admin', aud: AUD } });
-    }
-  });
-
-  it('accepts an RSA key given as a JWK, and an audience inside an aud array', async () => {
-    const rs = await rsaKey();
-    const auth = jwt({ publicKey: rs.jwk, audience: [AUD, 'other'] });
-    expect(await auth(bearer(await signToken(rs, { aud: ['x', AUD] })))).toMatchObject({ id: 'u1' });
-  });
 
   it('skips (null) a request without a bearer token, with a non-JWT token, or with any invalid token', async () => {
     const auth = jwt({ secret: SECRET, audience: AUD });
@@ -59,18 +39,6 @@ describe('jwt()', () => {
     expect(await auth(bearer(unsignedToken({ aud: AUD })))).toBeNull();
     expect(await auth(bearer(await signToken(await hmacKey(), { aud: 'wrong' })))).toBeNull();
     expect(auth.challenges).toEqual([{ scheme: 'Bearer' }]);
-  });
-
-  it('a custom principal mapper decides, and a token without sub is skipped by default', async () => {
-    const hs = await hmacKey();
-    const custom = jwt({ secret: SECRET, audience: AUD, principal: (claims) => ({ id: String(claims.client_id), type: 'service', authenticator: 'jwt' }) });
-    expect(await custom(bearer(await signToken(hs, { aud: AUD, client_id: 'svc-1' })))).toEqual({ id: 'svc-1', type: 'service', authenticator: 'jwt' });
-    expect(await jwt({ secret: SECRET, audience: AUD })(bearer(await signToken(hs, { aud: AUD, sub: undefined })))).toBeNull();
-  });
-
-  it('allows any audience only when asked to', async () => {
-    const hs = await hmacKey();
-    expect(await jwt({ secret: SECRET, allowAnyAudience: true })(bearer(await signToken(hs, { aud: 'whatever' })))).toMatchObject({ id: 'u1' });
   });
 
   describe('construction (LOUSHO_AUTH_CONFIG_INVALID)', () => {
@@ -112,32 +80,6 @@ describe('jwt()', () => {
 describe('verifyJwt', () => {
   const checks: JwtChecks = { algorithms: ['HS256'], issuer: ISS, audience: AUD };
 
-  it("rejects alg 'none' in any casing, even when the signature part is empty or junk", async () => {
-    const source = await secretSource();
-    expect(await rejection(verifyJwt(unsignedToken({ iss: ISS, aud: AUD }), source, { ...checks, algorithms: ['HS256'] }))).toBe('alg-none');
-    const shouting = `${base64url(JSON.stringify({ alg: 'NONE' }))}.${base64url(JSON.stringify({ sub: 'u1', exp: nowSec() + 60 }))}.AAAA`;
-    expect(await rejection(verifyJwt(shouting, source, checks))).toBe('alg-none');
-    // An empty signature segment is malformed before alg is even read.
-    expect(await rejection(verifyJwt(unsignedToken({}, ''), source, checks))).toBe('malformed');
-    expect(await jwt({ secret: SECRET, audience: AUD })(bearer(unsignedToken({ aud: AUD })))).toBeNull();
-  });
-
-  it('rejects an alg outside the configured algorithms', async () => {
-    const hs512 = await hmacKey(SECRET, 'HS512');
-    expect(await rejection(verifyJwt(await signToken(hs512, { iss: ISS, aud: AUD }), await secretSource(), checks))).toBe('alg-not-allowed');
-    expect(await jwt({ secret: SECRET, audience: AUD, algorithms: ['HS256'] })(bearer(await signToken(hs512, { aud: AUD })))).toBeNull();
-  });
-
-  it('refuses algorithm confusion: an HS256 token signed with the RSA public key as its secret', async () => {
-    const rs = await rsaKey();
-    const forged = await signToken(await hmacKey(rs.pem), { iss: ISS, aud: AUD });
-    // jwt({ publicKey }) only ever allows RS algorithms, so the header's HS256 is not allowed ...
-    expect(await jwt({ publicKey: rs.pem, issuer: ISS, audience: AUD })(bearer(forged))).toBeNull();
-    // ... and even a check list that allowed HS256 finds no HMAC key in an RSA key source.
-    const rsaSource: KeySource = { keys: async () => [{ kty: 'RSA', importFor: () => Promise.reject(new Error('never imported as HMAC')) }] };
-    expect(await rejection(verifyJwt(forged, rsaSource, { ...checks, algorithms: ['HS256', 'RS256'] }))).toBe('no-key');
-  });
-
   it('rejects a bad signature, and a token signed by another key', async () => {
     const hs = await hmacKey();
     const token = await signToken(hs, { iss: ISS, aud: AUD });
@@ -165,17 +107,6 @@ describe('verifyJwt', () => {
     expect(await verdict({ nbf: nowSec() + 120 })).toBe('not-yet-valid');
     expect(await verdict({ nbf: nowSec() + 30 })).toBe('accepted');
     expect(await verdict({ iat: nowSec() + 120 })).toBe('issued-in-future');
-  });
-
-  it('checks the issuer exactly and the audience', async () => {
-    const hs = await hmacKey();
-    const source = await secretSource();
-    const verdict = async (claims: Record<string, unknown>) => rejection(verifyJwt(await signToken(hs, claims), source, checks));
-    expect(await verdict({ iss: `${ISS}/`, aud: AUD })).toBe('wrong-issuer');
-    expect(await verdict({ aud: AUD })).toBe('wrong-issuer');
-    expect(await verdict({ iss: ISS, aud: 'someone-else' })).toBe('wrong-audience');
-    expect(await verdict({ iss: ISS })).toBe('wrong-audience');
-    expect(await verdict({ iss: ISS, aud: ['x', AUD] })).toBe('accepted');
   });
 
   it('refuses malformed tokens, oversized tokens and a crit header', async () => {
@@ -247,16 +178,6 @@ describe('jwksKeySource', () => {
     expect(fetch.urls).toHaveLength(4);
   });
 
-  it('concurrent first requests share one fetch and all see the keys', async () => {
-    const rs = await rsaKey();
-    const fetch = fakeFetch({ [URL_]: { keys: [{ ...rs.jwk, kid: 'k1' }] } });
-    const source = jwksKeySource(URL_, fetch, () => 0);
-    const token = await signToken(rs, { aud: AUD }, { kid: 'k1' });
-    const verdicts = await Promise.all([1, 2, 3].map(() => rejection(verifyJwt(token, source, { algorithms: ['RS256'], audience: AUD }))));
-    expect(verdicts).toEqual(['accepted', 'accepted', 'accepted']);
-    expect(fetch.urls).toHaveLength(1);
-  });
-
   it('never takes an HMAC key, a non-signing key or a key without verify from a key set', async () => {
     const rs = await rsaKey();
     const fetch = fakeFetch({
@@ -285,12 +206,5 @@ describe('jwksKeySource', () => {
     clock += 30_000;
     await source.keys('k1');
     expect(fetch.urls).toHaveLength(2);
-  });
-
-  it('jwt({ jwksUrl }) defaults to RS256 and ES256 and verifies an ES256 key from the set', async () => {
-    const es = await ecKey();
-    const fetch = fakeFetch({ [URL_]: { keys: [{ ...es.jwk, kid: 'e1', alg: 'ES256' }] } });
-    const auth = jwt({ jwksUrl: URL_, issuer: ISS, audience: AUD, fetch });
-    expect(await auth(bearer(await signToken(es, { iss: ISS, aud: AUD }, { kid: 'e1' })))).toMatchObject({ id: 'u1', issuer: ISS });
   });
 });

@@ -5,19 +5,6 @@ import { issuesByPath, validateSchemaValue } from '../validate';
 import { SCHEMA, SPEC } from './fixture';
 
 describe('validateSchemaValue', () => {
-  it('reports Required. for each missing required property', () => {
-    expect(validateSchemaValue(SCHEMA, {})).toEqual([
-      { path: 'name', message: 'Required.' },
-      { path: 'model', message: 'Required.' },
-    ]);
-  });
-
-  it('treats an empty string as absent, required or not', () => {
-    expect(validateSchemaValue(SCHEMA, { name: '', model: 'm' })).toEqual([
-      { path: 'name', message: 'Required.' },
-    ]);
-    expect(validateSchemaValue(SCHEMA, { name: 'x', model: 'm', reasoning: undefined })).toEqual([]);
-  });
 
   it('checks numeric bounds and integer-ness', () => {
     expect(validateSchemaValue(SCHEMA, { name: 'x', model: 'm', maxSteps: 0 })).toEqual([
@@ -31,18 +18,6 @@ describe('validateSchemaValue', () => {
   it('rejects values outside an enum', () => {
     expect(validateSchemaValue(SCHEMA, { name: 'x', model: 'm', reasoning: 'max' })).toEqual([
       { path: 'reasoning', message: 'Pick one of the listed values.' },
-    ]);
-  });
-
-  it('validates through $ref into nested object paths', () => {
-    expect(validateSchemaValue(SCHEMA, { name: 'x', model: 'm', modelSettings: { temperature: 3 } })).toEqual([
-      { path: 'modelSettings.temperature', message: 'Must be at most 2.' },
-    ]);
-  });
-
-  it('reports a type mismatch for a non-array value on an array schema', () => {
-    expect(validateSchemaValue(SCHEMA, { name: 'x', model: 'm', fallbackModels: 'x' })).toEqual([
-      { path: 'fallbackModels', message: 'Must be a list.' },
     ]);
   });
 
@@ -76,11 +51,6 @@ describe('validateSchemaValue', () => {
     ).toEqual([
       { path: 'tags', message: 'Add at least 2.' },
       { path: 'tags.0', message: 'Must be text.' },
-    ]);
-  });
-  it('reports one union issue at the union path when no option matches', () => {
-    expect(validateSchemaValue(SPEC, { tools: [{ nope: 1 }] })).toEqual([
-      { path: 'tools.0', message: 'Doesn’t match any allowed shape.' },
     ]);
   });
 

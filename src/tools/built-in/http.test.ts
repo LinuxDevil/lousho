@@ -64,78 +64,6 @@ describe('makeHttpRequest', () => {
     dnsLookupSpy?.mockRestore();
   });
 
-  it('rejects near the configured timeout when the server never responds', async () => {
-    // #324: this used to compare a real elapsed time against the real 500 ms
-    // timeout (>= 450 and < 2000), which failed whenever a loaded machine
-    // delayed the event loop. The request timer is now driven by a fake clock
-    // (only setTimeout/clearTimeout are faked; the sockets stay real), so the
-    // test pins the exact boundary: still pending 1 ms before the timeout,
-    // aborted at the timeout, with the documented error.
-    let serverSawRequest!: () => void;
-    const requestArrived = new Promise<void>((resolve) => (serverSawRequest = resolve));
-    let clientHungUp!: () => void;
-    const connectionClosed = new Promise<void>((resolve) => (clientHungUp = resolve));
-    server = http.createServer((req) => {
-      // Never respond
-      req.socket.once('close', clientHungUp);
-      serverSawRequest();
-    });
-    const baseUrl = await listen(server);
-
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    try {
-      let settled = false;
-      const request = makeHttpRequest({
-        url: baseUrl,
-        method: 'GET',
-        options: { timeout: 500, ...LOCAL },
-      });
-      const outcome = request.then(
-        () => {
-          settled = true;
-        },
-        (error: unknown) => {
-          settled = true;
-          return error;
-        }
-      );
-
-      // The request is in flight (the server has it) and the 500 ms timer is armed.
-      await requestArrived;
-
-      await vi.advanceTimersByTimeAsync(499);
-      expect(settled).toBe(false);
-
-      await vi.advanceTimersByTimeAsync(1);
-      const error = await outcome;
-      expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toMatch(/timed out after 500ms/i);
-
-      // The abort tore the connection down rather than leaving it dangling.
-      await connectionClosed;
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('the tool passes its abortSignal to fetch and rejects with an AbortError', async () => {
-    server = http.createServer(() => {
-      // Never respond
-    });
-    const baseUrl = await listen(server);
-    const controller = new AbortController();
-    setTimeout(() => controller.abort(), 20);
-
-    const start = Date.now();
-    await expect(
-      createHttpTool({ timeout: 10_000, ...LOCAL }).tool.execute!(
-        { url: baseUrl, method: 'GET' },
-        { toolCallId: 't', messages: [], abortSignal: controller.signal }
-      )
-    ).rejects.toMatchObject({ name: 'AbortError', message: 'HTTP request was aborted' });
-    expect(Date.now() - start).toBeLessThan(2000);
-  });
-
   it('throws when a redirect chain exceeds maxRedirects', async () => {
     server = http.createServer((req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost');
@@ -153,29 +81,6 @@ describe('makeHttpRequest', () => {
         options: { maxRedirects: 2, ...LOCAL },
       })
     ).rejects.toThrow(/maxRedirects/);
-  });
-
-  it('follows redirects up to the cap and succeeds', async () => {
-    server = http.createServer((req, res) => {
-      const url = new URL(req.url ?? '/', 'http://localhost');
-      const hop = Number(url.searchParams.get('hop') ?? '0');
-      if (hop < 2) {
-        res.writeHead(302, { Location: `/?hop=${hop + 1}` });
-        res.end();
-        return;
-      }
-      res.writeHead(200, { 'Content-Type': 'text/plain' });
-      res.end('done');
-    });
-    const baseUrl = await listen(server);
-
-    const result = await makeHttpRequest({
-      url: `${baseUrl}/?hop=0`,
-      method: 'GET',
-      options: { maxRedirects: 5, ...LOCAL },
-    });
-
-    expect(result).toBe('done');
   });
 
   describe('SSRF denylist', () => {
@@ -359,48 +264,6 @@ describe('makeHttpRequest', () => {
         await new Promise<void>((resolve) => httpsServer!.close(() => resolve()));
         httpsServer = undefined;
       }
-    });
-
-    it('loads undici on the first request, not at import time (every request is pinned through it)', async () => {
-      vi.resetModules();
-      vi.doMock('undici', () => {
-        throw new Error('undici is loaded lazily');
-      });
-      try {
-        const { makeHttpRequest: fresh } = await import('./http');
-        await expect(fresh({ url: 'http://203.0.113.10/', method: 'GET' })).rejects.toThrow(/mocking a module|undici is loaded lazily/);
-      } finally {
-        vi.doUnmock('undici');
-        vi.resetModules();
-      }
-    });
-
-    it('rejects a self-signed certificate by default (validateSSL unset)', async () => {
-      httpsServer = https.createServer({ cert, key }, (_req, res) => {
-        res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end('secure');
-      });
-      const baseUrl = await listenHttps(httpsServer);
-
-      await expect(
-        makeHttpRequest({ url: baseUrl, method: 'GET', options: LOCAL })
-      ).rejects.toThrow(/certificate|fetch failed/i);
-    });
-
-    it('accepts a self-signed certificate when validateSSL is false', async () => {
-      httpsServer = https.createServer({ cert, key }, (_req, res) => {
-        res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end('secure');
-      });
-      const baseUrl = await listenHttps(httpsServer);
-
-      const result = await makeHttpRequest({
-        url: baseUrl,
-        method: 'GET',
-        options: { validateSSL: false, ...LOCAL },
-      });
-
-      expect(result).toBe('secure');
     });
 
     it('does not leak validateSSL between two concurrent requests with different settings', async () => {

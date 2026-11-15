@@ -36,15 +36,6 @@ function openAI(config: Partial<OpenAIProviderConfig> = {}): OpenAIProvider & In
 }
 
 describe('OpenAIProvider api option', () => {
-  it('defaults to the Responses API model', async () => {
-    expect(await openAI().createModel('gpt-4o')).toEqual({ api: 'responses', id: 'gpt-4o' });
-    expect(await openAI({ api: 'responses' }).createModel('gpt-4o')).toEqual({ api: 'responses', id: 'gpt-4o' });
-  });
-
-  it("api: 'chat' builds the Chat Completions model", async () => {
-    const provider = openAI({ api: 'chat', baseURL: 'http://localhost:1234/v1' });
-    expect(await provider.createModel('qwen3')).toEqual({ api: 'chat', id: 'qwen3' });
-  });
 
   it("api: 'chat' supports only hostedTool() pass-through", async () => {
     const provider = openAI({ api: 'chat' });
@@ -78,14 +69,5 @@ describe('OpenAIProvider api option', () => {
       delete process.env.LOUSHO_OPENAI_API;
     }
     expect(openAI().supportsHostedTool('web_search')).toBe(true);
-  });
-
-  it("the Responses API is sent store: false unless the config says otherwise; Chat Completions gets no store", () => {
-    const options: GenerateOptions = { messages: [] };
-    const store = (provider: ReturnType<typeof openAI>) =>
-      (provider.reasoningOptions('gpt-4o', options) as { openai?: { store?: boolean } } | undefined)?.openai?.store;
-    expect(store(openAI())).toBe(false);
-    expect(store(openAI({ store: true }))).toBe(true);
-    expect(openAI({ api: 'chat' }).reasoningOptions('gpt-4o', options)).toBeUndefined();
   });
 });

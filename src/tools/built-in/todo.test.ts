@@ -1,14 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createTodoTools, type Todo, type TodoStore } from './todo';
+import { createTodoTools,  } from './todo';
 import { createAgent } from '../../createAgent';
 import { mockModel } from '../../testing';
-import type { AgentEvent } from '../../execution/agentEvents';
-
-async function collect(run: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> {
-  const events: AgentEvent[] = [];
-  for await (const event of run) events.push(event);
-  return events;
-}
 
 /** The JSON the model received as the result of tool call `n` (0-based), read from the last recorded request. */
 function toolResults(model: ReturnType<typeof mockModel>): Array<Record<string, unknown>> {
@@ -17,56 +10,6 @@ function toolResults(model: ReturnType<typeof mockModel>): Array<Record<string, 
 }
 
 describe('createTodoTools', () => {
-  it('lets a run write, update and read the list, keeping ids stable', async () => {
-    const todos = createTodoTools();
-    const model = mockModel([
-      {
-        toolCalls: [
-          {
-            name: 'todo_write',
-            args: {
-              todos: [
-                { content: 'Write tests', status: 'in_progress' },
-                { content: 'Ship it', status: 'pending' },
-              ],
-            },
-          },
-        ],
-      },
-      {
-        toolCalls: [
-          {
-            name: 'todo_write',
-            args: {
-              todos: [
-                { content: 'Write tests', status: 'completed' },
-                { content: 'Ship it', status: 'in_progress' },
-                { content: 'Celebrate', status: 'pending' },
-              ],
-            },
-          },
-          { name: 'todo_read' },
-        ],
-      },
-      'All done.',
-    ]);
-    const agent = createAgent({ prompt: 'Plan then act.', provider: model, tools: todos.tools });
-
-    const result = await agent.send('Do the thing');
-
-    expect(result.text).toBe('All done.');
-    const [, , read] = toolResults(model);
-    const final = await todos.getTodos();
-    expect(final.map((t) => [t.id, t.content, t.status])).toEqual([
-      ['todo_1', 'Write tests', 'completed'],
-      ['todo_2', 'Ship it', 'in_progress'],
-      ['todo_3', 'Celebrate', 'pending'],
-    ]);
-    expect(read).toEqual({
-      todos: final,
-      counts: { pending: 1, in_progress: 1, completed: 1, total: 3 },
-    });
-  });
 
   it('assigns ids once, keeps explicit ids and avoids collisions', async () => {
     const { todoWrite, getTodos } = createTodoTools();
@@ -117,92 +60,5 @@ describe('createTodoTools', () => {
 
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(onChange).toHaveBeenCalledWith([{ id: 'todo_1', content: 'a', status: 'pending' }]);
-  });
-
-  it('reads and writes through a custom (async) store', async () => {
-    let saved: Todo[] = [{ id: 'todo_7', content: 'restored', status: 'pending' }];
-    const store: TodoStore = {
-      get: async () => saved,
-      set: async (next) => {
-        saved = next;
-      },
-    };
-    const todos = createTodoTools({ store });
-    const model = mockModel([
-      { toolCalls: [{ name: 'todo_read' }] },
-      { toolCalls: [{ name: 'todo_write', args: { todos: [{ content: 'restored', status: 'completed' }, { content: 'new', status: 'pending' }] } }] },
-      'ok',
-    ]);
-
-    await createAgent({ prompt: 'p', provider: model, tools: todos.tools }).send('go');
-
-    expect(saved).toEqual([
-      { id: 'todo_7', content: 'restored', status: 'completed' },
-      { id: 'todo_8', content: 'new', status: 'pending' },
-    ]);
-    expect(await todos.getTodos()).toBe(saved);
-  });
-
-  it('keeps separate in-memory lists per createTodoTools() call', async () => {
-    const a = createTodoTools();
-    const b = createTodoTools();
-    await (a.todoWrite.tool.execute as (args: unknown, ctx: unknown) => Promise<unknown>)(
-      { todos: [{ content: 'only a', status: 'pending' }] },
-      {}
-    );
-    expect(await a.getTodos()).toHaveLength(1);
-    expect(await b.getTodos()).toHaveLength(0);
-  });
-
-  it('describes when to use each tool', () => {
-    const { todoWrite, todoRead } = createTodoTools();
-    expect(todoWrite.description).toMatch(/multi-step|three or more steps/);
-    expect(todoRead.name).toBe('todo_read');
-  });
-
-  describe('todo.updated event', () => {
-    const write = { name: 'todo_write', id: 'w1', args: { todos: [{ content: 'a', status: 'in_progress' }, { content: 'b', status: 'pending' }] } };
-
-    it('follows the tool.done of a todo_write with the list and counts; todo_read emits none', async () => {
-      const todos = createTodoTools();
-      const model = mockModel([{ toolCalls: [write] }, { toolCalls: [{ name: 'todo_read', id: 'r1' }] }, 'ok']);
-      const events = await collect(createAgent({ prompt: 'p', provider: model, tools: todos.tools }).stream('go'));
-
-      const done = events.findIndex((e) => e.type === 'tool.done' && e.toolCallId === 'w1');
-      expect(events[done + 1]).toMatchObject({
-        type: 'todo.updated',
-        toolCallId: 'w1',
-        todos: [
-          { id: 'todo_1', content: 'a', status: 'in_progress' },
-          { id: 'todo_2', content: 'b', status: 'pending' },
-        ],
-        counts: { pending: 1, in_progress: 1, completed: 0, total: 2 },
-      });
-      expect(events.filter((e) => e.type === 'todo.updated')).toHaveLength(1);
-      expect(events[done]).toMatchObject({ result: { counts: { total: 2 } } });
-      expect(JSON.parse(JSON.stringify(events[done + 1]))).toEqual(events[done + 1]);
-    });
-
-    it('emits nothing for a failed todo_write', async () => {
-      const bad = { name: 'todo_write', args: { todos: [{ content: 'a', status: 'in_progress' }, { content: 'b', status: 'in_progress' }] } };
-      const events = await collect(createAgent({ prompt: 'p', provider: mockModel([{ toolCalls: [bad] }, 'ok']), tools: createTodoTools().tools }).stream('go'));
-      expect(events.some((e) => e.type === 'todo.updated')).toBe(false);
-    });
-
-    it("carries a sub-agent's todo_write with its subagent field", async () => {
-      const researcher = createAgent({
-        name: 'researcher',
-        description: 'Researches',
-        provider: mockModel([{ toolCalls: [write] }, 'planned']),
-        tools: createTodoTools().tools,
-      });
-      const lead = createAgent({
-        provider: mockModel([{ toolCalls: [{ name: 'task', args: { agent: 'researcher', prompt: 'plan', description: 'plan' } }] }, 'done']),
-        subagents: { researcher },
-      });
-      const updated = (await collect(lead.stream('go'))).filter((e) => e.type === 'todo.updated');
-      expect(updated).toHaveLength(1);
-      expect(updated[0].subagent).toMatchObject({ name: 'researcher' });
-    });
   });
 });

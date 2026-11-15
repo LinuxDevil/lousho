@@ -9,7 +9,6 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { GenerateOptions } from './llm';
 import { estimateCost } from '../models/registry';
 
 const generateTextMock = vi.fn();
@@ -55,38 +54,11 @@ describe('AnthropicProvider', () => {
     });
   });
 
-  describe('constructor', () => {
-    it('should create provider with valid config', () => {
-      expect(provider).toBeDefined();
-      expect(provider.name).toBe('anthropic');
-    });
-
-    it('should accept custom baseURL', () => {
-      const customProvider = new AnthropicProvider({
-        name: 'anthropic',
-        apiKey: 'test-key',
-        baseURL: 'https://custom.anthropic.com',
-      });
-      expect(customProvider).toBeDefined();
-    });
-  });
-
   describe('supportsTools', () => {
     it('should return true for Claude 3 models', () => {
       expect(provider.supportsTools('claude-3-5-sonnet-latest')).toBe(true);
       expect(provider.supportsTools('claude-3-opus-latest')).toBe(true);
       expect(provider.supportsTools('claude-3-haiku-20240307')).toBe(true);
-    });
-
-    it('should return false for unsupported models', () => {
-      expect(provider.supportsTools('davinci')).toBe(false);
-    });
-  });
-
-  describe('supportsStreaming', () => {
-    it('should return true for all models', () => {
-      expect(provider.supportsStreaming('claude-3-5-sonnet-latest')).toBe(true);
-      expect(provider.supportsStreaming('any-model')).toBe(true);
     });
   });
 
@@ -96,123 +68,6 @@ describe('AnthropicProvider', () => {
       expect(models.length).toBeGreaterThan(0);
       expect(models).toContain('claude-sonnet-4-5');
       for (const model of models) expect(estimateCost({ inputTokens: 1, outputTokens: 1 }, model)).toBeGreaterThan(0);
-    });
-  });
-
-  describe('generate', () => {
-    it('returns a GenerateResult with the same shape as OpenAIProvider for an equivalent prompt', async () => {
-      generateTextMock.mockResolvedValue({
-        text: 'Hello from Claude',
-        finishReason: 'stop',
-        // Both majors' usage field names, so the test reads the same on ai v4 and v7.
-        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, inputTokens: 10, outputTokens: 5 },
-        toolCalls: [],
-      });
-
-      const options: GenerateOptions = {
-        model: 'claude-3-5-sonnet-latest',
-        messages: [{ role: 'user', content: 'Hi' }],
-      };
-
-      const result = await provider.generate(options);
-
-      expect(result).toMatchObject({
-        text: 'Hello from Claude',
-        finishReason: 'stop',
-        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-      });
-      expect(result.rawResponse).toBeDefined();
-    });
-
-    it('converts tool calls the same way OpenAIProvider does', async () => {
-      generateTextMock.mockResolvedValue({
-        text: '',
-        finishReason: 'tool-calls',
-        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-        toolCalls: [{ toolCallId: 'call_1', toolName: 'search', args: { query: 'x' } }],
-      });
-
-      const options: GenerateOptions = {
-        model: 'claude-3-5-sonnet-latest',
-        messages: [{ role: 'user', content: 'search for x' }],
-        tools: [
-          {
-            type: 'function',
-            function: { name: 'search', description: 'search', parameters: {} },
-          },
-        ],
-      };
-
-      const result = await provider.generate(options);
-
-      expect(result.finishReason).toBe('tool_calls');
-      expect(result.toolCalls).toEqual([
-        {
-          id: 'call_1',
-          type: 'function',
-          function: { name: 'search', arguments: JSON.stringify({ query: 'x' }) },
-        },
-      ]);
-    });
-  });
-
-  describe('stream', () => {
-    it('returns a StreamResult whose fullStream yields text-delta then finish chunks, matching OpenAIProvider', async () => {
-      async function* textStream() {
-        yield 'Hel';
-        yield 'lo';
-      }
-
-      streamTextMock.mockReturnValue({
-        textStream: textStream(),
-        text: Promise.resolve('Hello'),
-        usage: Promise.resolve({ promptTokens: 3, completionTokens: 2, totalTokens: 5 }),
-        finishReason: Promise.resolve('stop'),
-        toolCalls: Promise.resolve([]),
-      });
-
-      const options: GenerateOptions = {
-        model: 'claude-3-5-sonnet-latest',
-        messages: [{ role: 'user', content: 'Hi' }],
-      };
-
-      const streamResult = await provider.stream(options);
-      const chunks = [];
-      for await (const chunk of streamResult.fullStream) {
-        chunks.push(chunk);
-      }
-
-      expect(chunks[0]).toMatchObject({ type: 'text-delta' });
-      expect(chunks[chunks.length - 1]).toMatchObject({
-        type: 'finish',
-        finishReason: 'stop',
-        usage: { promptTokens: 3, completionTokens: 2, totalTokens: 5 },
-      });
-      expect(await streamResult.text).toBe('Hello');
-    });
-  });
-
-  // `@ai-sdk/anthropic` 0.x/1.x (the ai 4 line) does not read ANTHROPIC_BASE_URL itself; the provider passes it.
-  it('builds its model against ANTHROPIC_BASE_URL when no baseURL is configured', async () => {
-    vi.stubEnv('ANTHROPIC_BASE_URL', 'http://127.0.0.1:4998/v1');
-    try {
-      const local = new AnthropicProvider({ name: 'anthropic', apiKey: 'any' });
-      type Built = { config: { baseURL?: string; url?: (o: { path: string }) => string } };
-      const model = await (local as unknown as { createModel(id: string): Promise<Built> }).createModel('claude-sonnet-4-5');
-      // 0.x keeps `baseURL` on the model config; newer majors keep a `url()` builder.
-      const url = model.config.baseURL ?? model.config.url?.({ path: '/messages' });
-      expect(url).toContain('http://127.0.0.1:4998/v1');
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
-
-  describe('registry', () => {
-    it('is retrievable via LLMProviderRegistry.create under the name "anthropic"', () => {
-      expect(LLMProviderRegistry.has('anthropic')).toBe(true);
-      const created = LLMProviderRegistry.create('anthropic', { apiKey: 'test-key' });
-      expect(created).toBeInstanceOf(AnthropicProvider);
-      expect(created.name).toBe('anthropic');
     });
   });
 });

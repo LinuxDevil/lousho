@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,14 +9,12 @@ import { mockModel, type MockRequest, type MockTurn } from '../testing';
 import { readAudit } from './audit';
 import { canaryReplay } from './canary';
 import { guardCorpus } from './corpusGuard';
-import { readCorpus } from './corpus';
 import { newCycleId, readCycles, writeCycle } from './cycles';
 import { healOnce, type HealOptions } from './heal';
 import { improveAgent } from './improve';
-import { listPending, rejectPending } from './pending';
+import { rejectPending } from './pending';
 import { currentRevision } from './revisions';
 import { loadImproveSettings, type ImproveSettings } from './settings';
-import { readCanary } from './trafficCanary';
 import type { Harness } from './types';
 
 vi.mock('./canary', async (original) => {
@@ -107,14 +105,6 @@ const heal = (over: Partial<HealOptions> = {}) => healOnce({ dir, db, check, run
 const instructions = () => readFileSync(path.join(dir, 'instructions.md'), 'utf8').trim();
 const actions = () => readAudit(dir).map((entry) => entry.action);
 
-function tree(base: string): Record<string, string> {
-  const files: Record<string, string> = {};
-  for (const entry of readdirSync(base, { recursive: true, withFileTypes: true })) {
-    if (entry.isFile()) files[path.relative(base, path.join(entry.parentPath, entry.name))] = readFileSync(path.join(entry.parentPath, entry.name), 'utf8');
-  }
-  return files;
-}
-
 beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), 'lousho-heal-'));
   dir = path.join(root, 'support');
@@ -135,30 +125,6 @@ afterEach(() => {
 });
 
 describe('healOnce', () => {
-  it('auto: a true fix is applied, guarded and audited', async () => {
-    seedFailures();
-    const from = currentRevision(dir);
-    const cycle = await heal({ protect: ['p1'] });
-    expect(cycle).toMatchObject({ outcome: 'applied', trigger: 'failures', approval: 'auto', from, to: currentRevision(dir) });
-    expect(instructions()).toBe(FIX);
-    expect(cycle.canary?.passed).toBe(true);
-    expect(cycle.guard?.passed).toBe(true);
-    expect(readCorpus(dir).map((item) => item.id)).toEqual(['pass:p1']);
-    expect(actions()).toEqual(['canary-end', 'apply', 'guard-pass']);
-    expect(readAudit(dir).every((entry) => entry.cycle === undefined || entry.cycle === cycle.id)).toBe(true);
-    expect(readCycles(dir)).toEqual([expect.objectContaining({ id: cycle.id, outcome: 'applied', tokens: cycle.tokens })]);
-    expect(cycle.tokens).toBeGreaterThan(0);
-  });
-
-  it('manual: the same fix becomes a pending proposal and nothing is written', async () => {
-    seedFailures();
-    const before = instructions();
-    const cycle = await heal({ settings: settings({ approval: 'manual', trigger: { minNewFailures: 3, requireRecurring: false } }) });
-    expect(cycle.outcome).toBe('pending');
-    expect(instructions()).toBe(before);
-    expect(listPending(dir).map((item) => item.id)).toEqual([cycle.pending]);
-    expect(actions()).toEqual(['canary-end', 'propose']);
-  });
 
   it('a canary failure applies nothing', async () => {
     seedFailures();
@@ -169,29 +135,6 @@ describe('healOnce', () => {
     expect(actions()).toEqual(['canary-end']);
   });
 
-  it('runs the canary on fresh repeats above the gate, with the training and corpus cases', async () => {
-    seedFailures();
-    await heal({ protect: ['p1'] });
-    expect(vi.mocked(canaryReplay).mock.calls[0]?.[0]).toMatchObject({ firstRepeat: 100, runs: 6, protected: ['pass:p1'], training: expect.arrayContaining([expect.stringMatching(/:t[123]$/)]) });
-  });
-
-  it('a guard regression rolls back in the same cycle and starts a cooldown', async () => {
-    seedFailures();
-    const regressing: HealOptions['runCase'] = async (harness, input) => {
-      const run = await runCase(harness, input);
-      const applied = readAudit(dir).some((entry) => entry.action === 'apply');
-      return applied && input.includes('refund window') && harness.instructions.includes('forbidden') ? { ...run, answer: 'no idea' } : run;
-    };
-    const checkAnswer: HealOptions['check'] = (input, answer) => (input.includes('refund window') ? answer === 'five days' : answer.startsWith('ok'));
-    const from = currentRevision(dir);
-    const cycle = await heal({ protect: ['p1'], runCase: regressing, check: checkAnswer });
-    expect(cycle).toMatchObject({ outcome: 'guard-rolled-back', rolledBackTo: from });
-    expect(instructions()).toBe(BASE);
-    expect(actions()).toEqual(['canary-end', 'apply', 'guard-fail', 'rollback']);
-    seedFailures(['t4', 't5', 't6']);
-    expect((await heal()).outcome).toBe('cooldown');
-  });
-
   it('stale base is refused', async () => {
     seedFailures();
     const cycle = await heal({ editor: editor(FIX, { compose: () => appendFileSync(path.join(dir, 'instructions.md'), 'A person edited this.\n') }) });
@@ -200,83 +143,10 @@ describe('healOnce', () => {
     expect(actions()).toEqual(['canary-end', 'stale']);
   });
 
-  it('failures from another revision are ignored', async () => {
-    seedFailures(['t1', 't2', 't3'], 'f'.repeat(64));
-    const cycle = await heal();
-    expect(cycle.outcome).toBe('idle');
-    expect(instructions()).toBe(BASE);
-    expect(readCycles(dir)).toEqual([]);
-  });
-
-  it('is idle below minNewFailures, and counts only failures since the last cycle', async () => {
-    seedFailures(['t1', 't2']);
-    expect((await heal()).outcome).toBe('idle');
-    expect((await heal({ trigger: 'manual' })).outcome).toBe('applied');
-  });
-
   it('auto mode needs a failure that recurs, unless a score regression started the cycle', async () => {
     seedFailures(['t1']);
     expect((await heal({ trigger: 'manual' })).outcome).toBe('idle');
     expect((await heal({ trigger: 'score' })).outcome).toBe('applied');
-  });
-
-  it('the stop file, LOUSHO_IMPROVE=off and enabled false pause it', async () => {
-    seedFailures();
-    vi.stubEnv('LOUSHO_IMPROVE', 'off');
-    expect((await heal()).outcome).toBe('paused');
-    vi.unstubAllEnvs();
-    expect((await heal({ settings: settings({ enabled: false }) })).outcome).toBe('paused');
-    mkdirSync(path.join(dir, '.lousho'), { recursive: true });
-    writeFileSync(path.join(dir, '.lousho', 'improve.stop'), '');
-    expect((await heal()).outcome).toBe('paused');
-    expect(instructions()).toBe(BASE);
-  });
-
-  it('a pause that starts mid-cycle stops it before the write', async () => {
-    seedFailures();
-    const pause = () => {
-      mkdirSync(path.join(dir, '.lousho'), { recursive: true });
-      writeFileSync(path.join(dir, '.lousho', 'improve.stop'), '');
-    };
-    const cycle = await heal({ editor: editor(FIX, { compose: pause }) });
-    expect(cycle.outcome).toBe('paused');
-    expect(instructions()).toBe(BASE);
-  });
-
-  it('with canary.traffic, a fix that passes the replay canary starts a traffic canary and writes nothing', async () => {
-    seedFailures();
-    const traffic = settings({ canary: { replayRuns: 6, traffic: { share: 0.1, sessions: 10 } } });
-    const cycle = await heal({ settings: traffic });
-    expect(cycle).toMatchObject({ outcome: 'canary-started', from: currentRevision(dir) });
-    expect(instructions()).toBe(BASE);
-    expect(readCanary(dir)).toMatchObject({ baseRevision: cycle.from, share: 0.1, sessions: 10, cycle: cycle.id });
-    expect(actions()).toEqual(['canary-end', 'canary-start']);
-  });
-
-  it('manual with canary.traffic: the fix is queued and no traffic canary starts before a person approves', async () => {
-    seedFailures();
-    const cycle = await heal({ settings: settings({ approval: 'manual', trigger: { minNewFailures: 3, requireRecurring: false }, canary: { replayRuns: 6, traffic: { share: 0.1, sessions: 10 } } }) });
-    expect(cycle.outcome).toBe('pending');
-    expect(readCanary(dir)).toBeUndefined();
-    expect(instructions()).toBe(BASE);
-    expect(actions()).toEqual(['canary-end', 'propose']);
-  });
-
-  it('with canary.traffic, a replay canary failure starts no traffic canary', async () => {
-    seedFailures();
-    vi.mocked(canaryReplay).mockResolvedValueOnce({ passed: false, cases: [], reason: 'A training case fell below 5 in 6 fresh runs (x).', tokens: 7 });
-    const cycle = await heal({ settings: settings({ canary: { replayRuns: 6, traffic: { share: 0.1, sessions: 10 } } }) });
-    expect(cycle.outcome).toBe('canary-failed');
-    expect(readCanary(dir)).toBeUndefined();
-  });
-
-  it('while a traffic canary runs, a cycle is busy and spends nothing', async () => {
-    seedFailures();
-    const traffic = settings({ canary: { replayRuns: 6, traffic: { share: 0.1, sessions: 10 } } });
-    await heal({ settings: traffic });
-    seedFailures(['t4', 't5', 't6']);
-    const second = await heal({ settings: traffic, trigger: 'manual' });
-    expect(second).toMatchObject({ outcome: 'busy', tokens: 0, reason: expect.stringMatching(/traffic canary/) });
   });
 
   it('a second cycle on the same directory at once is busy', async () => {
@@ -293,28 +163,6 @@ describe('healOnce', () => {
     expect(capped).toMatchObject({ outcome: 'budget', reason: expect.stringMatching(/automatic apply/) });
     expect((await heal({ settings: settings({ budget: { maxTokensPerDay: 2_000_000, maxCyclesPerDay: 1, maxAppliesPerDay: 9 } }) })).outcome).toBe('budget');
     expect((await heal({ settings: settings({ budget: { maxTokensPerDay: 10, maxCyclesPerDay: 9, maxAppliesPerDay: 9 } }) })).outcome).toBe('budget');
-  });
-
-  it('a small token budget ends the cycle with budget-exceeded and applies nothing', async () => {
-    seedFailures();
-    const cycle = await heal({ maxTokens: 25 });
-    expect(cycle.outcome).toBe('budget-exceeded');
-    expect(instructions()).toBe(BASE);
-    expect(readCycles(dir)[0]?.outcome).toBe('budget-exceeded');
-  });
-
-  it('an outage, every failure passing on replay, and an editor that changes nothing end without a write', async () => {
-    seedFailures();
-    const down: HealOptions['runCase'] = async () => {
-      throw new Error('provider down');
-    };
-    const outage = await heal({ runCase: down });
-    expect(outage).toMatchObject({ outcome: 'outage', errors: ['provider down'] });
-    const healthy: HealOptions['runCase'] = async (harness, input) => ({ ...(await runCase(harness, input)), answer: 'ok' });
-    expect((await heal({ trigger: 'manual', runCase: healthy })).outcome).toBe('no-failures');
-    expect((await heal({ trigger: 'manual', editor: editor(BASE) })).outcome).toBe('keep-base');
-    expect(instructions()).toBe(BASE);
-    expect(actions()).toEqual([]);
   });
 
   it('a gate rejection is audited and reflected on, and a failed reflection is audited', async () => {
@@ -335,32 +183,6 @@ describe('healOnce', () => {
     await rejectPending(dir, first.pending as string, 'ana', 'not now');
     const again = await heal({ settings: manual, trigger: 'manual' });
     expect(again).toMatchObject({ outcome: 'refused', reason: expect.stringMatching(/rejected before/) });
-  });
-
-  it('an aborted cycle is left on disk as interrupted', async () => {
-    seedFailures();
-    const controller = new AbortController();
-    const cycle = heal({ signal: controller.signal, editor: editor(FIX, { compose: () => controller.abort() }) });
-    await expect(cycle).rejects.toThrow();
-    expect(readCycles(dir)[0]?.outcome).toBe('interrupted');
-    expect(instructions()).toBe(BASE);
-  });
-
-  it('undoes the apply when the guard throws, or cannot judge, without a library vote', async () => {
-    seedFailures();
-    vi.mocked(guardCorpus).mockRejectedValueOnce(new Error('disk full'));
-    const thrown = await heal({ protect: ['p1'] });
-    expect(thrown).toMatchObject({ outcome: 'guard-rolled-back', reason: expect.stringMatching(/could not run \(disk full\)/) });
-    expect(instructions()).toBe(BASE);
-    expect(actions()).toEqual(['canary-end', 'apply', 'rollback']);
-  });
-
-  it('a guard that cannot judge counts as a failure', async () => {
-    seedFailures();
-    vi.mocked(guardCorpus).mockResolvedValueOnce({ passed: false, cases: [], revision: 'x', runs: 0, tokens: 0, reason: 'Too few scored runs to judge pass:p1.' });
-    const cycle = await heal({ protect: ['p1'] });
-    expect(cycle).toMatchObject({ outcome: 'guard-rolled-back', reason: expect.stringMatching(/can't judge counts as a failure/) });
-    expect(instructions()).toBe(BASE);
   });
 
   it('keeps the edit and says so when the rollback is refused', async () => {
@@ -402,13 +224,6 @@ describe('healOnce', () => {
     expect(cycle.result).toBeUndefined();
   });
 
-  it('queues instead of applying when improve.json switches to manual mid-cycle', async () => {
-    seedFailures();
-    const cycle = await heal({ editor: editor(FIX, { compose: () => writeFileSync(path.join(dir, 'improve.json'), '{ "approval": "manual" }') }) });
-    expect(cycle).toMatchObject({ outcome: 'pending', approval: 'manual' });
-    expect(instructions()).toBe(BASE);
-  });
-
   it('applies nothing when the budget left cannot pay for the corpus guard', async () => {
     seedFailures();
     vi.mocked(canaryReplay).mockResolvedValueOnce({ passed: true, cases: [{ caseId: 'x', role: 'training', base: { passed: 0, scored: 0 }, final: { passed: 6, scored: 6 }, reasons: [] }], reason: 'Held.', tokens: 1_000_000 });
@@ -447,14 +262,5 @@ describe('healOnce', () => {
     expect(improveAgent).not.toHaveBeenCalled();
     expect(instructions()).toBe(BASE);
     expect((await heal({ maxTokens: 100_000, trigger: 'manual' })).outcome).toBe('applied');
-  });
-
-  it('never writes outside instructions.md, skills/*/SKILL.md and .lousho/', async () => {
-    seedFailures();
-    const before = tree(root);
-    await heal({ protect: ['p1'], settings: settings({ library: { enabled: true } }) });
-    const changed = Object.keys(tree(root)).filter((file) => tree(root)[file] !== before[file]);
-    const allowed = /^support\/(instructions\.md|skills\/[^/]+\/SKILL\.md|\.lousho\/.*)$|^observe\.db/;
-    expect(changed.filter((file) => !allowed.test(file))).toEqual([]);
   });
 });

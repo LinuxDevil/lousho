@@ -48,13 +48,14 @@ import type { ProviderKeyStatus, SecretStatus } from '../shared/wireTypes';
 import type { StudioPaths } from './workspace/studioPaths';
 
 /** Providers this app manages stored keys for - matches `src/providers/` real (non-mock) provider types that take a plain API key (not `ollama`, which uses a base URL instead - see `PROVIDER_ENV_TABLE` in `src/providers/resolveProvider.ts`). */
-const SECRET_PROVIDERS = ['openai', 'anthropic'] as const;
+const SECRET_PROVIDERS = ['openai', 'anthropic', 'openrouter'] as const;
 export type SecretProvider = (typeof SECRET_PROVIDERS)[number];
 
 /** The env var each managed provider falls back to when no key is stored (buildAgent.ts resolves runs with it; `list()` reports whether it is set). */
 export const PROVIDER_KEY_ENV: Record<SecretProvider, string> = {
   openai: 'OPENAI_API_KEY',
   anthropic: 'ANTHROPIC_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY',
 };
 
 export function isSecretProvider(value: string): value is SecretProvider {

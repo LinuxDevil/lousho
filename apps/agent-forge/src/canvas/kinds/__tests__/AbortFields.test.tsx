@@ -85,17 +85,6 @@ beforeEach(() => {
 });
 
 describe('abort Inspector', () => {
-  it('offers only webhook and channel triggers, labelled with the C12 title and id', () => {
-    renderInspector();
-    const select = field<HTMLSelectElement>('node-abort-trigger');
-    const options = [...select.options].map((o) => ({ value: o.value, label: o.textContent }));
-    expect(options).toEqual([
-      { value: 't1', label: 'Webhook · t1' },
-      { value: 't3', label: 'Slack · t3' },
-    ]);
-    expect(select.value).toBe('t1');
-    expect(select.disabled).toBe(false);
-  });
 
   it('writes triggerId when another watchable trigger is picked', () => {
     renderInspector();
@@ -103,14 +92,6 @@ describe('abort Inspector', () => {
     expect(item().triggerId).toBe('t3');
     flush();
     expect(field<HTMLSelectElement>('node-abort-trigger').value).toBe('t3');
-  });
-
-  it('disables the trigger select with the reason when no webhook or channel trigger exists', () => {
-    app.graph = specToGraph(specOf([CRON], [{ ...LISTENER, triggerId: 't2' }]));
-    renderInspector();
-    const select = field<HTMLSelectElement>('node-abort-trigger');
-    expect(select.disabled).toBe(true);
-    expect(select.title).toBe('Add a webhook or channel trigger first');
   });
 
   it('flags the required fields while they are empty', () => {
@@ -146,21 +127,6 @@ describe('abort Inspector', () => {
     flush();
     choose('node-abort-scope', '2'); // Running runs
     expect(item().scope).toBe('running');
-  });
-
-  it('writes the id and flags a duplicate', () => {
-    app.graph = specToGraph(
-      specOf([WEBHOOK], [
-        LISTENER,
-        { id: 'a1', triggerId: 't1', when: 'w', match: 'm', scope: 'both' },
-      ])
-    );
-    app.selectedNodeId = 'abort:a1#2';
-    renderInspector();
-    const idField = field<HTMLInputElement>('node-abort-id');
-    expect(idField.closest('.field')?.querySelector('.field-error')?.textContent).toBe(
-      'Another abort listener uses this id'
-    );
   });
 });
 

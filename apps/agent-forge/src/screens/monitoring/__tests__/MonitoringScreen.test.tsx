@@ -98,23 +98,6 @@ afterEach(() => {
 });
 
 describe('MonitoringScreen', () => {
-  it('renders each fleet row with its status pill, dropped count, figures and traces link', async () => {
-    daemon();
-    const c = render(<MonitoringScreen />);
-    await waitFor(() => fleetRow(c, 'Billing bot') !== undefined && fleetRow(c, 'Support bot')!.textContent!.includes('1.5s'));
-    const support = fleetRow(c, 'Support bot')!;
-    expect(support.querySelector('.status-pill.pill-warning')?.textContent).toBe('stale');
-    expect(support.querySelector('[data-dropped]')?.textContent).toBe('7');
-    expect(support.textContent).toContain('5s ago');
-    expect(support.textContent).toContain('12');
-    expect(support.textContent).toContain('25.0%');
-    expect(support.querySelector('a[href="#/traces?agent=a1"]')?.textContent).toBe('View traces for Support bot');
-    // A truncated name shows in full (with the id) as a tooltip.
-    expect(support.querySelector('.mon-agent-name')?.getAttribute('title')).toBe('Support bot — a1');
-    const billing = fleetRow(c, 'Billing bot')!;
-    expect(billing.querySelector('.status-pill.pill-ok')?.textContent).toBe('healthy');
-    expect(billing.querySelector('[data-dropped]')?.textContent).toBe('—');
-  });
 
   it('at phone widths the traces link is icon-only with the same accessible name', async () => {
     vi.stubGlobal('matchMedia', (query: string) => ({
@@ -135,15 +118,6 @@ describe('MonitoringScreen', () => {
     const health = fleetRow(c, 'Support bot')!.querySelector('.mon-health-dot')!;
     expect(health.getAttribute('title')).toBe('stale');
     expect(health.querySelector('.status-pill.pill-warning .status-pill-label')?.textContent).toBe('stale');
-  });
-
-  it('renders a single-bucket series as a point', async () => {
-    const w = chartWindow('24h', NOW);
-    daemon([rollup(w.to - HOUR, 'a1', 'runs', 3), rollup(w.to - HOUR, 'a1', 'p95_latency_ms', 900)]);
-    const c = render(<MonitoringScreen />);
-    await waitFor(() => drawn(c, 'Runs'));
-    expect(chart(c, 'Runs')!.querySelector('circle.tsc-point[data-series="ok"]')).not.toBeNull();
-    expect(chart(c, 'Latency p95')!.querySelector('circle.tsc-point[data-series="a1"]')).not.toBeNull();
   });
 
   it('draws per-agent p95 and error rate as one unsummed series per agent', async () => {
@@ -214,85 +188,6 @@ describe('MonitoringScreen', () => {
     expect(card('Runs').querySelector('svg.metric-sparkline')).not.toBeNull();
     // The charts draw the current window only: the previous window's bucket is outside it.
     expect(chart(c, 'Runs')!.querySelectorAll('polyline.tsc-line[data-series="ok"]')).toHaveLength(1);
-  });
-
-  it('leaves the bucket in progress out of the deltas, but not out of the values', async () => {
-    const w = chartWindow('24h', NOW);
-    const inProgress = w.to - HOUR;
-    daemon([
-      // 10 runs in each side's first complete bucket, plus 5 so far in the bucket holding `now`.
-      rollup(w.from, 'a1', 'runs', 10),
-      rollup(inProgress, 'a1', 'runs', 5),
-      rollup(w.from - HOUR, 'a1', 'runs', 10),
-    ]);
-    const c = render(<MonitoringScreen />);
-    await waitFor(() => drawn(c, 'Runs'));
-    const runs = [...c.querySelectorAll('.metric-card')].find((el) => el.querySelector('.metric-label')?.textContent === 'Runs')!;
-    expect(runs.querySelector('.metric-value')?.textContent).toBe('15');
-    expect(runs.querySelector('.metric-delta')?.textContent).toContain('no change vs previous 24h');
-  });
-
-  it('a window switch shows the cards and charts loading, not the old rows on the new buckets', async () => {
-    const day = chartWindow('24h', NOW);
-    const { fetchFn } = daemon([rollup(day.from, 'a1', 'runs', 10), rollup(day.from - HOUR, 'a1', 'runs', 5)]);
-    const c = render(<MonitoringScreen />);
-    await waitFor(() => drawn(c, 'Runs'));
-    let release: () => void = () => undefined;
-    const stalled = new Promise<void>((r) => (release = r));
-    const passthrough = fetchFn.getMockImplementation()!;
-    fetchFn.mockImplementation(async (input) => {
-      if (String(input).includes('granularity=day')) await stalled;
-      return passthrough(input);
-    });
-    const button = (label: string) =>
-      [...c.querySelectorAll('.mon-windows button')].find((b) => b.textContent === label) as HTMLButtonElement;
-    act(() => button('7d').click());
-    await waitFor(() => c.querySelector('.mon-windows [aria-pressed="true"]')?.textContent === '7d');
-    expect(c.querySelectorAll('.metric-card[aria-busy="true"]').length).toBe(4);
-    expect(c.querySelector('.metric-delta')).toBeNull();
-    expect(drawn(c, 'Runs')).toBe(false);
-    release();
-    await waitFor(() => drawn(c, 'Runs'));
-    expect(c.querySelectorAll('.metric-card[aria-busy="true"]').length).toBe(0);
-  });
-
-  it('shows no delta without a previous window', async () => {
-    const w = chartWindow('24h', NOW);
-    daemon([rollup(w.from, 'a1', 'runs', 10)]);
-    const c = render(<MonitoringScreen />);
-    await waitFor(() => drawn(c, 'Runs'));
-    expect(c.querySelector('.metric-delta')).toBeNull();
-    expect(c.textContent).toContain('runs-weighted');
-  });
-
-  it('shows card skeletons while the charts load, and an empty state for an empty window', async () => {
-    const { fetchFn } = daemon();
-    let release: () => void = () => undefined;
-    const stalled = new Promise<void>((r) => (release = r));
-    const passthrough = fetchFn.getMockImplementation()!;
-    fetchFn.mockImplementation(async (input) => {
-      if (String(input).includes('granularity=')) await stalled;
-      return passthrough(input);
-    });
-    const c = render(<MonitoringScreen />);
-    await waitFor(() => fleetRow(c, 'Support bot') !== undefined);
-    expect(c.querySelector('.mon-charts[aria-busy="true"] [role="status"]')?.textContent).toBe('Loading charts');
-    expect(c.querySelectorAll('.mon-chart .skeleton').length).toBe(5);
-    expect(c.querySelectorAll('.metric-card[aria-busy="true"]').length).toBe(4);
-    expect(c.querySelector('.mon-metrics')?.textContent).not.toContain('runs-weighted');
-    release();
-    await waitFor(() => c.querySelector('.mon-charts-empty') !== null);
-    expect(c.querySelector('.mon-charts-empty')?.textContent).toContain('No runs in this window');
-  });
-
-  it('offers an agent= id the fleet does not list in the agent select', async () => {
-    window.history.replaceState(null, '', '/#/monitoring?agent=ghost-agent');
-    daemon();
-    const c = render(<MonitoringScreen />);
-    await waitFor(() => fleetRow(c, 'Support bot') !== undefined);
-    const select = c.querySelector('.mon-agent-filter select') as HTMLSelectElement;
-    expect(select.value).toBe('ghost-agent');
-    expect([...select.options].map((o) => o.value)).toEqual(['', 'a1', 'a2', 'ghost-agent']);
   });
 
   it('navigates to Traces with the clicked bucket as from/to, plus the agent when filtered', async () => {

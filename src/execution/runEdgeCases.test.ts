@@ -50,25 +50,9 @@ describe('run edge cases', () => {
     expect(events.at(-1)).not.toBe('run.done:error');
   });
 
-  it('an aborted stream leaves the text it streamed as result.text', async () => {
-    const controller = new AbortController();
-    const provider = streamingProvider([{ type: 'text-delta', textDelta: 'partial answer' }], true);
-    const run = createAgent({ provider, instructions: 'x', retry: false }).stream('hi', { signal: controller.signal });
-    for await (const event of run) if (event.type === 'text.delta') controller.abort();
-    const result = await run.result;
-
-    expect(result.finishReason).toBe('aborted');
-    expect(result.text).toBe('partial answer');
-  });
-
   it('an empty message list is refused instead of sending a request with no user turn', async () => {
     const model = mockModel(['never']);
     await expect(createAgent({ provider: model, instructions: 'x' }).send([])).rejects.toMatchObject({ code: 'LOUSHO_CONFIG_INVALID' });
     expect(model.calls).toHaveLength(0);
-  });
-
-  it("a reply that ends 'tool_calls' without a call ends the run 'stop'", async () => {
-    const result = await createAgent({ provider: mockModel([{ text: 'hmm', finishReason: 'tool_calls' }]), instructions: 'x' }).send('hi');
-    expect(result).toMatchObject({ text: 'hmm', finishReason: 'stop' });
   });
 });

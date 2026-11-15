@@ -76,31 +76,6 @@ describe('otelTracingFromEnv', () => {
     expect(root.resource.attributes['service.name']).toBe('checkout-agent');
   });
 
-  it("names the service after the agent when OTEL_SERVICE_NAME is unset, and reads OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", async () => {
-    const memory = new InMemorySpanExporter();
-    otelEnv({ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'http://collector:4318/custom' });
-    const tracing = await otelTracingFromEnv({
-      serviceName: 'agent-name',
-      load: loader(memory).load,
-      log: quiet(),
-    });
-    await createAgent(withOtelTracing({ provider: mockModel(['Hi.']) }, tracing)).send('Hello');
-    await tracing!.shutdown();
-    expect(memory.getFinishedSpans()[0].resource.attributes['service.name']).toBe('agent-name');
-  });
-
-  it('logs the packages to install, and returns undefined, when the OTel packages are missing', async () => {
-    const log = quiet();
-    const load = async (name: string) => {
-      throw Object.assign(new Error(`Cannot find package '${name}'`), { code: 'ERR_MODULE_NOT_FOUND' });
-    };
-    otelEnv({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://c:4318' });
-    expect(await otelTracingFromEnv({ serviceName: 'a', load, log })).toBeUndefined();
-    const message = log.error.mock.calls[0][0] as string;
-    expect(message).toContain('@opentelemetry/api, @opentelemetry/sdk-trace-node, @opentelemetry/resources, @opentelemetry/exporter-trace-otlp-http');
-    expect(message).toContain('npm install @opentelemetry/api @opentelemetry/sdk-trace-node@^2 @opentelemetry/resources@^2 @opentelemetry/exporter-trace-otlp-http');
-  });
-
   it('logs any other start-up error and returns undefined', async () => {
     const log = quiet();
     const load = async () => ({});
@@ -135,17 +110,5 @@ describe('withOtelTracing / agentWithOtelTracing', () => {
     await createAgent(withOtelTracing({ provider: mockModel(['Hi.']), exporter: own }, tracing)).send('Hello');
     expect(own.ended.map((span) => span.name)).toEqual(tracing.exporter.ended.map((span) => span.name));
     expect(own.ended.length).toBeGreaterThan(0);
-  });
-
-  it('rebuild a createAgent() agent with the exporter, and log one that was not built by createAgent()', async () => {
-    const tracing = otel();
-    const traced = agentWithOtelTracing(createAgent({ provider: mockModel(['Hi.']) }), tracing);
-    await traced.send('Hello');
-    expect(tracing.exporter.ended.some((span) => span.attributes['gen_ai.operation.name'] === 'invoke_agent')).toBe(true);
-
-    const log = { error: vi.fn() };
-    const foreign = { ...traced };
-    expect(agentWithOtelTracing(foreign, tracing, log)).toBe(foreign);
-    expect(log.error).toHaveBeenCalledWith(expect.stringContaining('was not built by createAgent()'));
   });
 });

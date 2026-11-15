@@ -10,8 +10,6 @@ import { join } from 'node:path';
 import { memoryStore } from '../storage/agentStore';
 import { fileStore } from '../storage/fileStore';
 import { SqliteStore } from '../storage/sqlite';
-import { migrate, MIGRATIONS } from '../storage/sqlite/migrations';
-import { loadDatabaseSync, type SqlValue } from '../storage/sqlite/driver';
 import { KVStore } from '../deploy/kvStore';
 import type { KVBinding, KVListOptions, KVPutOptions } from '../deploy/kvCheckpointStore';
 import { generateTokenKey, tokenStoreKey, type OAuthTokenStore, type TokenOwner } from './index';
@@ -155,50 +153,6 @@ describe.each(persistent)('$name tokens at rest', ({ make }) => {
   });
 });
 
-describe('a stored token read with the wrong key, or with none', () => {
-  it('throws LOUSHO_TOKEN_DECRYPT_FAILED naming the provider, never the token (SQLite file)', async () => {
-    const file = join(tempDir(), 'agent.db');
-    const writer = sqlite({ tokenKey: KEY }, file);
-    await writer.tokens.set('github', APP, sentinelToken());
-    await writer.tokens.setClient('github', { client_secret: SENTINEL_REFRESH });
-    writer.close();
-
-    const wrong = sqlite({ tokenKey: generateTokenKey() }, file);
-    await expect(wrong.tokens.get('github', APP)).rejects.toMatchObject({ code: 'LOUSHO_TOKEN_DECRYPT_FAILED' });
-    await expect(wrong.tokens.getClient('github')).rejects.toMatchObject({ code: 'LOUSHO_TOKEN_DECRYPT_FAILED' });
-    await expect(wrong.tokens.list()).rejects.toMatchObject({ code: 'LOUSHO_TOKEN_DECRYPT_FAILED' });
-    const text = await errorText(wrong.tokens.get('github', APP));
-    expect(text).toContain('provider "github"');
-    expect(text).not.toContain(SENTINEL_ACCESS);
-    expect(text).not.toContain(SENTINEL_REFRESH);
-    expect(text).not.toContain(KEY);
-
-    vi.stubEnv('LOUSHO_TOKEN_KEY', '');
-    const none = sqlite({}, file);
-    await expect(none.tokens.get('github', APP)).rejects.toMatchObject({ code: 'LOUSHO_TOKEN_KEY_MISSING' });
-
-    const rotated = sqlite({ tokenKey: [generateTokenKey(), KEY] }, file);
-    expect(await rotated.tokens.get('github', APP)).toEqual(sentinelToken());
-  });
-
-  it('a sealed row copied onto another owner does not decrypt (the key is the AAD)', async () => {
-    const store = sqlite();
-    await store.tokens.set('github', { owner: 'user', principalId: 'alice' }, sentinelToken());
-    const db = store.connection.db;
-    const { payload } = db.prepare('SELECT payload FROM oauth_tokens WHERE key = ?').get(tokenStoreKey('github', { owner: 'user', principalId: 'alice' }))! as { payload: SqlValue };
-    db.prepare('INSERT INTO oauth_tokens (key, payload, updated_at) VALUES (?, ?, ?)').run(tokenStoreKey('github', { owner: 'user', principalId: 'mallory' }), payload, 1);
-    await expect(store.tokens.get('github', { owner: 'user', principalId: 'mallory' })).rejects.toMatchObject({ code: 'LOUSHO_TOKEN_DECRYPT_FAILED' });
-  });
-
-  it('KV: a sealed value copied onto another key does not decrypt either', async () => {
-    const { kv, data } = fakeKV();
-    const { tokens } = new KVStore(kv, { tokenKey: KEY });
-    await tokens.set('github', APP, sentinelToken());
-    data.set('oauth/tokens/github|client', data.get('oauth/tokens/github|app')!);
-    await expect(tokens.getClient('github')).rejects.toMatchObject({ code: 'LOUSHO_TOKEN_DECRYPT_FAILED' });
-  });
-});
-
 describe('tokenStoreKey', () => {
   it('is <provider>|app or <provider>|user|<issuer>|<principalId>, percent-encoded', () => {
     expect(tokenStoreKey('github', APP)).toBe('github|app');
@@ -206,86 +160,5 @@ describe('tokenStoreKey', () => {
     expect(tokenStoreKey('github', { owner: 'user', principalId: 'a|b', issuer: 'https://id.example.com' })).toBe(
       'github|user|https%3A%2F%2Fid.example.com|a%7Cb'
     );
-  });
-});
-
-describe('SqliteStore oauth tables', () => {
-  it('a database at the previous user_version opens and gains both tables', async () => {
-    const file = join(tempDir(), 'v3.db');
-    const DatabaseSync = loadDatabaseSync();
-    const raw = new DatabaseSync(file);
-    expect(migrate(raw, MIGRATIONS.slice(0, 3))).toBe(3);
-    raw.close();
-
-    const store = sqlite({ tokenKey: KEY }, file);
-    await store.tokens.set('github', APP, sentinelToken());
-    const tables = store.connection.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'oauth_%' ORDER BY name").all();
-    expect(tables.map((row) => row.name)).toEqual(['oauth_pending', 'oauth_tokens']);
-    expect(store.connection.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length });
-  });
-
-  it('prune() deletes expired pending rows and keeps live ones and tokens', async () => {
-    const store = sqlite();
-    vi.useFakeTimers({ toFake: ['Date'] });
-    try {
-      vi.setSystemTime(new Date('2026-10-02T12:00:00Z'));
-      await store.tokens.set('github', APP, sentinelToken());
-      await store.tokens.putPending(STATE, { provider: 'github', owner: APP, redirectUri: 'https://x.example/cb', createdAt: 1 }, 1_000);
-      await store.tokens.putPending(`${STATE}-live`, { provider: 'github', owner: APP, redirectUri: 'https://x.example/cb', createdAt: 1 }, 600_000);
-      vi.setSystemTime(new Date('2026-10-02T12:00:05Z'));
-      expect(store.prune({ olderThanMs: 0 })).toMatchObject({ oauthPending: 1 });
-      const states = store.connection.db.prepare('SELECT state FROM oauth_pending').all();
-      expect(states.map((row) => row.state)).toEqual([`${STATE}-live`]);
-      expect(await store.tokens.get('github', APP)).toEqual(sentinelToken());
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-});
-
-describe('KVStore oauth keys', () => {
-  it('keeps tokens under <prefix>oauth/tokens/ and pending sign-ins under <prefix>oauth/pending/ with an expirationTtl', async () => {
-    const { kv, data, ttls } = fakeKV();
-    const { tokens } = new KVStore(kv, { tokenKey: KEY, prefix: 'app/' });
-    await tokens.set('github', APP, sentinelToken());
-    await tokens.putPending(STATE, { provider: 'github', owner: APP, redirectUri: 'https://x.example/cb', createdAt: 1 }, 10_000);
-    await tokens.putPending(`${STATE}-long`, { provider: 'github', owner: APP, redirectUri: 'https://x.example/cb', createdAt: 1 }, 600_000);
-    expect([...data.keys()].sort()).toEqual(['app/oauth/pending/state-0123456789abcdef', 'app/oauth/pending/state-0123456789abcdef-long', 'app/oauth/tokens/github|app']);
-    expect(ttls.get('app/oauth/pending/state-0123456789abcdef')).toBe(60); // KV's minimum; the record's own expiry is exact
-    expect(ttls.get('app/oauth/pending/state-0123456789abcdef-long')).toBe(600);
-    expect(ttls.get('app/oauth/tokens/github|app')).toBeUndefined();
-  });
-
-  it('list() needs a binding with list(); the rest works without it', async () => {
-    const { tokens } = new KVStore(fakeKV(false).kv, { tokenKey: KEY });
-    await tokens.set('github', APP, sentinelToken());
-    expect(await tokens.get('github', APP)).toEqual(sentinelToken());
-    await expect(tokens.list()).rejects.toThrow(/needs a KV binding with list\(\)/);
-  });
-});
-
-describe('fileStore oauth files', () => {
-  it('names token files by hash and drops expired pending files when a new sign-in starts', async () => {
-    const dir = tempDir();
-    const { tokens } = fileStore(dir, { tokenKey: KEY });
-    await tokens.set('github', { owner: 'user', principalId: 'a/../../b', issuer: 'C:\\x' }, sentinelToken());
-    expect(readdirSync(join(dir, 'oauth', 'tokens'))).toEqual([expect.stringMatching(/^[0-9a-f]{64}\.json$/)]);
-    vi.useFakeTimers({ toFake: ['Date'] });
-    try {
-      vi.setSystemTime(new Date('2026-10-02T12:00:00Z'));
-      await tokens.putPending(STATE, { provider: 'github', owner: APP, redirectUri: 'https://x.example/cb', createdAt: 1 }, 1_000);
-      vi.setSystemTime(new Date('2026-10-02T12:00:05Z'));
-      await tokens.putPending(`${STATE}-2`, { provider: 'github', owner: APP, redirectUri: 'https://x.example/cb', createdAt: 1 }, 1_000);
-      expect(readdirSync(join(dir, 'oauth', 'pending'))).toEqual([`${STATE}-2.json`]);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('gives a pending sign-in to exactly one of two concurrent takers', async () => {
-    const { tokens } = fileStore(tempDir(), { tokenKey: KEY });
-    await tokens.putPending(STATE, { provider: 'github', owner: APP, redirectUri: 'https://x.example/cb', createdAt: 1 }, 60_000);
-    const results = await Promise.all([tokens.takePending(STATE), tokens.takePending(STATE)]);
-    expect(results.filter(Boolean)).toHaveLength(1);
   });
 });

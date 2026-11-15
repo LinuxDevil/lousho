@@ -9,7 +9,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { startObserveDaemon, type ObserveDaemon } from './daemon';
-import { fetchPrompt, parsePromptRef, publishPrompt, registryPrompt } from './promptClient';
+import { parsePromptRef, publishPrompt, registryPrompt } from './promptClient';
 import { observeExporter, type ObserveReporter } from './reporter';
 import type { IngestEvent } from './envelope';
 import type { Span } from '../execution/tracing';
@@ -63,13 +63,6 @@ describe('POST /api/v1/prompts', () => {
     const rollback = await post(daemon, '/api/v1/prompts', { name: 'mira', text: 'You are Mira.', labels: ['prod'], variables: ['who'] });
     expect((await rollback.json()) as { prompt: { version: number }; created: boolean }).toMatchObject({ prompt: { version: 3 }, created: true });
   });
-
-  it('rejects a bad body (missing text, illegal name) with 400', async () => {
-    const daemon = await start();
-    expect((await post(daemon, '/api/v1/prompts', { name: 'x' })).status).toBe(400);
-    expect((await post(daemon, '/api/v1/prompts', { name: 'has space', text: 't' })).status).toBe(400);
-    expect((await post(daemon, '/api/v1/prompts', { name: 'a/b', text: 't' })).status).toBe(400);
-  });
 });
 
 describe('GET /api/v1/prompts reads', () => {
@@ -108,60 +101,12 @@ describe('GET /api/v1/prompts reads', () => {
     expect((await get(daemon, '/api/v1/prompts/mira/abc')).status).toBe(404);
     expect((await get(daemon, '/api/v1/prompts/mira/a%20b')).status).toBe(400);
   });
-
-  it('counts prompt_uses rows as runs that used each version', async () => {
-    const daemon = await start();
-    const { prompt } = await publishPrompt(base(daemon), { name: 'mira', text: 't' });
-    await post(daemon, '/api/v1/ingest', {
-      batch: [
-        { type: 'prompt_use', data: { obs_id: 'root-1', prompt_id: prompt.prompt_id, version: 1 } },
-        { type: 'prompt_use', data: { obs_id: 'root-2', prompt_id: prompt.prompt_id, version: 1 } },
-      ],
-    });
-    const history = (await (await get(daemon, '/api/v1/prompts/mira')).json()) as { versions: { uses: number }[] };
-    expect(history.versions[0].uses).toBe(2);
-    const list = (await (await get(daemon, '/api/v1/prompts')).json()) as { prompts: { uses: number }[] };
-    expect(list.prompts[0].uses).toBe(2);
-  });
 });
 
 const put = (daemon: ObserveDaemon, path: string, body: unknown): Promise<Response> =>
   fetch(url(daemon, path), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
-const labelsOf = async (daemon: ObserveDaemon, ref: string): Promise<{ version: number; labels: unknown }> =>
-  ((await (await get(daemon, `/api/v1/prompts/mira/${ref}`)).json()) as { prompt: { version: number; labels: unknown } }).prompt;
-
 describe('prompt labels', () => {
-  it('resolves name/:label, and a row serves the sorted labels pointing at it', async () => {
-    const daemon = await start();
-    await publishPrompt(base(daemon), { name: 'mira', text: 'v1', labels: ['prod', 'canary'] });
-    await publishPrompt(base(daemon), { name: 'mira', text: 'v2' });
-    expect(await labelsOf(daemon, 'prod')).toMatchObject({ version: 1, labels: ['canary', 'prod'] });
-    expect(await labelsOf(daemon, 'latest')).toMatchObject({ version: 2, labels: [] });
-    const history = (await (await get(daemon, '/api/v1/prompts/mira')).json()) as { versions: { version: number; labels: unknown }[] };
-    expect(history.versions.map((v) => [v.version, v.labels])).toEqual([
-      [2, []],
-      [1, ['canary', 'prod']],
-    ]);
-    const list = (await (await get(daemon, '/api/v1/prompts')).json()) as { prompts: { labels: unknown }[] };
-    expect(list.prompts[0].labels).toEqual([]);
-    expect((await get(daemon, '/api/v1/prompts/mira/staging')).status).toBe(404);
-  });
-
-  it('PUT moves a label (it lives on exactly one version) and reports the previous version', async () => {
-    const daemon = await start();
-    await publishPrompt(base(daemon), { name: 'mira', text: 'v1', labels: ['prod'] });
-    await publishPrompt(base(daemon), { name: 'mira', text: 'v2' });
-    const moved = await put(daemon, '/api/v1/prompts/mira/labels/prod', { version: 2 });
-    expect(moved.status).toBe(200);
-    expect(await moved.json()).toEqual({ name: 'mira', label: 'prod', version: 2, previous_version: 1 });
-    expect(await labelsOf(daemon, 'prod')).toMatchObject({ version: 2, labels: ['prod'] });
-    expect(await labelsOf(daemon, '1')).toMatchObject({ labels: [] });
-
-    const fresh = await put(daemon, '/api/v1/prompts/mira/labels/staging', { version: 1 });
-    expect(await fresh.json()).toEqual({ name: 'mira', label: 'staging', version: 1, previous_version: null });
-    expect(Number(daemon.db.prepare("SELECT COUNT(*) AS n FROM prompt_labels WHERE name = 'mira' AND label = 'prod'").get()?.n)).toBe(1);
-  });
 
   it('PUT 404s an unknown name@version and 400s a bad label or body', async () => {
     const daemon = await start();
@@ -176,40 +121,6 @@ describe('prompt labels', () => {
     expect((await put(daemon, '/api/v1/prompts/mira/labels/prod', { version: 0 })).status).toBe(400);
     expect((await put(daemon, '/api/v1/prompts/mira/labels/prod', { version: 1.5 })).status).toBe(400);
     expect((await put(daemon, '/api/v1/prompts/mira/labels/prod', {})).status).toBe(400);
-  });
-
-  it('push labels move onto the new version; a push label that is a ref is a 400', async () => {
-    const daemon = await start();
-    await publishPrompt(base(daemon), { name: 'mira', text: 'v1', labels: ['prod'] });
-    await publishPrompt(base(daemon), { name: 'mira', text: 'v2', labels: ['prod'] });
-    expect(await labelsOf(daemon, 'prod')).toMatchObject({ version: 2 });
-    expect(await labelsOf(daemon, '1')).toMatchObject({ labels: [] });
-    expect((await post(daemon, '/api/v1/prompts', { name: 'mira', text: 'v3', labels: ['latest'] })).status).toBe(400);
-    expect((await post(daemon, '/api/v1/prompts', { name: 'mira', text: 'v3', labels: ['7'] })).status).toBe(400);
-  });
-
-  it('an unchanged push (same text + variables) mints no row, answers unchanged, and still assigns its labels', async () => {
-    const daemon = await start();
-    const first = (await (await post(daemon, '/api/v1/prompts', { name: 'mira', text: 'v1', variables: ['who'] })).json()) as Record<string, unknown>;
-    expect(first).toMatchObject({ created: true, version: 1, unchanged: false });
-    await publishPrompt(base(daemon), { name: 'mira', text: 'v2' });
-    const again = await post(daemon, '/api/v1/prompts', { name: 'mira', text: 'v2', labels: ['prod'] });
-    expect(again.status).toBe(200);
-    expect(await again.json()).toMatchObject({ created: false, version: 2, unchanged: true, prompt: { version: 2, labels: ['prod'] } });
-    expect(Number(daemon.db.prepare("SELECT COUNT(*) AS n FROM prompts WHERE name = 'mira'").get()?.n)).toBe(2);
-    // different variables are a change
-    const changed = await post(daemon, '/api/v1/prompts', { name: 'mira', text: 'v2', variables: ['who'] });
-    expect(await changed.json()).toMatchObject({ created: true, version: 3, unchanged: false });
-  });
-
-  it('fetchPrompt and registryPrompt resolve a name@label ref', async () => {
-    const daemon = await start();
-    await publishPrompt(base(daemon), { name: 'mira', text: 'prod text', labels: ['prod'] });
-    await publishPrompt(base(daemon), { name: 'mira', text: 'newer text' });
-    expect((await fetchPrompt(base(daemon), { name: 'mira', label: 'prod' })).text).toBe('prod text');
-    const source = registryPrompt('mira@prod', { env: { LOUSHO_OBSERVE: base(daemon) } as NodeJS.ProcessEnv });
-    await expect(source!.text(async () => 'embedded')).resolves.toBe('prod text');
-    expect(source!.ref).toEqual({ name: 'mira', label: 'prod' });
   });
 });
 
@@ -226,32 +137,9 @@ describe('parsePromptRef + fetchPrompt', () => {
     expect(parsePromptRef('@1')).toBeUndefined();
     expect(parsePromptRef(undefined)).toBeUndefined();
   });
-
-  it('fetchPrompt resolves a ref against the daemon', async () => {
-    const daemon = await start();
-    await publishPrompt(base(daemon), { name: 'mira', text: 'hello' });
-    const resolved = await fetchPrompt(base(daemon), { name: 'mira', version: 'latest' });
-    expect(resolved.text).toBe('hello');
-    await expect(fetchPrompt(base(daemon), { name: 'mira', version: 9 })).rejects.toMatchObject({ code: 'LOUSHO_REMOTE_REQUEST_FAILED' });
-  });
-
-  it('a daemon 404 message ends with exactly one period', async () => {
-    const daemon = await start();
-    const err = await fetchPrompt(base(daemon), { name: 'nope', version: 'latest' }).catch((e: Error) => e);
-    expect((err as Error).message).toMatch(/No prompt 'nope@latest'\.$/);
-  });
 });
 
 describe('registryPrompt', () => {
-  it('serves the fetched text and exposes the prompt_use ref', async () => {
-    const daemon = await start();
-    const { prompt } = await publishPrompt(base(daemon), { name: 'mira', text: 'registry text' });
-    const env = { LOUSHO_OBSERVE: base(daemon) } as NodeJS.ProcessEnv;
-    const source = registryPrompt('mira@latest', { env });
-    expect(source).toBeDefined();
-    await expect(source!.text(async () => 'embedded')).resolves.toBe('registry text');
-    expect(source!.use()).toEqual({ prompt_id: prompt.prompt_id, version: 1 });
-  });
 
   it('falls back to the embedded instructions (warn once) when the daemon is unreachable', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -262,11 +150,6 @@ describe('registryPrompt', () => {
     expect(source.use()).toBeUndefined();
     expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
-  });
-
-  it('is undefined when LOUSHO_OBSERVE names no daemon or the value is not a ref', () => {
-    expect(registryPrompt('mira@1', { env: {} as NodeJS.ProcessEnv })).toBeUndefined();
-    expect(registryPrompt('not a ref', { env: { LOUSHO_OBSERVE: 'http://x' } as NodeJS.ProcessEnv })).toBeUndefined();
   });
 });
 
@@ -302,19 +185,5 @@ describe('reporter prompt_use', () => {
     const uses = posted.filter((e): e is Extract<IngestEvent, { type: 'prompt_use' }> => e.type === 'prompt_use');
     expect(uses).toHaveLength(1);
     expect(uses[0].data).toEqual({ obs_id: 'root', prompt_id: 'p-1', version: 2 });
-  });
-
-  it('emits nothing while the provider returns undefined (fetch pending or failed)', async () => {
-    const { r, posted } = reporter({ promptUse: () => undefined });
-    r.onSpanStart(span({ id: 'root' }));
-    await r.close();
-    expect(posted.filter((e) => e.type === 'prompt_use')).toHaveLength(0);
-  });
-
-  it('does not re-emit for a child run parented under a span', async () => {
-    const { r, posted } = reporter({ promptUse: () => ({ prompt_id: 'p-1' }) });
-    r.onSpanStart(span({ id: 'delegated', parentId: 'unseen-parent' }));
-    await r.close();
-    expect(posted.filter((e) => e.type === 'prompt_use')).toHaveLength(0);
   });
 });

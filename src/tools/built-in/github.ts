@@ -63,14 +63,28 @@ import { defineTool, type DefinedTool } from '../defineTool';
 import { ToolDescriptor } from '../../types';
 import { routeFetchThroughSandbox } from './sandboxFetch';
 import { assertOk } from './assertOk';
+import { ConfigurationError } from '../../execution/errors';
+import { createInstallationTokens, signAppJwt } from '../../channels/githubAppAuth';
 import { toolFailure } from './toolFailure';
 
 // ============================================================================
 // Type Definitions
 // ============================================================================
 
+/** GitHub App credentials for `createGitHubTools({ app })`. */
+export interface GitHubAppCredentials {
+  appId: string;
+  /** PEM private key from the App settings (PKCS#1 or PKCS#8). */
+  privateKey: string;
+  /** The App's installation on `owner/repo`; looked up when omitted. */
+  installationId?: number;
+}
+
 export interface GitHubConfig {
-  token: string;
+  /** A token, or a function returning one per request. One of `token` or `app` is required. */
+  token?: string | (() => string | Promise<string>);
+  /** Authenticate as a GitHub App installation (short-lived tokens, refreshed automatically). */
+  app?: GitHubAppCredentials;
   owner: string;
   repo: string;
 }
@@ -311,10 +325,39 @@ interface IssueRequestBody {
 // GitHub Tools Registry
 // ============================================================================
 
+function tokenSourceFor(config: GitHubConfig, repoUrl: string): () => Promise<string> {
+  const { token, app } = config;
+  if (app !== undefined) {
+    const tokens = createInstallationTokens({ appId: app.appId, privateKey: app.privateKey });
+    let installation: Promise<number> | undefined = app.installationId === undefined ? undefined : Promise.resolve(app.installationId);
+    const lookup = async (): Promise<number> => {
+      const res = await fetch(`${repoUrl}/installation`, {
+        headers: { Authorization: `Bearer ${await signAppJwt(app.appId, app.privateKey)}`, Accept: 'application/vnd.github.v3+json' },
+      });
+      await assertOk(res, `GitHub App ${app.appId} is not installed on ${repoUrl.replace('https://api.github.com/repos/', '')}`);
+      return ((await res.json()) as { id: number }).id;
+    };
+    return async () => {
+      installation ??= lookup().catch((error: unknown) => {
+        installation = undefined;
+        throw error;
+      });
+      return tokens(await installation);
+    };
+  }
+  if (typeof token === 'function') return async () => token();
+  if (typeof token === 'string' && token !== '') return async () => token;
+  throw new ConfigurationError('createGitHubTools: pass a token or app credentials.', 'token');
+}
+
 export class GitHubTools extends ToolRegistry {
   private config: GitHubConfig;
-  private authHeader: string;
+  private readonly tokenSource: () => Promise<string>;
   private baseUrl: string;
+
+  private async authorization(): Promise<string> {
+    return `Bearer ${await this.tokenSource()}`;
+  }
 
   /**
    * Tool names whose underlying GitHub endpoint requires more than the
@@ -348,8 +391,8 @@ export class GitHubTools extends ToolRegistry {
   constructor(config: GitHubConfig) {
     super();
     this.config = config;
-    this.authHeader = `Bearer ${config.token}`;
     this.baseUrl = `https://api.github.com/repos/${config.owner}/${config.repo}`;
+    this.tokenSource = tokenSourceFor(config, this.baseUrl);
     this.registerAllTools();
   }
 
@@ -434,6 +477,7 @@ export class GitHubTools extends ToolRegistry {
     this.registerGetPRFiles();
     this.registerGetPRComments();
     this.registerAddPRComment();
+    this.registerSubmitPRReview();
     
     // Issue operations
     this.registerListIssues();
@@ -463,7 +507,7 @@ export class GitHubTools extends ToolRegistry {
         execute: async () => {
           const response = await fetch(this.baseUrl, {
             headers: {
-              'Authorization': this.authHeader,
+              'Authorization': await this.authorization(),
               'Accept': 'application/vnd.github.v3+json',
             },
           });
@@ -505,7 +549,7 @@ export class GitHubTools extends ToolRegistry {
 
           const response = await fetch(url, {
             headers: {
-              'Authorization': this.authHeader,
+              'Authorization': await this.authorization(),
               'Accept': 'application/vnd.github.v3+json',
             },
           });
@@ -539,7 +583,7 @@ export class GitHubTools extends ToolRegistry {
             `${this.baseUrl}/branches/${branchName}`,
             {
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
               },
             }
@@ -576,7 +620,7 @@ export class GitHubTools extends ToolRegistry {
             `${this.baseUrl}/git/refs/heads/${sourceBranch}`,
             {
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
               },
             }
@@ -593,7 +637,7 @@ export class GitHubTools extends ToolRegistry {
             {
               method: 'POST',
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
                 'Content-Type': 'application/json',
               },
@@ -632,7 +676,7 @@ export class GitHubTools extends ToolRegistry {
             {
               method: 'DELETE',
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
               },
             }
@@ -668,7 +712,7 @@ export class GitHubTools extends ToolRegistry {
 
           const response = await fetch(url, {
             headers: {
-              'Authorization': this.authHeader,
+              'Authorization': await this.authorization(),
               'Accept': 'application/vnd.github.v3+json',
             },
           });
@@ -710,7 +754,7 @@ export class GitHubTools extends ToolRegistry {
 
           const response = await fetch(url, {
             headers: {
-              'Authorization': this.authHeader,
+              'Authorization': await this.authorization(),
               'Accept': 'application/vnd.github.v3+json',
             },
           });
@@ -760,7 +804,7 @@ export class GitHubTools extends ToolRegistry {
             {
               method: 'PUT',
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
                 'Content-Type': 'application/json',
               },
@@ -800,7 +844,7 @@ export class GitHubTools extends ToolRegistry {
             {
               method: 'DELETE',
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
                 'Content-Type': 'application/json',
               },
@@ -846,7 +890,7 @@ export class GitHubTools extends ToolRegistry {
             `https://api.github.com/search/code?q=${encodeURIComponent(searchQuery)}`,
             {
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
               },
             }
@@ -897,7 +941,7 @@ export class GitHubTools extends ToolRegistry {
 
           const response = await fetch(url, {
             headers: {
-              'Authorization': this.authHeader,
+              'Authorization': await this.authorization(),
               'Accept': 'application/vnd.github.v3+json',
             },
           });
@@ -938,7 +982,7 @@ export class GitHubTools extends ToolRegistry {
             `${this.baseUrl}/pulls/${prNumber}`,
             {
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
               },
             }
@@ -985,7 +1029,7 @@ export class GitHubTools extends ToolRegistry {
             {
               method: 'POST',
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
                 'Content-Type': 'application/json',
               },
@@ -1039,7 +1083,7 @@ export class GitHubTools extends ToolRegistry {
             {
               method: 'PATCH',
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
                 'Content-Type': 'application/json',
               },
@@ -1085,7 +1129,7 @@ export class GitHubTools extends ToolRegistry {
             {
               method: 'PUT',
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
                 'Content-Type': 'application/json',
               },
@@ -1121,7 +1165,7 @@ export class GitHubTools extends ToolRegistry {
             {
               method: 'PATCH',
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
                 'Content-Type': 'application/json',
               },
@@ -1151,7 +1195,7 @@ export class GitHubTools extends ToolRegistry {
             `${this.baseUrl}/pulls/${prNumber}/files`,
             {
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
               },
             }
@@ -1190,7 +1234,7 @@ export class GitHubTools extends ToolRegistry {
             `${this.baseUrl}/pulls/${prNumber}/comments`,
             {
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
               },
             }
@@ -1231,7 +1275,7 @@ export class GitHubTools extends ToolRegistry {
             {
               method: 'POST',
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
                 'Content-Type': 'application/json',
               },
@@ -1246,6 +1290,70 @@ export class GitHubTools extends ToolRegistry {
             id: data.id,
             url: data.html_url,
           });
+        },
+      })
+    );
+  }
+
+  private registerSubmitPRReview() {
+    this.register(
+      defineTool({
+        name: 'github_submit_review',
+        displayName: 'Submit Pull Request Review',
+        description:
+          'Submit one review on a pull request: a summary body, a verdict (APPROVE, REQUEST_CHANGES or COMMENT) and optional inline comments. ' +
+          'Each inline comment targets a file path and a line number in the NEW version of the file that appears in the PR diff (see github_get_pr_files patches).',
+        input: z.object({
+          prNumber: z.number().int().positive().describe('Pull request number'),
+          event: z.enum(['APPROVE', 'REQUEST_CHANGES', 'COMMENT']).describe('The verdict'),
+          body: z.string().min(1).describe('The review summary'),
+          comments: z
+            .array(
+              z.object({
+                path: z.string().min(1).describe('File path as listed by github_get_pr_files'),
+                line: z.number().int().positive().describe('Line in the new file, inside a diff hunk'),
+                startLine: z.number().int().positive().optional().describe('First line of a multi-line comment'),
+                body: z.string().min(1).describe('The comment'),
+              })
+            )
+            .max(50)
+            .optional()
+            .describe('Inline comments, at most 50'),
+          commitId: z.string().optional().describe('Head commit SHA the review applies to; defaults to the latest'),
+        }),
+        execute: async ({ prNumber, event, body, comments, commitId }) => {
+          const response = await fetch(`${this.baseUrl}/pulls/${prNumber}/reviews`, {
+            method: 'POST',
+            headers: {
+              'Authorization': await this.authorization(),
+              'Accept': 'application/vnd.github.v3+json',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              event,
+              body,
+              ...(commitId !== undefined && { commit_id: commitId }),
+              comments: (comments ?? []).map((c) => ({
+                path: c.path,
+                line: c.line,
+                side: 'RIGHT',
+                ...(c.startLine !== undefined && c.startLine < c.line && { start_line: c.startLine, start_side: 'RIGHT' }),
+                body: c.body,
+              })),
+            }),
+          });
+          if (response.status === 422) {
+            const detail = await response.text();
+            const hint = /own pull request/i.test(detail)
+              ? ' GitHub does not let an account approve or request changes on its own pull request; post with a separate bot identity or use event COMMENT.'
+              : /diff|line/i.test(detail)
+                ? ' Every inline comment must point at a line inside a diff hunk of the new file; move or drop the comments that do not, then submit again.'
+                : '';
+            throw toolFailure(`Failed to submit review: ${detail}${hint}`);
+          }
+          await assertOk(response, 'Failed to submit review');
+          const data = (await response.json()) as { id: number; html_url: string; state: string };
+          return JSON.stringify({ id: data.id, url: data.html_url, state: data.state, comments: comments?.length ?? 0 });
         },
       })
     );
@@ -1281,7 +1389,7 @@ export class GitHubTools extends ToolRegistry {
 
           const response = await fetch(url, {
             headers: {
-              'Authorization': this.authHeader,
+              'Authorization': await this.authorization(),
               'Accept': 'application/vnd.github.v3+json',
             },
           });
@@ -1323,7 +1431,7 @@ export class GitHubTools extends ToolRegistry {
             `${this.baseUrl}/issues/${issueNumber}`,
             {
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
               },
             }
@@ -1373,7 +1481,7 @@ export class GitHubTools extends ToolRegistry {
             {
               method: 'POST',
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
                 'Content-Type': 'application/json',
               },
@@ -1422,7 +1530,7 @@ export class GitHubTools extends ToolRegistry {
             {
               method: 'PATCH',
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
                 'Content-Type': 'application/json',
               },
@@ -1453,7 +1561,7 @@ export class GitHubTools extends ToolRegistry {
             {
               method: 'PATCH',
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
                 'Content-Type': 'application/json',
               },
@@ -1485,7 +1593,7 @@ export class GitHubTools extends ToolRegistry {
             {
               method: 'POST',
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
                 'Content-Type': 'application/json',
               },
@@ -1529,7 +1637,7 @@ export class GitHubTools extends ToolRegistry {
 
           const response = await fetch(url, {
             headers: {
-              'Authorization': this.authHeader,
+              'Authorization': await this.authorization(),
               'Accept': 'application/vnd.github.v3+json',
             },
           });
@@ -1566,7 +1674,7 @@ export class GitHubTools extends ToolRegistry {
             `${this.baseUrl}/commits/${sha}`,
             {
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
               },
             }
@@ -1608,7 +1716,7 @@ export class GitHubTools extends ToolRegistry {
             `${this.baseUrl}/compare/${base}...${head}`,
             {
               headers: {
-                'Authorization': this.authHeader,
+                'Authorization': await this.authorization(),
                 'Accept': 'application/vnd.github.v3+json',
               },
             }
@@ -1641,7 +1749,7 @@ export class GitHubTools extends ToolRegistry {
   private async getDefaultBranch(): Promise<string> {
     const response = await fetch(this.baseUrl, {
       headers: {
-        'Authorization': this.authHeader,
+        'Authorization': await this.authorization(),
         'Accept': 'application/vnd.github.v3+json',
       },
     });

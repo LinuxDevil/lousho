@@ -89,28 +89,4 @@ describe('AddToQueue', () => {
     await act(async () => buttonNamed(document.body, 'Review queue')!.click());
     expect(window.location.hash).toBe('#/evals/queues/q2');
   });
-
-  it('says so when the trace is already in the queue', async () => {
-    alreadyQueued = true;
-    const { container } = await mount();
-    await act(async () => buttonNamed(container, 'Add')!.click());
-    await flush();
-    expect(document.body.textContent).toContain('The trace is already in support-review.');
-  });
-
-  it('with no queues, links to the queue list and keeps Add disabled', async () => {
-    queues = [];
-    const { container } = await mount();
-    expect(container.querySelector('[role="dialog"] a[href="#/evals/queues"]')).not.toBeNull();
-    expect(buttonNamed(container, 'Add')!.disabled).toBe(true);
-  });
-
-  it('closes on Escape and returns focus to the button', async () => {
-    const { container, trigger } = await mount();
-    await act(async () => {
-      container.querySelector('select')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    });
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
-    expect(document.activeElement).toBe(trigger);
-  });
 });

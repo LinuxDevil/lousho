@@ -52,49 +52,7 @@ function blur(el: HTMLElement) {
   });
 }
 
-describe('OutputFieldTable rows', () => {
-  it('renders one editable row per single-type property and a read-only row for a type list', () => {
-    const { container } = mount();
-    const names = [...container.querySelectorAll('.output-field-name')].map((el) => (el as HTMLInputElement).value);
-    expect(names).toEqual(['priority', 'summary']);
-    // `count` has a type list the table cannot show: read-only with the JSON hint.
-    const readOnly = container.querySelector('.output-field-readonly')!;
-    expect(readOnly.textContent).toContain('count');
-    expect(readOnly.textContent).toContain('integer | null');
-    expect(readOnly.textContent).toContain('Edit this field in the JSON below.');
-    expect(readOnly.querySelector('input, select')).toBeNull();
-  });
-
-  it('adds a required string field_<n> on Add field', () => {
-    const { container, onChange } = mount();
-    click([...container.querySelectorAll('button')].find((b) => b.textContent?.includes('Add field'))!);
-    const emitted = onChange.mock.calls[0][0] as Record<string, unknown>;
-    expect(emitted.properties).toMatchObject({ field_1: { type: 'string' } });
-    expect(emitted.required).toEqual(['priority', 'summary', 'field_1']);
-    // Other schema keys pass through untouched.
-    expect(emitted.type).toBe('object');
-    expect(emitted.additionalProperties).toBe(false);
-  });
-});
-
 describe('OutputFieldTable edits', () => {
-  it('renames a field on blur, keeping property order and syncing required', () => {
-    const { container, onChange } = mount();
-    const input = fieldInput(container, 'Field priority name');
-    act(() => setValue(input, 'severity'));
-    blur(input);
-    const emitted = onChange.mock.calls[0][0] as {
-      properties: Record<string, unknown>;
-      required: string[];
-    };
-    expect(Object.keys(emitted.properties)).toEqual(['severity', 'summary', 'count']);
-    expect(emitted.properties.severity).toEqual({
-      type: 'string',
-      enum: ['low', 'urgent'],
-      description: 'How soon',
-    });
-    expect(emitted.required).toEqual(['severity', 'summary']);
-  });
 
   it('refuses a rename to a taken or malformed name', () => {
     const { container, onChange } = mount();

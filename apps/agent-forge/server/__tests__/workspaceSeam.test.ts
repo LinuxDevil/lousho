@@ -47,7 +47,7 @@ describe('workspace seam', () => {
   let runManager: RunManager;
 
   beforeEach(() => {
-    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lou-w00-seam-'));
+    baseDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lou-w00-seam-')));
     agentStore = createFsAgentStore(baseDir);
     const repo = new AgentRepo(baseDir);
     runManager = new RunManager({

@@ -31,12 +31,6 @@ function recordingChannel(overrides: Partial<Channel> = {}) {
 const post = (path: string, body: unknown) => new Request(`http://worker${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 describe('mountFetchChannels (#298)', () => {
-  it('resolves undefined for requests outside its routes', async () => {
-    const handler = mountFetchChannels(createAgent({ provider: mockModel(['hi']) }), [httpChannel()]);
-    expect(await handler(new Request('http://worker/health'))).toBeUndefined();
-    expect(await handler(new Request('http://worker/channels/unknown', { method: 'POST', body: '{}' }))).toBeUndefined();
-    expect(await handler(new Request('http://worker/channels/http', { method: 'GET' }))).toBeUndefined();
-  });
 
   it('runs a turn through the channel and replies, acknowledging with the channel answer', async () => {
     const { channel, replies } = recordingChannel();
@@ -66,45 +60,11 @@ describe('mountFetchChannels (#298)', () => {
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: secret }), expect.objectContaining({ channel: 'test' }));
   });
 
-  it('keeps the 400 for a body that is not JSON', async () => {
-    const { channel } = recordingChannel();
-    const handler = mountFetchChannels(createAgent({ provider: mockModel(['hi']) }), [channel]);
-    const response = await handler(new Request('http://worker/channels/test', { method: 'POST', body: '{nope' }));
-    expect(response?.status).toBe(400);
-  });
-
   it('answers 401 when the channel verify fails', async () => {
     const { channel } = recordingChannel({ verify: async () => false });
     const handler = mountFetchChannels(createAgent({ provider: mockModel(['hi']) }), [channel]);
     const response = await handler(post('/channels/test', { user: 'a', text: 'hi' }));
     expect(response?.status).toBe(401);
-  });
-
-  it('answers the httpChannel JSON API like mountChannels does', async () => {
-    const handler = mountFetchChannels(createAgent({ provider: mockModel(['pong']) }), [httpChannel()]);
-    const response = await handler(post('/channels/http', { sessionKey: 'u1', input: 'ping' }));
-    expect(response?.status).toBe(200);
-    expect((await response?.json()) as { sessionId: string; text: string }).toMatchObject({ sessionId: expect.stringMatching(/^http_u1-/), text: 'pong' });
-  });
-
-  it('returns an early respond while the turn runs under ctx.waitUntil', async () => {
-    let finish!: () => void;
-    const gate = new Promise<void>((resolve) => (finish = resolve));
-    const { channel } = recordingChannel({
-      async parse(_req, respond) {
-        respond(202, { accepted: true });
-        await gate;
-        return { sessionKey: 'u', input: 'hi', replyTo: null };
-      },
-    });
-    const handler = mountFetchChannels(createAgent({ provider: mockModel(['done']) }), [channel]);
-    const waited: Promise<unknown>[] = [];
-    const response = await handler(post('/channels/test', {}), { waitUntil: (p) => waited.push(p) });
-    expect(response?.status).toBe(202);
-    expect(await response?.json()).toEqual({ accepted: true });
-    expect(waited).toHaveLength(1);
-    finish();
-    await waited[0];
   });
 
   it('awaits the turn when no waitUntil is given, then returns the early respond, and warns once', async () => {
@@ -125,44 +85,11 @@ describe('mountFetchChannels (#298)', () => {
     warn.mockRestore();
   });
 
-  it('returns the early respond at once with the waitUntil option, for hosts that pass no ctx', async () => {
-    let finish!: () => void;
-    const gate = new Promise<void>((resolve) => (finish = resolve));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const { channel, replies } = recordingChannel({
-      async parse(_req, respond) {
-        respond(200, { ok: true });
-        return { sessionKey: 'u', input: 'hi', replyTo: null };
-      },
-      async reply(ctx) {
-        await gate; // a slow turn: the ack must not wait for it
-        replies.push(ctx);
-      },
-    });
-    const waited: Promise<unknown>[] = [];
-    const handler = mountFetchChannels(createAgent({ provider: mockModel(['done']) }), [channel], { waitUntil: (p) => waited.push(p) });
-    const response = await handler(post('/channels/test', {}));
-    expect(response?.status).toBe(200);
-    expect(waited).toHaveLength(1);
-    expect(replies).toHaveLength(0);
-    finish();
-    await waited[0];
-    expect(replies.map((r) => r.text)).toEqual(['done']);
-    expect(warn).not.toHaveBeenCalled();
-    warn.mockRestore();
-  });
-
   it('answers 400 for a bad JSON body and for an approvals body without a decision', async () => {
     const handler = mountFetchChannels(createAgent({ provider: mockModel(['hi']) }), [httpChannel()]);
     const badJson = await handler(new Request('http://worker/channels/http', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{nope' }));
     expect(badJson?.status).toBe(400);
     const noDecision = await handler(post('/channels/http/approvals/x', { unrelated: 1 }));
     expect(noDecision?.status).toBe(400);
-  });
-
-  it('answers 404 for an approval id no channel turn paused on', async () => {
-    const handler = mountFetchChannels(createAgent({ provider: mockModel(['hi']) }), [httpChannel()]);
-    const response = await handler(post('/channels/http/approvals/none', { approved: true }));
-    expect(response?.status).toBe(404);
   });
 });

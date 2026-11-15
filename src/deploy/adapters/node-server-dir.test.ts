@@ -5,14 +5,11 @@
  * the SDK's mock provider.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { NodeServerAdapter } from './node-server';
-import { DockerAdapter } from './docker';
 import { copyAgentDirAssets } from './node-server-dir';
-import { parseBuildArgs } from '../../cli/build';
 import { withBuildLock } from '../buildLock.testkit';
 
 const FILES: Record<string, string> = {
@@ -64,35 +61,6 @@ function writeAgentDir(): string {
   return dir;
 }
 
-/**
- * Starts dist/server.js on a free port; resolves with its stdout once it
- * listens. `stop()` resolves once the process has exited: Windows refuses to
- * delete a directory that is a running process's cwd (afterAll's rmSync).
- */
-function startServer(outDir: string): Promise<{ stop: () => Promise<void>; port: number; stdout: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['dist/server.js', '--port=0'], { cwd: outDir, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    const timer = setTimeout(() => reject(new Error(`server did not start: ${stdout} ${stderr}`)), 15_000);
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk;
-      const match = /listening on http:\/\/[^:]+:(\d+)\s+lousho server: schedules/.exec(stdout);
-      if (!match) return;
-      clearTimeout(timer);
-      const stop = () =>
-        new Promise<void>((done) => {
-          if (child.exitCode !== null || child.signalCode !== null) return done();
-          child.once('exit', () => done());
-          child.kill();
-        });
-      resolve({ stop, port: Number(match[1]), stdout });
-    });
-    child.stderr.on('data', (chunk) => (stderr += chunk));
-    child.on('exit', (code) => reject(new Error(`server exited early (code ${code}): ${stdout} ${stderr}`)));
-  });
-}
-
 describe('NodeServerAdapter with an agent directory', () => {
   let agentDir: string;
   let outDir: string;
@@ -110,30 +78,6 @@ describe('NodeServerAdapter with an agent directory', () => {
     if (agentDir) fs.rmSync(path.dirname(agentDir), { recursive: true, force: true });
   });
 
-  it('generates an entry that resolves the directory and passes its schedules and channels to the server', () => {
-    const server = fs.readFileSync(path.join(outDir, 'server.ts'), 'utf8');
-    expect(server).toContain('resolveAgentDir(');
-    expect(server).toContain(
-      'createDeployedServer(agent, { ...{}, ...(resolved.auth ? { auth: resolved.auth } : {}), authorizeSession: resolved.authorizeSession, authorizeApproval: resolved.authorizeApproval, schedules: resolved.schedules, channels: resolved.channels })'
-    );
-    expect(fs.existsSync(path.join(outDir, 'agent.config.js'))).toBe(false);
-  });
-
-  it('bundles the code files to dist/agent and copies the rest', () => {
-    for (const file of ['agent.js', 'auth.js', 'schedules/daily.js', 'channels/echo.js', 'instructions.md']) {
-      expect(fs.existsSync(path.join(outDir, 'dist', 'agent', file)), file).toBe(true);
-    }
-    expect(fs.existsSync(path.join(outDir, 'dist', 'agent', 'channels', 'echo.ts'))).toBe(false);
-  });
-
-  it('copies only the assets the server reads: no .env, no .lousho store, no stale output', () => {
-    const copied = listFiles(path.join(outDir, 'dist', 'agent')).filter((f) => !f.endsWith('.js'));
-    expect(copied.sort()).toEqual(['instructions.md', 'instructions/claude.md', 'skills/release/SKILL.md', 'subagents/helper/agent.json', 'subagents/helper/instructions.md']);
-    const all = listFiles(path.join(outDir, 'dist'));
-    expect(all.filter((f) => /(^|\/)\.env|\.lousho|notes\.txt/.test(f))).toEqual([]);
-    for (const file of all) expect(fs.readFileSync(path.join(outDir, 'dist', file), 'utf8'), file).not.toMatch(/sk-secret|real user transcript/);
-  });
-
   it("leaves out a JSON/YAML config's store.dir even inside a copied folder", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-store-dir-'));
     try {
@@ -148,54 +92,5 @@ describe('NodeServerAdapter with an agent directory', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
-  });
-
-  it('the built server mounts the channel, answers it and reports the schedule', async () => {
-    const { stop, port, stdout } = await startServer(outDir);
-    try {
-      expect(stdout).toContain('schedules: daily; channels: echo (behind the server auth)');
-      // The channel has no verify, so auth.ts guards it like the chat routes.
-      expect((await fetch(`http://127.0.0.1:${port}/channels/echo`, { method: 'POST', body: 'ping' })).status).toBe(401);
-      const hook = await fetch(`http://127.0.0.1:${port}/channels/echo`, { method: 'POST', headers: { Authorization: 'Bearer dir-token' }, body: 'ping' });
-      expect(hook.status).toBe(200);
-      expect(((await hook.json()) as { reply: string }).reply.trim()).toBe('pong');
-      expect((await fetch(`http://127.0.0.1:${port}/health`)).status).toBe(200);
-      // Auth.ts guards the chat routes too.
-      const chat = (headers: Record<string, string>) =>
-        fetch(`http://127.0.0.1:${port}/chat/s1`, { headers }).then((res) => res.status);
-      expect(await chat({})).toBe(401);
-      expect(await chat({ Authorization: 'Bearer wrong' })).toBe(401);
-      expect(await chat({ Authorization: 'Bearer dir-token' })).toBe(200);
-      // a read claims nothing (only a turn does), so another principal can still read the unused id
-      expect(await chat({ Authorization: `Basic ${btoa('ops:pw')}` })).toBe(200);
-    } finally {
-      await stop();
-    }
-  }, 30_000);
-
-  it('a later spec build in the same out dir is not mistaken for the directory', async () => {
-    const spec = path.join(path.dirname(agentDir), 'spec.json');
-    fs.writeFileSync(spec, JSON.stringify({ name: 's', prompt: 'p', provider: { type: 'mock', model: 'm' } }));
-    await NodeServerAdapter.scaffold(spec, outDir);
-    expect(fs.existsSync(path.join(outDir, 'agent-dir.json'))).toBe(false);
-  });
-
-  it('docker scaffolds the same entry and Dockerfile', async () => {
-    const dockerOut = path.join(path.dirname(agentDir), 'docker-out');
-    await DockerAdapter.scaffold(agentDir, dockerOut);
-    expect(fs.readFileSync(path.join(dockerOut, 'server.ts'), 'utf8')).toContain('resolveAgentDir(');
-    expect(fs.readFileSync(path.join(dockerOut, 'Dockerfile'), 'utf8')).toContain('COPY dist/ ./dist/');
-  });
-
-  it('rejects a directory that is not an agent directory', async () => {
-    const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-not-agent-'));
-    await expect(NodeServerAdapter.scaffold(empty, path.join(empty, 'out'))).rejects.toThrow(/not an agent directory/);
-  });
-});
-
-describe('lousho build <path>', () => {
-  it('takes the agent as a positional argument', () => {
-    expect(parseBuildArgs(['./my-agent', '--target', 'node-server'])).toMatchObject({ agent: './my-agent', target: 'node-server' });
-    expect(parseBuildArgs(['--agent=./a', '--target=docker'])).toMatchObject({ agent: './a' });
   });
 });

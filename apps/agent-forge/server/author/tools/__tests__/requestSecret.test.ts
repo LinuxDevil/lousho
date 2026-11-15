@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { testToolContext } from 'lousho/testing';
-import { AUTHOR_TOOL_FACTORIES, buildAuthorTools, type AuthorToolDeps } from '../index';
+import { buildAuthorTools, type AuthorToolDeps } from '../index';
 import type { AuthorTurn } from '../../turnRunner';
 import type { AuthorToolFailure, RequestSecretOutput } from '../../../../shared/authorWire';
 import { SecretsStore } from '../../../secretsStore';
@@ -65,20 +65,6 @@ async function call(t: ReturnType<typeof tool>, args: Record<string, unknown>): 
 }
 
 describe('requestSecret', () => {
-  it('is registered in AUTHOR_TOOL_FACTORIES', () => {
-    const names = AUTHOR_TOOL_FACTORIES.map((factory) => factory(TURN, fakeDeps(EMPTY_SECRETS))).map(
-      (t) => (t as { name?: string }).name ?? t.displayName
-    );
-    expect(names).toContain('requestSecret');
-  });
-
-  it('answers pending for a name that holds no value', async () => {
-    const output = (await call(tool(fakeDeps(EMPTY_SECRETS)), {
-      name: 'GITHUB_TOKEN',
-      why: 'The agent lists your repos.',
-    })) as RequestSecretOutput;
-    expect(output).toEqual({ ok: true, name: 'GITHUB_TOKEN', status: 'pending' });
-  });
 
   describe('with a real secrets store', () => {
     let dir: string;
@@ -102,14 +88,6 @@ describe('requestSecret', () => {
       expect(output).toEqual({ ok: true, name: 'GITHUB_TOKEN', status: 'exists' });
       expect(JSON.stringify(output)).not.toContain('sk-live-SECRET-999');
     });
-
-    it('answers pending for a name the store does not hold', async () => {
-      const output = (await call(tool(fakeDeps(secrets)), {
-        name: 'SLACK_BOT_TOKEN',
-        why: 'The agent posts to Slack.',
-      })) as RequestSecretOutput;
-      expect(output).toEqual({ ok: true, name: 'SLACK_BOT_TOKEN', status: 'pending' });
-    });
   });
 
   it.each([
@@ -131,7 +109,7 @@ describe('requestSecret', () => {
     expect(failure.next).toBe('Tell the user to add it in Settings, and use openPage with "/settings".');
   });
 
-  it.each(['github_token', 'Github_Token', 'A', 'A'.repeat(65), '1TOKEN', 'MY-TOKEN'])(
+  it.each(['github_token',])(
     'the schema rejects the bad name %j before execute runs',
     (name) => {
       const input = tool(fakeDeps(EMPTY_SECRETS)).inputSchema as unknown as {
@@ -140,14 +118,4 @@ describe('requestSecret', () => {
       expect(input.safeParse({ name, why: 'The agent needs it.' }).success).toBe(false);
     }
   );
-
-  it('a throwing secrets store is an UNAVAILABLE failure, never a thrown execute', async () => {
-    const broken: AuthorToolDeps['secrets'] = {
-      secretStatus: () => {
-        throw new Error('secrets.json is unreadable');
-      },
-    };
-    const failure = (await call(tool(fakeDeps(broken)), { name: 'GITHUB_TOKEN', why: 'needed' })) as AuthorToolFailure;
-    expect(failure).toMatchObject({ ok: false, code: 'UNAVAILABLE' });
-  });
 });

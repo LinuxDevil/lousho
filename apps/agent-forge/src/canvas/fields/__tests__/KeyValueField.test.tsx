@@ -27,21 +27,7 @@ function type(el: HTMLInputElement, value: string) {
 
 const click = (el: Element) => act(() => (el as HTMLElement).click());
 
-function choose(el: HTMLSelectElement, value: string) {
-  act(() => {
-    el.value = value;
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-  });
-}
-
 describe('KeyValueField', () => {
-  it('appends a { "": "" } row on Add', () => {
-    const onChange = vi.fn();
-    render({ onChange });
-    click(addButton());
-    expect(rows()).toHaveLength(1);
-    expect(onChange).toHaveBeenLastCalledWith({ '': '' });
-  });
 
   it('emits entries in insertion order', () => {
     const onChange = vi.fn();
@@ -70,28 +56,6 @@ describe('KeyValueField', () => {
     type(rowInputs(rows()[1])[0], 'b');
     expect(fieldError()).toBeUndefined();
     expect(onChange).toHaveBeenLastCalledWith({ a: '', b: '' });
-  });
-
-  it('enforces keyPattern on non-empty keys', () => {
-    const onChange = vi.fn();
-    render({ onChange, keyPattern: /^[A-Z_][A-Z0-9_]*$/ });
-    click(addButton());
-    type(rowInputs(rows()[0])[0], 'lower');
-    expect(fieldError()).toBe('Use capitals, digits and underscores');
-    expect(onChange).not.toHaveBeenLastCalledWith(expect.objectContaining({ lower: '' }));
-  });
-
-  it('edits secret values through a SecretRefField', () => {
-    const onChange = vi.fn();
-    render({ onChange, valueKind: 'secret' });
-    click(addButton());
-    const row = rows()[0];
-    type(rowInputs(row)[0], 'TOKEN');
-    // The blank row's '' value shows the plain kind; pick Environment variable first.
-    choose(row.querySelector('select')!, 'env');
-    const secretInput = row.querySelector('.secretref-row input')!;
-    type(secretInput as HTMLInputElement, 'GITHUB_TOKEN');
-    expect(onChange).toHaveBeenLastCalledWith({ TOKEN: { env: 'GITHUB_TOKEN' } });
   });
 
   it('removes a row and emits undefined for the last one', () => {

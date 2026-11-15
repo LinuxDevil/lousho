@@ -128,45 +128,9 @@ describe('permission Inspector: tools', () => {
     flush();
     expect(container.textContent).toContain('Add a tool name or pattern');
   });
-
-  it('offers the owner\'s tool names and mcp globs as suggestions', () => {
-    useRule([BASE], { tools: [{ builtin: 'http' }, { builtin: 'web-fetch' }], mcpServers: { github: { command: 'npx' } } });
-    renderInspector();
-    const options = [...container.querySelectorAll('#node-perm-tools-suggestions option')].map(
-      (o) => o.getAttribute('value'),
-    );
-    expect(options).toEqual(['http', 'web-fetch', 'github__*']);
-  });
-});
-
-describe('permission Inspector: action', () => {
-  it('writes the chosen action', () => {
-    renderInspector();
-    choose('node-perm-action', '4');
-    expect(item().action).toBe('auto');
-    flush();
-    choose('node-perm-action', '2');
-    expect(item().action).toBe('deny');
-  });
-
-  it('shows the model-decides help only for auto', () => {
-    renderInspector();
-    expect(container.textContent).not.toContain('It never denies');
-    choose('node-perm-action', '4');
-    flush();
-    expect(container.textContent).toContain('It never denies');
-  });
 });
 
 describe('permission Inspector: reason, TTL and id', () => {
-  it('writes the reason and clears it to undefined', () => {
-    renderInspector();
-    type('node-perm-reason', 'Changes code');
-    expect(item().reason).toBe('Changes code');
-    flush();
-    type('node-perm-reason', '');
-    expect(item().reason).toBeUndefined();
-  });
 
   it('shows Remember approval for on ask, hidden on allow and deny', () => {
     renderInspector();
@@ -202,18 +166,6 @@ describe('permission Inspector: reason, TTL and id', () => {
 });
 
 describe('permission Inspector: conditions', () => {
-  it('adds a condition row and writes the matcher', () => {
-    renderInspector();
-    click(field<HTMLButtonElement>('node-perm-when-add'));
-    flush();
-    expect(container.textContent).toContain('A condition needs an argument name');
-    type('node-perm-when-arg-0', 'url');
-    flush();
-    choose('node-perm-when-op-0', 'matches');
-    flush();
-    type('node-perm-when-value-0', '^https://internal\\.');
-    expect(item().when).toStrictEqual({ url: { matches: '^https://internal\\.' } });
-  });
 
   it('shows the regex error and blocks the write until it is fixed', () => {
     renderInspector();

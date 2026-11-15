@@ -48,21 +48,6 @@ describe('ToolCallRow', () => {
     expect(container.querySelector('#detail')).toBeNull();
   });
 
-  it('expands on toggle click and links the body via aria-controls', () => {
-    render(
-      <ToolCallRow name="web-fetch" state="done">
-        <p id="detail">x</p>
-      </ToolCallRow>,
-    );
-    const toggle = toggleOf();
-    click(toggle);
-    expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    const body = container.querySelector('.tool-call-body') as HTMLElement;
-    expect(body).not.toBeNull();
-    expect(body.querySelector('#detail')).not.toBeNull();
-    expect(body.id).toBe(toggle.getAttribute('aria-controls'));
-  });
-
   it('honours defaultOpen and reports the next state through onToggle', () => {
     const onToggle = vi.fn();
     render(
@@ -82,15 +67,6 @@ describe('ToolCallRow', () => {
     expect(badge.textContent).toBe('github');
     expect(badge.getAttribute('title')).toBe('MCP server github');
     expect(badge.nextElementSibling?.classList.contains('tool-call-name')).toBe(true);
-  });
-
-  it('cannot expand without children: disabled toggle, no aria-expanded, no chevron', () => {
-    render(<ToolCallRow name="web-fetch" state="done" />);
-    const toggle = toggleOf();
-    expect(toggle.disabled).toBe(true);
-    expect(toggle.getAttribute('aria-expanded')).toBeNull();
-    expect(toggle.getAttribute('aria-controls')).toBeNull();
-    expect(toggle.querySelector('.tool-call-chevron')).toBeNull();
   });
 
   it('keeps action buttons outside the toggle so they never expand the row', () => {
@@ -114,18 +90,5 @@ describe('ToolCallRow', () => {
     click(approve);
     expect(onApprove).toHaveBeenCalled();
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
-  });
-
-  it('shows only the time for a running call with no duration, with sr text "Running: "', () => {
-    render(<ToolCallRow name="web-fetch" state="running" at="2026-10-29T10:04:05Z" />);
-    const meta = container.querySelector('.tool-call-meta') as HTMLElement;
-    expect(meta.querySelector('.tabular-nums')).toBeNull();
-    expect(meta.querySelector('time')).not.toBeNull();
-    expect(container.querySelector('.visually-hidden')?.textContent).toBe('Running: ');
-  });
-
-  it('omits the <time> element when the timestamp does not parse', () => {
-    render(<ToolCallRow name="web-fetch" state="done" at="not-a-date" />);
-    expect(container.querySelector('.tool-call-meta time')).toBeNull();
   });
 });

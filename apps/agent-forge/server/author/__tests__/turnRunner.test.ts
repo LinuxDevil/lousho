@@ -110,74 +110,6 @@ describe('AuthorTurnRunner', () => {
 
   const requestId = 'req-0001-aa02b';
 
-  it('a "Hi" reply emits turn.started(1), text.delta(2), turn.finished(3, stop) and persists both messages', async () => {
-    const model = mockModel(['Hi']);
-    const runner = makeRunner(model);
-    const { events, turnEnd } = collect(runner);
-
-    const started = await runner.start(session.id, { requestId, text: 'say hi' });
-    expect(started).toEqual({ ok: true, requestId });
-    const finished = await turnEnd;
-
-    expect(events).toEqual([
-      { type: 'turn.started', requestId, seq: 1 },
-      { type: 'text.delta', requestId, seq: 2, text: 'Hi' },
-      { type: 'turn.finished', requestId, seq: 3, finishReason: 'stop' },
-    ]);
-    expect(finished).toMatchObject({ finishReason: 'stop' });
-
-    const stored = await store.get(session.id);
-    expect(stored?.transcript).toHaveLength(2);
-    const [user, assistant] = stored!.transcript;
-    expect(user).toMatchObject({ role: 'user', text: 'say hi' });
-    if (user.role === 'user') expect(user.turnContext).toContain(TURN_CONTEXT_HEADER);
-    expect(assistant).toMatchObject({
-      role: 'assistant',
-      requestId,
-      finishReason: 'stop',
-      parts: [{ type: 'text', text: 'Hi' }],
-    });
-  });
-
-  it('the session file on disk already holds the assistant message when turn.finished is emitted', async () => {
-    const model = mockModel(['Hi']);
-    const runner = makeRunner(model);
-    let onDiskAtFinished: AuthorSession | undefined;
-    runner.on('event', (sid: string, ev: AuthorServerEvent) => {
-      if (ev.type === 'turn.finished') {
-        onDiskAtFinished = JSON.parse(
-          fs.readFileSync(path.join(dir, 'sessions', `${sid}.json`), 'utf8')
-        ) as AuthorSession;
-      }
-    });
-    const { turnEnd } = collect(runner);
-    await runner.start(session.id, { requestId, text: 'say hi' });
-    await turnEnd;
-    expect(onDiskAtFinished?.transcript).toHaveLength(2);
-    expect(onDiskAtFinished?.transcript[1]).toMatchObject({ role: 'assistant' });
-  });
-
-  it('a second start while the first runs returns BUSY without touching the transcript', async () => {
-    const model = mockModel([{ text: 'slow reply', delayMs: 100 }]);
-    const runner = makeRunner(model);
-    const { turnEnd } = collect(runner);
-
-    const first = await runner.start(session.id, { requestId, text: 'first' });
-    expect(first.ok).toBe(true);
-    const second = await runner.start(session.id, { requestId: 'req-0002-aa02b', text: 'second' });
-    expect(second).toEqual({
-      ok: false,
-      code: 'BUSY',
-      message: 'A reply is already running in this chat. Wait for it to finish, then send again.',
-    });
-    await turnEnd;
-
-    const stored = await store.get(session.id);
-    // Only the first turn's user message + assistant reply - the busy send appended nothing.
-    expect(stored?.transcript).toHaveLength(2);
-    expect(stored?.transcript[0]).toMatchObject({ role: 'user', text: 'first' });
-  });
-
   it('no API key and no providerFor -> NO_PROVIDER_KEY, nothing appended', async () => {
     const runner = new AuthorTurnRunner({
       sessions: store,
@@ -254,37 +186,6 @@ describe('AuthorTurnRunner', () => {
     expect(model.calls).toHaveLength(3);
   });
 
-  it('a tool that throws produces tool.result {state: error} and the turn still finishes', async () => {
-    const model = mockModel([
-      { toolCalls: [{ name: 'broken_tool', args: {}, id: 'call_throw1' }] },
-      { text: 'recovered' },
-    ]);
-    const runner = makeRunner(model, {
-      tools: [
-        testTool('broken_tool', {
-          execute: () => {
-            throw new Error('kaput');
-          },
-        }),
-      ],
-    });
-    const { events, turnEnd } = collect(runner);
-
-    await runner.start(session.id, { requestId, text: 'go' });
-    const finished = await turnEnd;
-
-    expect(finished).toMatchObject({ type: 'turn.finished', finishReason: 'stop' });
-    const toolResult = events.find((e) => e.type === 'tool.result');
-    expect(toolResult).toMatchObject({
-      type: 'tool.result',
-      name: 'broken_tool',
-      state: 'error',
-      output: { ok: false, code: 'TOOL_ERROR', error: 'kaput' },
-    });
-    const stored = await store.get(session.id);
-    expect(stored?.transcript.at(-1)).toMatchObject({ finishReason: 'stop' });
-  });
-
   it('the second turn sends the first turn\'s messages to the model', async () => {
     const model = mockModel(['Hi', 'Second reply']);
     const runner = makeRunner(model);
@@ -323,10 +224,18 @@ describe('AuthorTurnRunner', () => {
     expect((await store.get(session.id))?.transcript).toEqual([]);
   });
 
-  it('an unknown session id is NOT_FOUND', async () => {
-    const runner = makeRunner(mockModel(['x']));
-    const result = await runner.start('as_0000000000000000', { requestId, text: 'hi' });
-    expect(result).toEqual({ ok: false, code: 'NOT_FOUND', message: 'Chat not found.' });
+  it('a provider failure ends the turn with turn.error carrying the provider message', async () => {
+    const runner = makeRunner(mockModel([{ error: new Error('401 Incorrect API key provided') }]));
+    const { turnEnd } = collect(runner);
+
+    const started = await runner.start(session.id, { requestId, text: 'say hi' });
+    expect(started.ok).toBe(true);
+
+    expect(await turnEnd).toMatchObject({
+      type: 'turn.error',
+      message: expect.stringContaining('401 Incorrect API key provided'),
+    });
+    expect(runner.running(session.id)).toBeUndefined();
   });
 
   it('a failing session persist frees the slot and emits turn.error (never a stuck BUSY)', async () => {

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- `github_submit_review` posts one pull-request review with a verdict and inline comments; `createGitHubTools()` also authenticates as a GitHub App (`app: { appId, privateKey }`) or with a token function. See [Tools](docs/tools.md).
+- `githubChannel({ pullRequestEvents, replyToPullRequest })` re-reviews pull requests on every push (drafts skipped until ready) and can stay silent when the agent posts its own review. See [Channels](docs/channels.md).
+- Built-in `workspace_read`, `workspace_write` and `shell` tools, confined to `options.root` and refusing `.env`, `.git` and `.lousho`.
+
 ## [1.0.0-alpha.120] - 2026-11-15
 
 - The npm packages ship unscoped: `lousho` (SDK), `lousho-studio` (Studio) and `create-lousho` (scaffold). The `@linuxdevil/*` scoped names from alpha.118/119 are dropped — they were never published to npm, so `npm install lousho` continues the existing package line.

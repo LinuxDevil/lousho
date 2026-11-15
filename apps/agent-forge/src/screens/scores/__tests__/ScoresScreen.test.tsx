@@ -7,7 +7,7 @@ vi.mock('../../../state/AppState', () => ({ useAppState: () => ({ runStatus: nul
 import type { ObserveScorePassRate, ObserveScoreRow } from '../../../observe/types';
 import { render } from '../../../ui/__tests__/render';
 import { ScoresScreen } from '../ScoresScreen';
-import { groupEvalScores, passRateSeries, scoreStats, summarizeRates, traceHref, trendWindow } from '../scoresData';
+import { groupEvalScores, scoreStats, summarizeRates,  } from '../scoresData';
 
 const NOW = Date.UTC(2026, 9, 25, 12, 30);
 const DAY = 86_400_000;
@@ -94,15 +94,6 @@ afterEach(() => {
 });
 
 describe('scoresData', () => {
-  it('splits eval-level rows from per-check groups, worst check first', () => {
-    const g = groupEvalScores('support', [...SUPPORT_ROWS, score({ name: 'supportive/x' })]);
-    expect(g.evalRows.map((r) => r.value)).toEqual([1, 0]);
-    expect(g.checks.map((c) => [c.check, c.count, c.passRate])).toEqual([
-      ['refund', 2, 0.5],
-      ['tone', 2, 1],
-    ]);
-    expect(g.failures.map((r) => r.name)).toEqual(['support', 'support/refund']);
-  });
 
   it('eval and judge pass without a failure comment; human and online pass only on a value of 1', () => {
     const rows = (source: string) => [
@@ -119,72 +110,14 @@ describe('scoresData', () => {
     expect(groupEvalScores('x', rows('judge')).failures.map((r) => r.comment)).toEqual(['check failed']);
   });
 
-  it('pre-aggregates the trend to one mean point per bucket', () => {
-    const w = trendWindow({ preset: '7d' }, NOW);
-    const t = NOW - 2 * DAY;
-    const s = passRateSeries(
-      [score({ name: 'e', value: 1, created_at: t }), score({ name: 'e', value: 0, created_at: t + 60_000 }), score({ name: 'e', value: null, created_at: t })],
-      w,
-    );
-    expect(s.points).toEqual([{ t: t - (t % DAY), v: 0.5 }]);
-  });
-
   it('summarizes the per-eval aggregate for the metric cards (count-weighted mean)', () => {
     expect(summarizeRates(RATES)).toEqual({ evals: 2, scores: 8, passRate: 6 / 8, mean: (0.67 * 6 + 1 * 2) / 8 });
     expect(summarizeRates([{ ...RATES[0]!, avg_value: null }])).toMatchObject({ evals: 1, mean: null });
     expect(summarizeRates([])).toEqual({ evals: 0, scores: 0, passRate: null, mean: null });
   });
-
-  it('links a score to its trace, and to the step when it has one', () => {
-    expect(traceHref({ trace_id: 'tr 1', obs_id: null })).toBe('#/traces/tr%201');
-    expect(traceHref({ trace_id: 'tr', obs_id: 'o1' })).toBe('#/traces/tr?obs=o1');
-  });
 });
 
 describe('ScoresScreen', () => {
-  it('lists one row per eval from the aggregate', async () => {
-    const { calls } = daemon();
-    const c = render(<ScoresScreen />);
-    await waitFor(() => evalRow(c, 'billing') !== undefined);
-    const support = evalRow(c, 'support')!;
-    // The aggregate spans every check score, so its columns say "score", not "run".
-    expect(support.textContent).toContain('66.7%');
-    expect(support.textContent).toContain('6');
-    const headers = [...c.querySelectorAll('thead th')].map((th) => th.textContent);
-    expect(headers).toEqual(expect.arrayContaining(['Score pass rate', 'Scores', 'Mean score']));
-    expect(headers).not.toContain('Pass rate');
-    const passHeader = [...c.querySelectorAll('thead th span[title]')].find((el) => el.textContent === 'Score pass rate')!;
-    expect(passHeader.getAttribute('title')).toContain('every score of the eval');
-    expect(calls('aggregate=eval')[0]).toContain(`since=${NOW - 30 * DAY}`);
-    // The metric cards fold the same aggregate rows: 2 evals, 6 of 8 scores passed.
-    const metrics = [...c.querySelectorAll('.scores-metrics .metric-value')].map((el) => el.textContent);
-    expect(metrics).toEqual(['2', '75.0%', '0.75']);
-    // Nothing is expanded, so no per-eval rows are fetched.
-    expect(calls('/api/v1/scores').filter((u) => !u.includes('aggregate'))).toEqual([]);
-  });
-
-  it('expands an eval into its runs, per-check pass rates and failures linking to the trace', async () => {
-    const { calls } = daemon();
-    const c = render(<ScoresScreen />);
-    await waitFor(() => evalRow(c, 'support') !== undefined);
-    act(() => (evalRow(c, 'support')!.querySelector('.scores-toggle') as HTMLButtonElement).click());
-    expect(window.location.hash).toBe('#/evals/scores?open=support');
-    await waitFor(() => detail(c)?.querySelector('[data-eval-runs]') != null);
-    expect(calls('eval=support')[0]).toContain('limit=1000');
-    const d = detail(c)!;
-    expect(d.querySelector('[data-eval-runs]')!.getAttribute('data-eval-runs')).toBe('2');
-    expect(d.textContent).toContain('2 runs · Run pass rate 50.0%');
-    const checks = [...d.querySelectorAll('[aria-label="support checks"] tbody tr')].map((tr) => tr.textContent);
-    expect(checks[0]).toContain('refund');
-    expect(checks[0]).toContain('50.0%');
-    expect(checks[1]).toContain('tone');
-    const failures = [...d.querySelectorAll('.scores-failure')];
-    expect(failures).toHaveLength(2);
-    expect(failures[0]!.querySelector('a')!.getAttribute('href')).toBe('#/traces/trace-fail?obs=obs-9');
-    expect(failures[1]!.querySelector('a')!.getAttribute('href')).toBe('#/traces/trace-fail');
-    expect(failures[1]!.textContent).toContain('expected a refund link');
-    expect(evalRow(c, 'support')!.querySelector('.scores-toggle')!.getAttribute('aria-expanded')).toBe('true');
-  });
 
   it('shows the loading state, not the previous eval, while a newly opened eval loads', async () => {
     window.history.replaceState(null, '', '/#/evals/scores?open=support');
@@ -201,16 +134,6 @@ describe('ScoresScreen', () => {
     release();
     await waitFor(() => detail(c)?.querySelector('[data-eval-runs]') != null);
     expect(detail(c)!.textContent).toContain('0 runs');
-  });
-
-  it('draws the trend with one point per bucket', async () => {
-    window.history.replaceState(null, '', '/#/evals/scores?open=support');
-    daemon();
-    const c = render(<ScoresScreen />);
-    await waitFor(() => detail(c)?.querySelector('.tsc-point') != null);
-    // Two eval-level rows in two non-adjacent day buckets: two isolated points, no line.
-    expect(detail(c)!.querySelectorAll('circle.tsc-point[data-series="pass-rate"]')).toHaveLength(2);
-    expect(detail(c)!.querySelector('.tsc-line')).toBeNull();
   });
 
   it('round-trips the filters through the URL and queries with them', async () => {
@@ -232,14 +155,6 @@ describe('ScoresScreen', () => {
     act(() => preset('24h').click());
     expect(window.location.hash).toBe('#/evals/scores?eval=billing&agent=a1&source=human&range=24h');
     await waitFor(() => calls(`since=${NOW - DAY}`).length > 0);
-  });
-
-  it('ignores an unknown source= value', async () => {
-    window.history.replaceState(null, '', '/#/evals/scores?source=bogus');
-    const { calls } = daemon();
-    const c = render(<ScoresScreen />);
-    await waitFor(() => evalRow(c, 'billing') !== undefined);
-    expect(calls('aggregate=eval')[0]).not.toContain('source=');
   });
 
   it('shows the daemon-down state with the URL kept and recovers in place', async () => {

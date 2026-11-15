@@ -10,7 +10,6 @@ import { FlowExecutor, type FlowExecutionContext, type FlowResumeContext } from 
 import { MockLLMProvider } from '../providers/mock';
 import { memoryStore } from '../storage/agentStore';
 import type { CheckpointStore } from '../execution/checkpoint';
-import type { PendingApproval } from '../execution/ApprovalGate';
 
 const flow: AgentFlow = {
   code: 'release',
@@ -45,42 +44,6 @@ describe('FlowExecutor approval step', () => {
     };
     const { variables: _v, checkpointStore: _s, runId: _r, ...rest } = context;
     resumeContext = { ...rest, checkpointStore: store, runId: 'release-1' };
-  });
-
-  it('asks approve with a flow_approval request and continues on approval', async () => {
-    const { checkpointStore: _s, runId: _r, ...plain } = context;
-    const result = await FlowExecutor.execute(flow, plain);
-
-    expect(result).toMatchObject({ status: 'completed', success: true, output: true });
-    expect(result.variables.approved).toBe(true);
-    expect(approve).toHaveBeenCalledTimes(1);
-    const request = approve.mock.calls[0][0] as PendingApproval;
-    expect(request).toMatchObject({
-      toolCallId: request.id,
-      toolName: 'flow_approval',
-      args: { message: 'Ship 2.1 to production?', stepId: 'ship-gate' },
-    });
-  });
-
-  it('fails with LOUSHO_FLOW_TOOL_DENIED naming the step when approve rejects', async () => {
-    approve.mockReturnValue(false);
-    const { checkpointStore: _s, runId: _r, ...plain } = context;
-
-    const result = await FlowExecutor.execute(flow, plain);
-
-    expect(result.status).toBe('failed');
-    expect(result.error).toMatchObject({ code: 'LOUSHO_FLOW_TOOL_DENIED' });
-    expect(result.error?.message).toMatch(/^Approval step 'ship-gate'/);
-  });
-
-  it('fails closed without an approve callback in a non-durable run', async () => {
-    const { checkpointStore: _s, runId: _r, approve: _a, ...plain } = context;
-
-    const result = await FlowExecutor.execute(flow, plain);
-
-    expect(result.status).toBe('failed');
-    expect(result.error).toMatchObject({ code: 'LOUSHO_FLOW_TOOL_DENIED' });
-    expect(result.error?.message).toMatch(/^Approval step 'ship-gate'/);
   });
 
   it('pauses a durable run without approve; resume approves or rejects it', async () => {

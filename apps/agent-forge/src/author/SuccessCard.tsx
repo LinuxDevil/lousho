@@ -19,6 +19,7 @@ import { useRoute } from '../router/useRoute';
 import { agentPath, agentRouteId } from '../screens/agents/agentRoute';
 import { runtimeClient } from '../runtime/runtimeClient';
 import { useToast, type ToastApi } from '../ui/Toast';
+import { useOptionalAppState } from '../state/AppState';
 import type { AuthorChat } from './AuthorChatContext';
 import './authorCards.css';
 
@@ -45,10 +46,9 @@ function titleOf(kind: SuccessCardProps['kind'], name: string): string {
   return kind === 'create' ? `Created “${name}”` : `Updated “${name}”`;
 }
 
-function hintOf(kind: SuccessCardProps['kind'], version: number): string {
-  return kind === 'create'
-    ? "It's off for now. Review it, then turn it on here or ask in this chat."
-    : `Saved as version ${version}.`;
+function hintOf(kind: SuccessCardProps['kind'], version: number, on: boolean): string {
+  if (kind !== 'create') return `Saved as version ${version}.`;
+  return on ? "It's on." : "It's off for now. Review it, then turn it on here or ask in this chat.";
 }
 
 /** The warn line after a successful enable that still has missing requirements. */
@@ -169,7 +169,8 @@ export function SuccessCard({
     requirements.filter((r) => r.status === 'missing')
   );
 
-  const on = enabledNow || enabled;
+  const liveEnabled = useOptionalAppState()?.agents.find((a) => a.id === agentId)?.enabled === true;
+  const on = enabledNow || enabled || liveEnabled;
 
   async function onEnable(): Promise<void> {
     setEnabling(true);
@@ -192,7 +193,7 @@ export function SuccessCard({
       <CircleCheck className="success-card-icon" size={16} strokeWidth={1.75} aria-hidden="true" />
       <div className="success-card-body">
         <p className="success-card-title">{titleOf(kind, name)}</p>
-        <p className="success-card-hint">{hintOf(kind, version)}</p>
+        <p className="success-card-hint">{hintOf(kind, version, on)}</p>
         <MissingRequirements on={on} missing={missing} rows={missingRows} />
         <SuccessActions
           kind={kind}

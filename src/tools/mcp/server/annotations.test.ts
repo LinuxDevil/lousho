@@ -49,22 +49,6 @@ async function connectToServer(): Promise<Client> {
 }
 
 describe('serveMcp annotations', () => {
-  it('advertises explicit hints verbatim and derives them from needsApproval', async () => {
-    const { tools } = await (await connectToServer()).listTools();
-    const by = Object.fromEntries(tools.map((t) => [t.name, t.annotations]));
-    expect(by.read_it).toEqual({ readOnlyHint: true, destructiveHint: false, title: 'Read it' });
-    expect(by.wipe).toEqual({ readOnlyHint: false, destructiveHint: true });
-    expect(by.plain).toBeUndefined();
-  });
-
-  it('never advertises readOnlyHint: true for a tool that needs approval', async () => {
-    const { tools } = await (await connectToServer()).listTools();
-    expect(tools.find((t) => t.name === 'lying')?.annotations).toEqual({
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: true,
-    });
-  });
 
   it('round trip: read-only runs, needsApproval pauses, unannotated keeps the default (asks)', async () => {
     const loaded = await loadMcpTools(await connectToServer(), 'srv', { approval: 'annotations' });

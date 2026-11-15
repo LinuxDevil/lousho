@@ -1,4 +1,4 @@
-import type { ElkNode } from 'elkjs/lib/elk-api';
+import ElkApi, { type ELK, type ElkNode } from 'elkjs/lib/elk-api';
 import { deriveEdges } from '../graph/v2/edges';
 import type { Graph, GraphNode, GraphPosition } from '../graph/v2/types';
 import { ROOT_AGENT_ID } from '../graph/v2/types';
@@ -169,66 +169,25 @@ export function applyLayoutResult(before: Graph, laidOut: Graph, latest: Graph):
   return { ...latest, nodes, unplaced: latest.unplaced.filter((id) => !moved.has(id)) };
 }
 
-/** The worker round-trip protocol (`layout.worker.ts`): request `{ id, graph }`, reply `{ id, result | error }`. */
-interface LayoutReply {
-  id: number;
-  result?: ElkNode;
-  error?: string;
-}
+let workerElk: ELK | undefined;
 
-interface PendingLayout {
-  resolve: (graph: ElkNode) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
-
-/** One layout worker per page, created lazily on the first request. */
-let layoutWorker: Worker | undefined;
-let nextRequestId = 1;
-const pending = new Map<number, PendingLayout>();
-
-function settleAllPending(error: Error): void {
-  for (const req of pending.values()) {
-    clearTimeout(req.timer);
-    req.reject(error);
-  }
-  pending.clear();
-}
-
-function ensureWorker(): Worker {
-  if (layoutWorker !== undefined) return layoutWorker;
-  const worker = new Worker(new URL('./layout.worker.ts', import.meta.url), { type: 'module' });
-  worker.onmessage = (event: MessageEvent<LayoutReply>) => {
-    const { id, result, error } = event.data;
-    const req = pending.get(id);
-    if (req === undefined) return;
-    pending.delete(id);
-    clearTimeout(req.timer);
-    if (error !== undefined) req.reject(new Error(error));
-    else if (result !== undefined) req.resolve(result);
-    else req.reject(new Error('Layout failed'));
-  };
-  worker.onerror = () => {
-    settleAllPending(new Error('Layout worker failed'));
-    layoutWorker = undefined;
-    worker.terminate();
-  };
-  layoutWorker = worker;
-  return worker;
-}
-
-/** Post `elkGraph` to the shared worker; rejects after {@link LAYOUT_TIMEOUT_MS}. */
 function layoutInWorker(elkGraph: ElkNode): Promise<ElkNode> {
-  const worker = ensureWorker();
-  const id = nextRequestId++;
-  return new Promise<ElkNode>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      pending.delete(id);
-      reject(new Error('Layout timed out'));
-    }, LAYOUT_TIMEOUT_MS);
-    pending.set(id, { resolve, reject, timer });
-    worker.postMessage({ id, graph: elkGraph });
+  const elk = (workerElk ??= new ElkApi({
+    workerFactory: () => new Worker(new URL('./layout.worker.ts', import.meta.url), { type: 'module' }),
+  }));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Layout timed out')), LAYOUT_TIMEOUT_MS);
   });
+  return Promise.race([elk.layout(elkGraph), timeout])
+    .catch((error: unknown) => {
+      if (workerElk === elk) {
+        workerElk = undefined;
+        elk.terminateWorker();
+      }
+      throw error;
+    })
+    .finally(() => clearTimeout(timer));
 }
 
 /**

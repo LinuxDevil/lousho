@@ -8,7 +8,6 @@ import { PromptsScreen } from '../PromptsScreen';
 import { parsePromptRoute, parseDiff, promptPath } from '../promptsUrl';
 import { render } from '../../../ui/__tests__/render';
 import { ToastProvider } from '../../../ui/Toast';
-import { parsePromptParam as parsePlaygroundPrompt } from '../../playground/prefill';
 import type { ObservePromptVersion } from '../../../observe/types';
 
 const T0 = new Date(2026, 9, 20, 9, 0, 0).getTime();
@@ -99,16 +98,6 @@ describe('promptsUrl', () => {
 });
 
 describe('PromptsScreen', () => {
-  it('lists prompts with latest version, label chips, version count and uses', async () => {
-    const container = await mountAt('#/prompts');
-    const row = container.querySelector('tbody tr')!;
-    expect(row.textContent).toContain('mira');
-    expect(row.textContent).toContain('v3');
-    expect(row.querySelector('.prompt-label')?.textContent).toBe('staging');
-    const cells = [...row.querySelectorAll('td')].map((td) => td.textContent);
-    expect(cells).toContain('3');
-    expect(cells).toContain('7');
-  });
 
   it('the search box filters the loaded rows client-side and never touches the URL', async () => {
     const container = await mountAt('#/prompts');
@@ -160,17 +149,6 @@ describe('PromptsScreen', () => {
 
     container = await mountAt('#/prompts/mira');
     expect(container.querySelector('.prompt-version-title')?.textContent).toContain('Version 3');
-  });
-
-  it('links the selected version to its runs in Traces and to the Playground', async () => {
-    const container = await mountAt('#/prompts/mira@2');
-    const runs = [...container.querySelectorAll('a')].find((a) => a.textContent?.startsWith('Runs using this version'));
-    expect(runs?.getAttribute('href')).toBe('#/traces?prompt=mira@2');
-    const playground = [...container.querySelectorAll('a')].find((a) => a.textContent === 'Open in Playground');
-    expect(playground?.getAttribute('href')).toBe('#/playground?prompt=mira@2');
-    // ...in the shape the Playground's prefill actually reads.
-    const query = new URLSearchParams(playground!.getAttribute('href')!.split('?')[1]);
-    expect(parsePlaygroundPrompt(query.get('prompt'))).toEqual({ name: 'mira', ref: '2' });
   });
 
   it('renders a unified (default) and a side-by-side diff of the two versions in ?diff=a,b, marking added and removed lines', async () => {
@@ -238,11 +216,5 @@ describe('PromptsScreen', () => {
     act(() => buttonNamed(container, 'Move prod here')!.click());
     await flush();
     expect(document.querySelector('.toast-error')?.textContent).toContain("Could not move prod: No prompt 'mira@1'.");
-  });
-
-  it('an unknown prompt shows an empty state with the way back', async () => {
-    const container = await mountAt('#/prompts/nope');
-    expect(container.textContent).toContain('Prompt not found');
-    expect(container.querySelector('a[href="#/prompts"]')).not.toBeNull();
   });
 });

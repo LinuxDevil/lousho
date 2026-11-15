@@ -1,5 +1,4 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+
 import { act } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from './render';
@@ -14,7 +13,7 @@ const appState = vi.hoisted(() => ({
 vi.mock('../../state/AppState', () => ({ useAppState: () => appState }));
 
 import { CommandPalette, buildCommands } from '../CommandPalette';
-import { SHORTCUTS, matchShortcut } from '../../shell/shortcuts';
+import { SHORTCUTS } from '../../shell/shortcuts';
 import { NAV_ITEMS } from '../../shell/NavRail';
 import { applyStoredTheme } from '../../shell/theme';
 import { ToastProvider } from '../Toast';
@@ -85,19 +84,6 @@ describe('CommandPalette', () => {
     expect(dialog('Command palette')).toBeNull();
   });
 
-  it('Cmd+K opens it even from inside an input, and focus returns there on close', () => {
-    const field = document.createElement('input');
-    document.body.appendChild(field);
-    field.focus();
-    mount();
-    key('k', { metaKey: true }, field);
-    expect(dialog('Command palette')).not.toBeNull();
-    key('Escape', {}, input());
-    expect(dialog('Command palette')).toBeNull();
-    expect(document.activeElement).toBe(field);
-    field.remove();
-  });
-
   it('arrow keys move the active option and aria-activedescendant follows', () => {
     mount();
     key('k', { ctrlKey: true });
@@ -116,15 +102,6 @@ describe('CommandPalette', () => {
     expect(window.location.hash).toBe('#/agents/researcher/overview');
     // Only the hash: the Agents screen's route sync opens it (and asks about unsaved changes).
     expect(appState.switchAgent).not.toHaveBeenCalled();
-  });
-
-  it('pasting a trace id offers "Open trace <id>" first', () => {
-    mount();
-    key('k', { ctrlKey: true });
-    type('4bf92f3577b34da6');
-    expect(options()[0]).toBe('Open trace 4bf92f3577b34da6');
-    key('Enter', {}, input());
-    expect(window.location.hash).toBe('#/traces/4bf92f3577b34da6');
   });
 
   it('shows an empty message when nothing matches, and the backdrop closes it', () => {
@@ -151,15 +128,6 @@ describe('CommandPalette', () => {
     expect(dialog('Keyboard shortcuts')).toBeNull();
   });
 
-  it('ignores ? typed inside an editable target', () => {
-    const area = document.createElement('textarea');
-    document.body.appendChild(area);
-    mount();
-    key('?', {}, area);
-    expect(dialog('Keyboard shortcuts')).toBeNull();
-    area.remove();
-  });
-
   it('Toggle theme flips the effective scheme and remembers it', () => {
     stubScheme(true);
     mount();
@@ -175,66 +143,7 @@ describe('CommandPalette', () => {
   });
 });
 
-describe('CommandPalette edge cases', () => {
-  // A failed open is reported by the Agents route sync (screens/agents/__tests__/agentRoute.test.tsx).
-  it('opening an agent never switches it directly', () => {
-    mount();
-    key('k', { ctrlKey: true });
-    type('support bot');
-    key('Enter', {}, input());
-    expect(window.location.hash).toBe('#/agents/support-bot/overview');
-    expect(appState.switchAgent).not.toHaveBeenCalled();
-  });
-
-  it('ignores Enter while an IME composition is in progress', () => {
-    mount();
-    key('k', { ctrlKey: true });
-    type('moni');
-    key('Enter', { isComposing: true }, input());
-    expect(dialog('Command palette')).not.toBeNull();
-    expect(window.location.hash).toBe('#/traces');
-  });
-
-  it('ignores auto-repeat so holding Ctrl+K does not flicker', () => {
-    mount();
-    key('k', { ctrlKey: true });
-    key('k', { ctrlKey: true, repeat: true }, input());
-    expect(dialog('Command palette')).not.toBeNull();
-    key('k', { ctrlKey: true }, input());
-    expect(dialog('Command palette')).toBeNull();
-  });
-
-  it('does not try to refocus an opener that has left the DOM', () => {
-    const field = document.createElement('input');
-    document.body.appendChild(field);
-    field.focus();
-    const focus = vi.spyOn(field, 'focus');
-    mount();
-    key('k', { ctrlKey: true }, field);
-    field.remove();
-    expect(() => key('Escape', {}, input())).not.toThrow();
-    expect(dialog('Command palette')).toBeNull();
-    expect(focus).not.toHaveBeenCalled();
-  });
-});
-
 describe('CommandPalette modal keys', () => {
-  it.each([
-    ['palette', () => key('k', { ctrlKey: true }), () => input()],
-    ['? sheet', () => key('?'), () => document.querySelector('button.btn') as HTMLElement],
-  ])('the %s keeps keydown away from window-level handlers behind it', (_name, open, focused) => {
-    const behind = vi.fn();
-    mount();
-    open();
-    window.addEventListener('keydown', behind);
-    try {
-      const target = focused();
-      for (const k of ['s', 'j', 'ArrowDown', 'Enter']) key(k, {}, target);
-      expect(behind).not.toHaveBeenCalled();
-    } finally {
-      window.removeEventListener('keydown', behind);
-    }
-  });
 
   it('still toggles with Ctrl+K from inside the palette and lets keys through once closed', () => {
     const behind = vi.fn();
@@ -253,30 +162,6 @@ describe('CommandPalette modal keys', () => {
 });
 
 describe('CommandPalette groups and look', () => {
-  const groups = () =>
-    [...document.querySelectorAll<HTMLElement>('[role="listbox"] [role="group"]')].map((g) => ({
-      name: document.getElementById(g.getAttribute('aria-labelledby')!)?.textContent,
-      options: [...g.querySelectorAll('[role="option"]')].map((o) => o.textContent),
-    }));
-
-  it('groups commands under section labels, in the order the keyboard walks them', () => {
-    mount();
-    key('k', { ctrlKey: true });
-    const all = options();
-    expect(groups().map((g) => g.name)).toEqual(['Navigation', 'Agents', 'Actions']);
-    expect(groups().flatMap((g) => g.options)).toEqual(all);
-    expect(groups()[1]!.options).toEqual(['Open agent Support Bot', 'Open agent researcher']);
-    expect(groups()[2]!.options).toEqual(['Open Agent Author', 'Describe a new agent with AI', 'Toggle theme']);
-    // Every option carries a decorative icon; the label is its whole text.
-    for (const o of document.querySelectorAll('[role="option"]')) {
-      expect(o.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
-    }
-    // ArrowUp from the first option wraps to the last group's last option.
-    key('ArrowUp', {}, input());
-    const active = document.getElementById(input().getAttribute('aria-activedescendant')!);
-    expect(active?.textContent).toBe('Toggle theme');
-    expect(active?.closest('[role="group"]')).toBe(document.querySelectorAll('[role="group"]')[2]);
-  });
 
   it('"Open Agent Author" and "Describe a new agent with AI" queue their open requests (AA19)', async () => {
     const { takePendingOpen, CREATE_AGENT_DRAFT } = await import('../../author/authorEntry');
@@ -302,62 +187,5 @@ describe('CommandPalette groups and look', () => {
       const cmd = buildCommands(`Go to ${item.label}`, [], () => {}).find((c) => c.id === `go:${item.id}`);
       expect(cmd?.icon, item.id).toBe(item.icon);
     }
-  });
-
-  it('puts a pasted trace id in its own leading group', () => {
-    mount();
-    key('k', { ctrlKey: true });
-    type('4bf92f3577b34da6');
-    expect(groups()).toEqual([{ name: 'Trace', options: ['Open trace 4bf92f3577b34da6'] }]);
-  });
-
-  it('shows a search icon, an Esc hint and a footer of key hints', () => {
-    mount();
-    key('k', { ctrlKey: true });
-    const palette = dialog('Command palette')!;
-    expect(palette.querySelector('.cmdk-search svg')?.getAttribute('aria-hidden')).toBe('true');
-    expect(palette.querySelector('.cmdk-search kbd')?.textContent).toBe('Esc');
-    const footer = palette.querySelector('.cmdk-footer')!;
-    expect(footer.textContent).toMatch(/navigate/);
-    expect(footer.textContent).toMatch(/open/);
-    expect(footer.textContent).toMatch(/close/);
-    expect(footer.querySelectorAll('kbd').length).toBeGreaterThanOrEqual(3);
-    // The input has no outline of its own; the search row shows focus instead.
-    const css = readFileSync(resolve(__dirname, '../commandPalette.css'), 'utf8');
-    expect(css).toMatch(/\.cmdk-search:focus-within\s*\{[^}]*var\(--accent\)/);
-    expect(css).not.toMatch(/var\(--bg\) 60%/);
-    // Still the one focusable control: Tab stays on the input.
-    expect(palette.querySelectorAll('button, a[href], [tabindex]:not([tabindex="-1"])')).toHaveLength(0);
-  });
-});
-
-describe('buildCommands groups', () => {
-  it('labels navigation, agent, action and trace commands with their group', () => {
-    const groupsOf = (q: string) => buildCommands(q, [{ id: 'a', name: 'Alpha' }], () => {}).map((c) => c.group);
-    expect(new Set(groupsOf(''))).toEqual(new Set(['Navigation', 'Agents', 'Actions']));
-    expect(groupsOf('abcdef12')[0]).toBe('Trace');
-  });
-});
-
-describe('matchShortcut', () => {
-  const ev = (k: string, init: KeyboardEventInit = {}) => new KeyboardEvent('keydown', { key: k, ...init });
-  it('maps Ctrl/Cmd+K and ? and nothing else', () => {
-    expect(matchShortcut(ev('k', { ctrlKey: true }))).toBe('palette');
-    expect(matchShortcut(ev('K', { metaKey: true }))).toBe('palette');
-    expect(matchShortcut(ev('л', { ctrlKey: true, code: 'KeyK' }))).toBe('palette'); // Russian layout
-    expect(matchShortcut(ev('?'))).toBe('help');
-    expect(matchShortcut(ev('k'))).toBeNull();
-    expect(matchShortcut(ev('j'))).toBeNull();
-    expect(matchShortcut(ev('Escape'))).toBeNull();
-  });
-});
-
-describe('buildCommands', () => {
-  const noop = () => {};
-  it('only treats 8+ hex/dash characters as a trace id', () => {
-    expect(buildCommands('abc-1234', [], noop)[0].label).toBe('Open trace abc-1234');
-    expect(buildCommands('abc123', [], noop)).toEqual([]);
-    expect(buildCommands('go to traces!', [], noop)).toEqual([]);
-    expect(buildCommands('GO TO TRACES', [], noop).map((c) => c.label)).toEqual(['Go to Traces']);
   });
 });

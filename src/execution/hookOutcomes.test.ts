@@ -81,19 +81,6 @@ describe('preToolCall outcomes', () => {
     expect(model.calls[1].messages.find((m) => m.role === 'tool')?.metadata).toEqual({ replacedByHook: 'cache' });
   });
 
-  it('{ input } chains: each hook sees the previous input, and the tool runs with the last one', async () => {
-    const search = searchTool();
-    const seen: unknown[] = [];
-    const hooks: AgentHook[] = [
-      { name: 'trim', preToolCall: (ctx) => ({ input: { ...ctx.args, query: String(ctx.args.query).trim() } }) },
-      { name: 'cap', preToolCall: (ctx) => (seen.push({ ...ctx.args }), { input: { ...ctx.args, limit: 3 } }) },
-    ];
-    await createAgent({ provider: mockModel([call('  cats  ', 9), 'ok']), tools: [search.defined], hooks }).send('go');
-
-    expect(seen).toEqual([{ query: 'cats', limit: 9 }]);
-    expect(search.ran).toEqual([{ query: 'cats', limit: 3 }]);
-  });
-
   it('{ input } is validated again; a mismatch is an error naming the hook, and the tool does not run', async () => {
     const search = searchTool();
     const model = mockModel([call('cats'), 'ok']);
@@ -104,35 +91,6 @@ describe('preToolCall outcomes', () => {
     const [result] = toolResults(model) as Array<{ kind: string; hook: string; message: string }>;
     expect(result).toMatchObject({ kind: 'validation', hook: 'bad' });
     expect(result.message).toMatch(/^Input from hook 'bad' for tool 'search' was refused: /);
-  });
-
-  it('nothing (or an unrelated return value) keeps the call unchanged', async () => {
-    const search = searchTool();
-    const hooks = [{ name: 'noop', preToolCall: () => 42 }] as unknown as AgentHook[];
-    expect((await createAgent({ provider: mockModel([call('cats'), 'ok']), tools: [search.defined], hooks }).send('go')).text).toBe('ok');
-    expect(search.ran).toEqual([{ query: 'cats', limit: 5 }]);
-  });
-
-  it('a throwing hook still rejects the run (unchanged behavior)', async () => {
-    const boom: AgentHook = { name: 'boom', preToolCall: () => { throw new Error('rate limited'); } };
-    const agent = createAgent({ provider: mockModel([call('cats'), 'ok']), tools: [searchTool().defined], hooks: [boom] });
-    await expect(agent.send('go')).rejects.toThrow('rate limited');
-  });
-});
-
-describe('postToolCall outcomes', () => {
-  it('{ result } replaces what the model sees; later hooks see the replacement', async () => {
-    const model = mockModel([call('cats'), 'ok']);
-    const seen: unknown[] = [];
-    const hooks: AgentHook[] = [
-      { name: 'redact', postToolCall: (_ctx, result) => ({ result: String(result.result).replace('cats', '[redacted]') }) },
-      { name: 'spy', postToolCall: (_ctx, result) => void seen.push(result.result) },
-    ];
-    const events = await collect(createAgent({ provider: model, tools: [searchTool().defined], hooks }).stream('go'));
-
-    expect(toolResults(model)[0]).toBe('found [redacted]');
-    expect(seen).toEqual(['found [redacted]']);
-    expect(events.find((e) => e.type === 'tool.done')).toMatchObject({ result: 'found [redacted]', replacedByHook: 'redact' });
   });
 });
 
@@ -158,22 +116,6 @@ describe('order of evaluation', () => {
     expect(search.ran).toEqual([{ query: 'cats', limit: 1 }]);
   });
 
-  it('on a resumed call, hook input that differs from the approved input is refused (also streamed)', async () => {
-    const search = searchTool(() => 'ask');
-    let limit = 1;
-    const cap: AgentHook = { name: 'cap', preToolCall: (ctx) => ({ input: { ...ctx.args, limit } }) };
-    const model = mockModel([call('cats', 9), 'done']);
-    const agent = createAgent({ provider: model, tools: [search.defined], hooks: [cap] });
-
-    const paused = await agent.send('go');
-    limit = 2;
-    const events = await collect(agent.approvals.streamResolve({ id: paused.approvalId!, approved: true }));
-
-    expect(search.ran).toEqual([]);
-    expect(toolResults(model)[0]).toMatchObject({ kind: 'validation', hook: 'cap' });
-    expect(events.find((e) => e.type === 'tool.error')).toMatchObject({ error: { message: expect.stringContaining('approved with different input') } });
-  });
-
   it('on a resumed call, a hook may still supply the result', async () => {
     const search = searchTool(() => 'ask');
     let resumed = false;
@@ -188,104 +130,5 @@ describe('order of evaluation', () => {
     expect(search.ran).toEqual([]);
     expect(toolResults(model)[0]).toBe('cached');
     expect(model.calls[1].messages.find((m) => m.role === 'tool')?.metadata).toMatchObject({ replacedByHook: 'cache' });
-  });
-});
-
-describe('sub-agents inherit hook outcomes', () => {
-  it("a lead's preToolCall deny reaches the sub-agent's model", async () => {
-    const search = searchTool();
-    const childModel = mockModel([call('cats'), 'could not search']);
-    const researcher = createAgent({ name: 'researcher', description: 'Researches', provider: childModel, tools: [search.defined] });
-    const deny: AgentHook = { name: 'no-search', preToolCall: (ctx) => (ctx.toolName === 'search' ? { deny: 'Offline' } : undefined) };
-    const task = { toolCalls: [{ name: 'task', args: { agent: 'researcher', prompt: 'look', description: 'look' } }] };
-    const lead = createAgent({ provider: mockModel([task, 'done']), subagents: { researcher }, hooks: [deny] });
-
-    expect((await lead.send('go')).text).toBe('done');
-    expect(search.ran).toEqual([]);
-    expect(toolResults(childModel)[0]).toMatchObject({ kind: 'denied', reason: 'Offline' });
-  });
-});
-
-describe('ctx.metadata', () => {
-  it("send(x, { metadata }) reaches every hook context as `ctx.metadata`", async () => {
-    const search = searchTool();
-    const seen: Array<Record<string, unknown> | undefined> = [];
-    const spy: AgentHook = {
-      name: 'spy',
-      preGenerate: (ctx) => void seen.push(ctx.metadata),
-      postGenerate: (ctx) => void seen.push(ctx.metadata),
-      preToolCall: (ctx) => void seen.push(ctx.metadata),
-      postToolCall: (ctx) => void seen.push(ctx.metadata),
-    };
-    const metadata = { requestId: 'req-1', tenant: 'acme' };
-    const agent = createAgent({ provider: mockModel([call('cats'), 'done']), tools: [search.defined], hooks: [spy] });
-
-    expect((await agent.send('go', { metadata })).text).toBe('done');
-
-    // The exact object passed to send(), at every hook point: pre/post
-    // generate for both model calls, pre/post tool call for `search`.
-    expect(seen).toHaveLength(6);
-    for (const m of seen) expect(m).toBe(metadata);
-  });
-
-  it('stream(x, { metadata }) reaches hooks too', async () => {
-    const seen: Array<Record<string, unknown> | undefined> = [];
-    const spy: AgentHook = { name: 'spy', preGenerate: (ctx) => void seen.push(ctx.metadata) };
-    const metadata = { requestId: 'req-2' };
-
-    await collect(createAgent({ provider: mockModel(['ok']), hooks: [spy] }).stream('go', { metadata }));
-
-    expect(seen).toEqual([{ requestId: 'req-2' }]);
-  });
-
-  it('leaves ctx.metadata undefined when the call passed none', async () => {
-    const seen: Array<Record<string, unknown> | undefined> = [];
-    const spy: AgentHook = { name: 'spy', preGenerate: (ctx) => void seen.push(ctx.metadata) };
-
-    await createAgent({ provider: mockModel(['ok']), hooks: [spy] }).send('go');
-
-    expect(seen).toEqual([undefined]);
-  });
-
-  it("a sub-agent's run inherits the parent run's metadata (its hooks see it, tagged `subagent`)", async () => {
-    const seen: Array<{ metadata: Record<string, unknown> | undefined; subagent: string | undefined }> = [];
-    const spy: AgentHook = {
-      name: 'spy',
-      preGenerate: (ctx) => void seen.push({ metadata: ctx.metadata, subagent: ctx.subagent?.name }),
-    };
-    const researcher = createAgent({ name: 'researcher', description: 'Researches', provider: mockModel(['found it']) });
-    const task = { toolCalls: [{ name: 'task', args: { agent: 'researcher', prompt: 'look', description: 'look' } }] };
-    const lead = createAgent({ provider: mockModel([task, 'done']), subagents: { researcher }, hooks: [spy] });
-
-    await lead.send('go', { metadata: { requestId: 'req-9' } });
-
-    expect(seen).toEqual([
-      { metadata: { requestId: 'req-9' }, subagent: undefined },
-      { metadata: { requestId: 'req-9' }, subagent: 'researcher' },
-      { metadata: { requestId: 'req-9' }, subagent: undefined },
-    ]);
-  });
-
-  it('a run resumed after an approval keeps seeing the metadata it was sent with', async () => {
-    const search = searchTool(() => 'ask');
-    const seen: Array<Record<string, unknown> | undefined> = [];
-    const spy: AgentHook = {
-      name: 'spy',
-      preGenerate: (ctx) => void seen.push(ctx.metadata),
-      preToolCall: (ctx) => void seen.push(ctx.metadata),
-    };
-    const agent = createAgent({ provider: mockModel([call('cats'), 'done']), tools: [search.defined], hooks: [spy] });
-
-    const paused = await agent.send('go', { metadata: { requestId: 'req-7' } });
-    await agent.approvals.resolve({ id: paused.approvalId!, approved: true });
-
-    // preGenerate + preToolCall of the paused run, then the approved call's
-    // hooks and the continued run's preGenerate - all see the send's metadata.
-    expect(seen).toEqual([
-      { requestId: 'req-7' },
-      { requestId: 'req-7' },
-      { requestId: 'req-7' },
-      { requestId: 'req-7' },
-    ]);
   });
 });

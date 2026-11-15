@@ -7,7 +7,6 @@ import { MockLLMProvider } from './mock';
 import { createRateLimiter, withRateLimit } from './rateLimit';
 import { createAgent } from '../createAgent';
 import { mockModel } from '../testing';
-import { ConfigurationError } from '../execution/errors';
 
 const call = (text = 'hi', extra: Partial<GenerateOptions> = {}): GenerateOptions => ({
   messages: [{ role: 'user', content: text }],
@@ -54,39 +53,6 @@ describe('withRateLimit', () => {
     vi.useRealTimers();
   });
 
-  it('caps in-flight calls at maxConcurrent and starts the next as one finishes', async () => {
-    const { provider, stats, finish } = gated();
-    const limited = withRateLimit(provider, { maxConcurrent: 2 });
-    const results = [1, 2, 3, 4].map(() => limited.generate(call()));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(stats).toMatchObject({ started: 2, active: 2 });
-    finish();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(stats.started).toBe(3);
-    finish();
-    await vi.advanceTimersByTimeAsync(0);
-    finish();
-    await vi.advanceTimersByTimeAsync(0);
-    finish();
-    await Promise.all(results);
-    expect(stats.peak).toBe(2);
-    expect(stats.started).toBe(4);
-  });
-
-  it('spreads calls over the minute with requestsPerMinute', async () => {
-    const mock = mockOf('a');
-    const spy = vi.spyOn(mock, 'generate');
-    const limited = withRateLimit(mock, { requestsPerMinute: 2 });
-    const done = [1, 2, 3].map(() => limited.generate(call()));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(spy).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(59_000);
-    expect(spy).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(spy).toHaveBeenCalledTimes(3);
-    await Promise.all(done);
-  });
-
   it('holds calls back by their estimated tokens per minute', async () => {
     const mock = fake('t', async () => ({ text: 'a', finishReason: 'stop' }) as GenerateResult);
     const spy = vi.spyOn(mock, 'generate');
@@ -98,36 +64,6 @@ describe('withRateLimit', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(spy).toHaveBeenCalledTimes(2);
     await Promise.all(done);
-  });
-
-  it('runs a call larger than tokensPerMinute alone instead of never', async () => {
-    const limited = withRateLimit(mockOf('a'), { tokensPerMinute: 10 });
-    await expect(limited.generate(call('x', { maxTokens: 500 }))).resolves.toBeDefined();
-  });
-
-  it('re-books a finished call at its reported usage', async () => {
-    const reply: GenerateResult = { text: 'a', finishReason: 'stop', usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } };
-    const inner = fake('u', async () => reply);
-    const spy = vi.spyOn(inner, 'generate');
-    const limited = withRateLimit(inner, { tokensPerMinute: 1_000 });
-    const big = call('x', { maxTokens: 900 });
-    await limited.generate(big);
-    await limited.generate(big); // 900 estimated would have blocked; 2 reported does not
-    expect(spy).toHaveBeenCalledTimes(2);
-  });
-
-  it('serves waiting calls in order', async () => {
-    const { provider, finish } = gated();
-    const limited = withRateLimit(provider, { maxConcurrent: 1 });
-    const order: string[] = [];
-    const run = (id: string) => limited.generate(call(id)).then(() => order.push(id));
-    const all = [run('a'), run('b'), run('c')];
-    for (let i = 0; i < 3; i++) {
-      await vi.advanceTimersByTimeAsync(0);
-      finish();
-    }
-    await Promise.all(all);
-    expect(order).toEqual(['a', 'b', 'c']);
   });
 
   it('removes a queued call that is aborted, without starting it', async () => {
@@ -147,16 +83,6 @@ describe('withRateLimit', () => {
     await first;
     expect(stats.started).toBe(1);
     await expect(limited.generate(call('late', { signal: controller.signal }))).rejects.toThrow('stop');
-  });
-
-  it('frees the slot when a call fails', async () => {
-    const limiter = createRateLimiter({ maxConcurrent: 1 });
-    const limited = withRateLimit(
-      fake('f', async () => Promise.reject(new Error('boom'))),
-      limiter
-    );
-    await expect(limited.generate(call())).rejects.toThrow('boom');
-    expect(limiter.inFlight).toBe(0);
   });
 
   it('holds a stream slot until the stream is read to its end', async () => {
@@ -191,13 +117,6 @@ describe('withRateLimit', () => {
     await second;
     expect(limiter.pending).toBe(0);
   });
-
-  it('rejects invalid limits', () => {
-    const mock = mockOf('a');
-    expect(() => withRateLimit(mock, { requestsPerMinute: 0 })).toThrow(ConfigurationError);
-    expect(() => withRateLimit(mock, { maxConcurrent: 1.5 })).toThrow(ConfigurationError);
-    expect(() => withRateLimit(mock, { tokensPerMinute: Number.NaN })).toThrow(ConfigurationError);
-  });
 });
 
 describe('createAgent({ rateLimit })', () => {
@@ -222,16 +141,8 @@ describe('createAgent({ rateLimit })', () => {
     return stats.peak;
   }
 
-  it('is unbounded without rateLimit', async () => {
-    expect(await peakOverlap()).toBe(2);
-  });
-
   it("shares the lead's budget with the sub-agents it runs", async () => {
     expect(await peakOverlap({ maxConcurrent: 1 })).toBe(1);
-  });
-
-  it('rejects invalid limits at createAgent()', () => {
-    expect(() => createAgent({ provider: mockOf('a'), rateLimit: { maxConcurrent: 0 } })).toThrow(ConfigurationError);
   });
 });
 

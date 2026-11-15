@@ -6,7 +6,7 @@ import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { findStudio, runStudio, startStudio, STUDIO_MISSING, STUDIO_PACKAGE, studioUrl } from './studio';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-studio-test-'));
+const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-studio-test-')));
 
 /** A checkout's apps/agent-forge: package.json naming Studio, optional cli.cjs/server source. */
 function makeCheckout(root: string, opts: { cli?: boolean; serverSource?: boolean } = {}): string {

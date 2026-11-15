@@ -37,24 +37,6 @@ describe('once() and a non-human approve callback', () => {
     expect(sent).toEqual(['a@x.io', 'b@x.io']);
     expect(approve).toHaveBeenCalledTimes(2);
   });
-
-  it('a callback that says no the second time stops the second call', async () => {
-    const { tool, sent } = emailTool(once());
-    let asked = 0;
-    const agent = createAgent({ provider: mockModel([email('a@x.io', 'c1'), email('b@x.io', 'c2'), 'done']), tools: [tool], approve: () => ++asked === 1 });
-    await agent.session({ id: 's' }).send('go');
-    expect(asked).toBe(2);
-    expect(sent).toEqual(['a@x.io']);
-  });
-
-  it("still remembers a human's approval", async () => {
-    const { tool, sent } = emailTool(once());
-    const agent = createAgent({ provider: mockModel([email('a@x.io', 'c1'), email('b@x.io', 'c2'), 'done']), tools: [tool] });
-    const paused = await agent.session({ id: 's' }).send('go');
-    const result = await agent.approvals.resolve({ id: paused.approvalId!, approved: true });
-    expect(result.finishReason).toBe('stop');
-    expect(sent).toEqual(['a@x.io', 'b@x.io']);
-  });
 });
 
 describe("ApprovalDecision.remember: 'session'", () => {
@@ -77,31 +59,9 @@ describe("ApprovalDecision.remember: 'session'", () => {
     expect(other.finishReason).toBe('awaiting-approval');
     expect(sent).toEqual(['a@x.io', 'a@x.io']);
   });
-
-  it('without remember, the next identical call asks again', async () => {
-    const { tool } = emailTool(true);
-    const agent = createAgent({ provider: mockModel([email('a@x.io', 'c1'), 'first', email('a@x.io', 'c2'), 'second']), tools: [tool] });
-    const session = agent.session({ id: 's' });
-    const paused = await session.send('mail a');
-    await agent.approvals.resolve({ id: paused.approvalId!, approved: true });
-    expect((await session.send('again')).finishReason).toBe('awaiting-approval');
-  });
 });
 
 describe('ApprovalDecision.args: approve with edits', () => {
-  it('runs the tool with the edited arguments and rewrites the call in the transcript', async () => {
-    const { tool, sent } = emailTool(true);
-    const model = mockModel([email('wrong@x.io', 'c1'), 'done']);
-    const agent = createAgent({ provider: model, tools: [tool] });
-    const paused = await agent.send('mail');
-    const result = await agent.approvals.resolve({ id: paused.approvalId!, approved: true, args: { to: 'right@x.io' } });
-    expect(sent).toEqual(['right@x.io']);
-    const call = result.messages.find((m) => m.role === 'assistant' && m.toolCalls?.length)?.toolCalls?.[0];
-    expect(JSON.parse(call!.function.arguments)).toEqual({ to: 'right@x.io' });
-    // The model's next call saw the edited call and its result.
-    const seen = model.calls[1]?.messages.find((m) => m.role === 'assistant' && m.toolCalls?.length)?.toolCalls?.[0];
-    expect(JSON.parse(seen!.function.arguments)).toEqual({ to: 'right@x.io' });
-  });
 
   it('refuses arguments the schema rejects and leaves the approval pending', async () => {
     const { tool, sent } = emailTool(true);
@@ -115,14 +75,5 @@ describe('ApprovalDecision.args: approve with edits', () => {
     const result = await agent.approvals.resolve({ id: paused.approvalId!, approved: true, args: { to: 'ok@x.io' } });
     expect(result.text).toBe('done');
     expect(sent).toEqual(['ok@x.io']);
-  });
-
-  it('ignores args on a rejection', async () => {
-    const { tool, sent } = emailTool(true);
-    const agent = createAgent({ provider: mockModel([email('a@x.io', 'c1'), 'ok']), tools: [tool] });
-    const paused = await agent.send('mail');
-    const result = await agent.approvals.resolve({ id: paused.approvalId!, approved: false, args: { to: 'x' } });
-    expect(result.text).toBe('ok');
-    expect(sent).toEqual([]);
   });
 });

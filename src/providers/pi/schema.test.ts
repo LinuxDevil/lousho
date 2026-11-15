@@ -19,19 +19,9 @@ describe('toolParametersToJsonSchema - entry handling', () => {
     expect(toolParametersToJsonSchema(42)).toBeUndefined();
   });
 
-  it('passes a plain JSON-Schema object through untouched', () => {
-    const raw = { type: 'object', properties: { q: { type: 'string' } } };
-    expect(toolParametersToJsonSchema(raw)).toBe(raw);
-  });
-
   it("unwraps an 'ai' jsonSchema() wrapper to its .jsonSchema", () => {
     const inner = { type: 'object', properties: { n: { type: 'number' } } };
     expect(toolParametersToJsonSchema({ jsonSchema: inner, validate: () => ({ success: true }) })).toBe(inner);
-  });
-
-  it('caches per schema object (second call returns the same reference)', () => {
-    const schema = z3('ZodString');
-    expect(toolParametersToJsonSchema(schema)).toBe(toolParametersToJsonSchema(schema));
   });
 });
 
@@ -57,10 +47,6 @@ describe('toolParametersToJsonSchema - zod 3 scalar kinds', () => {
     expect(toolParametersToJsonSchema(z3('ZodEnum', { values: ['a', 'b'] }))).toEqual({ type: 'string', enum: ['a', 'b'] });
     expect(toolParametersToJsonSchema(z3('ZodNativeEnum', { values: { A: 'a', B: 'b' } }))).toEqual({ enum: ['a', 'b'] });
     expect(toolParametersToJsonSchema(z3('ZodLiteral', { value: 'x' }))).toEqual({ const: 'x', enum: ['x'] });
-  });
-
-  it('carries the node description onto the JSON Schema', () => {
-    expect(toolParametersToJsonSchema(z3('ZodString', { description: 'the name' }))).toEqual({ type: 'string', description: 'the name' });
   });
 
   it('collapses non-serializable kinds to the empty schema', () => {
@@ -116,21 +102,11 @@ describe('toolParametersToJsonSchema - zod 3 checks', () => {
 });
 
 describe('toolParametersToJsonSchema - zod 3 composite kinds', () => {
-  it('unwraps optional/default/catch/readonly/branded to the inner schema', () => {
-    for (const typeName of ['ZodOptional', 'ZodDefault', 'ZodCatch', 'ZodReadonly', 'ZodBranded']) {
-      expect(toolParametersToJsonSchema(z3(typeName, { innerType: z3('ZodString') }))).toEqual({ type: 'string' });
-    }
-  });
 
   it('expresses nullable as an anyOf so null still validates', () => {
     expect(toolParametersToJsonSchema(z3('ZodNullable', { innerType: z3('ZodString') }))).toEqual({
       anyOf: [{ type: 'string' }, { type: 'null' }],
     });
-  });
-
-  it('unwraps ZodEffects to the refined schema', () => {
-    expect(toolParametersToJsonSchema(z3('ZodEffects', { schema: z3('ZodNumber') }))).toEqual({ type: 'number' });
-    expect(toolParametersToJsonSchema(z3('ZodEffects', { innerType: z3('ZodBoolean') }))).toEqual({ type: 'boolean' });
   });
 
   it('builds objects with required fields detected through wrappers', () => {

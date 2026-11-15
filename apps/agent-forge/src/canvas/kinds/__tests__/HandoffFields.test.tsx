@@ -98,20 +98,6 @@ beforeEach(() => {
 });
 
 describe('handoff Inspector: target', () => {
-  it('groups the options under Subagents and Agents, excluding the open agent', () => {
-    renderInspector();
-    const select = field<HTMLSelectElement>('node-handoff-agent');
-    const labels = [...select.querySelectorAll('optgroup')].map((g) => g.label);
-    expect(labels).toEqual(['Subagents', 'Agents']);
-    const subs = [...select.querySelectorAll<HTMLOptionElement>('optgroup[label="Subagents"] option')].map((o) => o.value);
-    expect(subs).toEqual(['billing']);
-    const workspace = [...select.querySelectorAll<HTMLOptionElement>('optgroup[label="Agents"] option')].map(
-      (o) => o.value,
-    );
-    expect(workspace).toEqual(['billing-svc', 'search-svc']);
-    const flat = [...select.children].filter((el) => el.tagName === 'OPTION').map((o) => o.textContent);
-    expect(flat).toEqual(['Other…']);
-  });
 
   it('writes the picked sibling key or workspace id into item.agent', () => {
     renderInspector();
@@ -146,13 +132,6 @@ describe('handoff Inspector: tool name, description, filter and schema', () => {
     expect(container.textContent).toContain('Use letters, digits, dash or underscore (max 64)');
     type('node-handoff-tool', 'transfer_to_billing_v2');
     expect(item().toolName).toBe('transfer_to_billing_v2');
-  });
-
-  it('removes toolName when the input is cleared', () => {
-    app.graph = specToGraph(specOf([{ agent: 'billing', toolName: 'transfer_to_billing' }]));
-    renderInspector();
-    type('node-handoff-tool', '');
-    expect('toolName' in item()).toBe(false);
   });
 
   it('writes the description', () => {

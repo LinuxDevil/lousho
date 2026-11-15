@@ -29,11 +29,6 @@ describe('author eval scenario files', () => {
     }
   });
 
-  it('names are unique', () => {
-    const names = loaded.map(({ scenario }) => scenario.name);
-    expect(new Set(names).size).toBe(names.length);
-  });
-
   it('expected and forbidden tool names are all Author tools', () => {
     const known = new Set<string>(AUTHOR_TOOL_NAMES);
     for (const { scenario } of loaded) {

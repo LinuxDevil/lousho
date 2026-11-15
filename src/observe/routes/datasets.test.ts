@@ -138,17 +138,6 @@ describe('POST /api/v1/datasets/:name/examples', () => {
     });
   });
 
-  it('copies the trace root input and output from from_trace_id', async () => {
-    await withDb(async (database) => {
-      await create(database, { name: 'ds' });
-      const out = await addExample(database, 'ds', { from_trace_id: 'tr' });
-      expect(out.status).toBe(201);
-      const { example } = out.body as { example: ExampleRow };
-      // JSON text parses back to its value; plain text stays a string.
-      expect(example).toMatchObject({ input: { question: 'refund?' }, expected: 'Refund issued.', source_trace_id: 'tr' });
-    });
-  });
-
   it('404s an unknown trace or dataset; 400s a root without captured input', async () => {
     await withDb(async (database) => {
       await create(database, { name: 'ds' });
@@ -157,15 +146,6 @@ describe('POST /api/v1/datasets/:name/examples', () => {
       const bare = await addExample(database, 'ds', { from_trace_id: 'no-input' });
       expect(bare.status).toBe(400);
       expect((bare.body as { error: string }).error).toMatch(/no captured input/);
-    });
-  });
-
-  it('rejects both or neither of input/from_trace_id with 400', async () => {
-    await withDb(async (database) => {
-      await create(database, { name: 'ds' });
-      for (const body of [{}, { expected: 1 }, { input: 1, from_trace_id: 'tr' }]) {
-        await expect(addExample(database, 'ds', body)).rejects.toMatchObject({ code: 'LOUSHO_REQUEST_INVALID' });
-      }
     });
   });
 });

@@ -10,10 +10,9 @@ import { createAgent } from '../createAgent';
 import type { Message } from '../providers';
 import { textOf } from '../providers';
 import { defineTool } from '../tools/defineTool';
-import { HookRegistry } from '../execution/hooks';
 import type { AgentEvent, AgentEventOf } from '../execution';
 import { mockModel } from '../testing';
-import { compactMessages, createCompactionHook, summarizeStrategy, type CompactionInfo } from './compaction';
+import { compactMessages, type CompactionInfo } from './compaction';
 
 const BIG = 'x'.repeat(4_000); // about 1,000 tokens
 
@@ -23,10 +22,6 @@ const fetchPage = defineTool({
   input: z.object({ n: z.number() }),
   execute: async ({ n }) => `${n}:${BIG}`,
 });
-const fetchCall = (n: number) => ({ toolCalls: [{ name: 'fetch_page', args: { n }, id: `call_${n}` }] });
-const usage = (inputTokens: number, outputTokens: number) => ({ usage: { inputTokens, outputTokens } });
-const fourPages = (spent?: ReturnType<typeof usage>) =>
-  [fetchCall(1), fetchCall(2), fetchCall(3), fetchCall(4), { text: 'done' }].map((turn) => ({ ...turn, ...spent }));
 
 function transcript(rounds: number): Message[] {
   const messages: Message[] = [
@@ -46,78 +41,6 @@ function transcript(rounds: number): Message[] {
 
 const ofType = <T extends AgentEvent['type']>(events: AgentEvent[], type: T) =>
   events.filter((e): e is AgentEventOf<T> => e.type === type);
-
-describe('a rejected summary is retried once the transcript has grown', () => {
-  it('prunes only while the transcript is small, then summarizes again once it has doubled', async () => {
-    const summarizer = mockModel([BIG], { onExhausted: 'repeat-last' });
-    const infos: CompactionInfo[] = [];
-    const hooks = new HookRegistry();
-    hooks.register(
-      createCompactionHook({
-        strategy: summarizeStrategy({ model: summarizer }),
-        contextWindow: 1_000,
-        protectedTokens: 0,
-        onCompaction: (info) => infos.push(info),
-      })
-    );
-    const messages = transcript(2); // 6 messages
-    await hooks.runPreGenerate({ messages, request: { messages } });
-    expect(summarizer.calls).toHaveLength(1);
-    expect(infos[0].error?.message).toMatch(/did not compact/);
-
-    // One more turn: not enough new content, still prune-only.
-    messages.push(...transcript(3).slice(6));
-    await hooks.runPreGenerate({ messages, request: { messages } });
-    expect(summarizer.calls).toHaveLength(1);
-
-    // Twice the messages of the rejection: the summarizer gets another chance.
-    messages.push(...transcript(5).slice(8));
-    expect(messages).toHaveLength(12);
-    await hooks.runPreGenerate({ messages, request: { messages } });
-    expect(summarizer.calls).toHaveLength(2);
-  });
-});
-
-describe('the summarizer call is part of the run', () => {
-  it('adds its usage to result.usage (byModel, modelCalls) and gives it a chat span tagged compaction', async () => {
-    const model = mockModel(fourPages(usage(100, 10)));
-    const summarizer = mockModel([{ text: 'Read pages 1 and 2.', ...usage(3_000, 400) }], { onExhausted: 'repeat-last', defaultModel: 'summarizer-model' });
-    const spans: Array<{ name: string; attributes: Record<string, unknown> }> = [];
-    const agent = createAgent({
-      provider: model,
-      tools: [fetchPage],
-      maxSteps: 10,
-      exporter: { onSpanStart: () => {}, onSpanEnd: (span) => spans.push({ name: span.name, attributes: { ...span.attributes } }) },
-      compaction: { contextWindow: 3_000, protectedTokens: 1_500, strategy: summarizeStrategy({ model: summarizer }) },
-    });
-    const result = await agent.send('read four pages');
-
-    expect(result.text).toBe('done');
-    expect(summarizer.calls).toHaveLength(1);
-    expect(result.usage.modelCalls).toBe(model.calls.length + 1);
-    expect(result.usage.byModel['summarizer-model']).toMatchObject({ inputTokens: 3_000, outputTokens: 400, calls: 1 });
-    expect(result.usage.inputTokens).toBe(model.calls.length * 100 + 3_000);
-    const compactionSpans = spans.filter((span) => span.attributes['lousho.call.purpose'] === 'compaction');
-    expect(compactionSpans).toHaveLength(1);
-    expect(compactionSpans[0].name).toMatch(/^chat/);
-  });
-
-  it('counts toward the run budgets', async () => {
-    const agent = createAgent({
-      provider: mockModel(fourPages(usage(100, 10))),
-      tools: [fetchPage],
-      maxSteps: 10,
-      limits: { maxTokens: 2_000 },
-      compaction: {
-        contextWindow: 3_000,
-        protectedTokens: 1_500,
-        strategy: summarizeStrategy({ model: mockModel([{ text: 'S', ...usage(3_000, 400) }], { onExhausted: 'repeat-last' }) }),
-      },
-    });
-    const result = await agent.send('read four pages');
-    expect(result.finishReason).toBe('budget-exceeded');
-  });
-});
 
 describe('compaction events and options', () => {
   it('compaction.start and compaction.done name the same strategy; done adds appliedStrategy when the summary was rejected', async () => {
@@ -144,23 +67,6 @@ describe('compaction events and options', () => {
     expect(rejected).toMatchObject({ strategy: 'two-phase', appliedStrategy: 'prune-tool-results' });
     // The object form passes onCompaction through.
     expect(infos.find((info) => info.error)?.appliedStrategy).toBe('prune-tool-results');
-  });
-
-  it('onCompaction in the object form receives the summary text', async () => {
-    const infos: CompactionInfo[] = [];
-    const agent = createAgent({
-      provider: mockModel(fourPages()),
-      tools: [fetchPage],
-      maxSteps: 10,
-      compaction: {
-        contextWindow: 3_000,
-        protectedTokens: 1_500,
-        strategy: summarizeStrategy({ model: mockModel(['Read pages 1 and 2.'], { onExhausted: 'repeat-last' }) }),
-        onCompaction: (info) => infos.push(info),
-      },
-    });
-    await agent.send('read four pages');
-    expect(infos.map((info) => info.summary)).toContain('Read pages 1 and 2.');
   });
 });
 

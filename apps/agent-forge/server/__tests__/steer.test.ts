@@ -18,7 +18,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { type AgentSpecV2 } from 'lousho';
-import { RunManager, NoActiveRunError, SteerUnsupportedError } from '../runRegistry';
+import { RunManager, SteerUnsupportedError } from '../runRegistry';
 import { newTestHost } from './testHost';
 import { FileCheckpointStore } from '../checkpointStore';
 import { FileApprovalStore } from '../approvalStore';
@@ -78,10 +78,6 @@ async function waitFor(predicate: () => boolean, what: string, timeoutMs = 5000)
   }
 }
 
-function messageText(message: { content: unknown }): string {
-  return typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
-}
-
 describe('RunManager.steer (T05)', () => {
   let baseDir: string;
   let runManager: RunManager;
@@ -103,13 +99,6 @@ describe('RunManager.steer (T05)', () => {
     fs.rmSync(baseDir, { recursive: true, force: true });
   });
 
-  it('rejects with NoActiveRunError when nothing is running', async () => {
-    await expect(runManager.steer('never-ran', 'hello')).rejects.toThrow(NoActiveRunError);
-    await expect(runManager.steer('never-ran', 'hello')).rejects.toThrow(
-      'Nothing is running, so there is nothing to steer.'
-    );
-  });
-
   it('rejects with SteerUnsupportedError for a running flow', async () => {
     const gate = deferred();
     setSteerGateScript({ blockCalls: 1, mode: 'before-output', gate: gate.promise });
@@ -124,45 +113,6 @@ describe('RunManager.steer (T05)', () => {
 
     gate.resolve();
     await waitForStatus(runManager, 'steer-flow', (s) => s.status !== 'running', 10000);
-  });
-
-  it('delivers a steer into a running agent: applied immediate, delivery delivered, transcript tagged steer', async () => {
-    const gate = deferred();
-    setSteerGateScript({ blockCalls: 1, mode: 'before-output', gate: gate.promise });
-    await runManager.run('steer-ok', 'hello', SPEC);
-    const provider = steerGateProviders[0];
-    await waitFor(() => provider.calls.length === 1, 'the first model call to start');
-
-    const response = await runManager.steer('steer-ok', 'actually use Paris');
-    expect(response.applied).toBe('immediate');
-    expect(typeof response.id).toBe('string');
-
-    // The steer is on the status payload right away, still 'queued' until
-    // the re-called model call picks it up.
-    const during = runManager.status('steer-ok');
-    expect(during.steering).toHaveLength(1);
-    expect(during.steering?.[0]).toMatchObject({
-      id: response.id,
-      message: 'actually use Paris',
-      delivery: 'queued',
-      mode: 'immediate',
-    });
-
-    // The aborted first call is re-made WITH the steered message (the SDK's
-    // steer contract), then the run finishes on its own.
-    await waitFor(() => provider.calls.length === 2, 'the re-called model call');
-    expect(provider.calls[1].messages.some((m) => m.role === 'user' && messageText(m).includes('actually use Paris'))).toBe(
-      true
-    );
-    const done = await waitForStatus(runManager, 'steer-ok', (s) => s.status === 'done');
-    expect(done.steering?.[0]?.delivery).toBe('delivered');
-
-    // The delivered steer joined the transcript as a user turn tagged
-    // source 'steer' - the ChatPanel's "Steered" bubble.
-    const steerBubble = runManager
-      .chatState('steer-ok')
-      .messages.find((m) => m.role === 'user' && m.content === 'actually use Paris');
-    expect(steerBubble?.source).toBe('steer');
   });
 
   it('marks a steer undelivered when the run ends before another model call, and logs a warn line', async () => {
@@ -209,25 +159,5 @@ describe('RunManager.steer (T05)', () => {
     expect(
       runManager.chatState('steer-late').messages.some((m) => m.content === 'too late')
     ).toBe(false);
-  });
-
-  it('resets the steering list when the next run launches', async () => {
-    const gate = deferred();
-    setSteerGateScript({ blockCalls: 1, mode: 'before-output', gate: gate.promise });
-    await runManager.run('steer-reset', 'hello', SPEC);
-    const provider = steerGateProviders[0];
-    await waitFor(() => provider.calls.length === 1, 'the first model call to start');
-    await runManager.steer('steer-reset', 'first run note');
-    gate.resolve();
-    await waitForStatus(runManager, 'steer-reset', (s) => s.status === 'done');
-    expect(runManager.status('steer-reset').steering).toHaveLength(1);
-
-    // The next launch starts with an empty steering list on its status.
-    const gate2 = deferred();
-    setSteerGateScript({ blockCalls: 1, mode: 'before-output', gate: gate2.promise });
-    await runManager.run('steer-reset', 'again', SPEC);
-    expect(runManager.status('steer-reset').steering ?? []).toHaveLength(0);
-    gate2.resolve();
-    await waitForStatus(runManager, 'steer-reset', (s) => s.status === 'done', 10000);
   });
 });

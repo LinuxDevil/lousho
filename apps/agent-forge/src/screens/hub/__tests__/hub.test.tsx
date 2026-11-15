@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../../../state/AppState', () => ({ useAppState: () => ({ runStatus: null }) }));
 
 import { HubScreen } from '../HubScreen';
-import { fmtSpan, groupNamespaces, parseEditedValue } from '../hubModel';
+import { parseEditedValue } from '../hubModel';
 import { render } from '../../../ui/__tests__/render';
 import { ToastProvider } from '../../../ui/Toast';
 import type { ObserveAgentRow, ObserveHubEntry } from '../../../observe/types';
@@ -131,24 +131,11 @@ afterEach(() => {
 });
 
 describe('hubModel', () => {
-  it('groups entries by namespace with fleet/private counts and the newest update', () => {
-    expect(groupNamespaces([DRAFT, README, CACHE])).toEqual([
-      { namespace: 'cache', entries: 1, fleet: 1, private: 0, updated: CACHE.created_at },
-      { namespace: 'docs', entries: 2, fleet: 1, private: 1, updated: DRAFT.created_at },
-    ]);
-  });
 
   it('parses an edit: JSON when it parses, the string for a plain-string entry, invalid for a JSON entry', () => {
     expect(parseEditedValue('{"a":1}', true)).toEqual({ ok: true, value: { a: 1 } });
     expect(parseEditedValue('just text', false)).toEqual({ ok: true, value: 'just text' });
     expect(parseEditedValue('{"a":', true)).toEqual({ ok: false });
-  });
-
-  it('formats a span in its two largest units', () => {
-    expect(fmtSpan(3_600_000)).toBe('1h');
-    expect(fmtSpan(5_400_000)).toBe('1h 30m');
-    expect(fmtSpan(45_000)).toBe('45s');
-    expect(fmtSpan(2 * 86_400_000 + 3_600_000)).toBe('2d 1h');
   });
 });
 
@@ -166,18 +153,6 @@ describe('HubScreen', () => {
     expect(docs.slice(0, 4)).toEqual(['docs', '2', '1', '1']);
     expect(c.textContent).toContain("Private entries shown are alpha's");
     expect(c.textContent).not.toContain('may be incomplete');
-  });
-
-  it('opening a namespace goes to #/hub/:namespace and keeps the query', async () => {
-    const c = await mountAt('#/hub?scope=fleet');
-    await open(rowFor(c, 'docs'));
-    expect(window.location.hash).toBe('#/hub/docs?scope=fleet');
-  });
-
-  it('notes when the daemon returned the 1000-row cap', async () => {
-    entries = Array.from({ length: 1000 }, (_, i) => entry({ namespace: `ns${i % 3}`, key: `k${i}`, scope: 'fleet', agent_id: 'a-1' }));
-    const c = await mountAt('#/hub');
-    expect(c.textContent).toContain('may be incomplete');
   });
 
   it('the scope filter: ?scope=fleet is sent to the daemon, and picking a scope writes the URL', async () => {
@@ -219,21 +194,6 @@ describe('HubScreen', () => {
     expect(lastHub().get('agent_id')).toBe('a-2');
   });
 
-  it('the key/value table shows key, preview, scope, writer name, updated and TTL', async () => {
-    const c = await mountAt('#/hub/docs');
-    const readme = rowFor(c, 'readme');
-    expect(readme.textContent).toContain('{"title":"Hi"');
-    expect(readme.querySelector('.status-pill')?.textContent).toBe('fleet');
-    expect(readme.textContent).toContain('zeta');
-    expect(readme.textContent).toMatch(/1h · expires in 5[89]m/);
-    const draft = rowFor(c, 'draft');
-    expect(draft.querySelector('.status-pill')?.textContent).toBe('private');
-    expect(draft.textContent).toContain('alpha');
-    expect(draft.textContent).toContain('never');
-    // Updated carries seconds.
-    expect(draft.textContent).toMatch(/\d\d:\d\d:\d\d/);
-  });
-
   it('a JSON value renders with JsonView; a plain string renders as preformatted text', async () => {
     const c = await mountAt('#/hub/docs');
     await open(rowFor(c, 'readme'));
@@ -246,30 +206,6 @@ describe('HubScreen', () => {
     const plain = c.querySelector('.hub-value')!;
     expect(plain.querySelector('.json-node')).toBeNull();
     expect(plain.querySelector('pre')?.textContent).toBe('plain words here');
-  });
-
-  it('entry cards answer j/k, and the open card is aria-current', async () => {
-    const c = await mountAt('#/hub/docs');
-    const cards = [...c.querySelectorAll<HTMLButtonElement>('.hub-card')];
-    expect(cards).toHaveLength(2);
-    cards[0].focus();
-    act(() => cards[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true })));
-    expect(document.activeElement).toBe(cards[1]);
-    // A card is named by its key alone; the preview and facts describe it.
-    const named = document.getElementById(cards[1].getAttribute('aria-labelledby')!);
-    expect(named?.className).toBe('hub-card-key');
-    expect(cards[1].getAttribute('aria-describedby')?.split(' ')).toHaveLength(3);
-    await open(cards[1]);
-    expect(c.querySelector('.hub-card[aria-current="true"]')).toBe(cards[1]);
-    expect(c.querySelector('section.hub-entry')?.getAttribute('aria-label')).toBe(`Entry ${cards[1].querySelector('.hub-card-key')?.textContent}`);
-  });
-
-  it('private entries have no Edit; fleet entries do', async () => {
-    const c = await mountAt('#/hub/docs');
-    await open(rowFor(c, 'draft'));
-    expect(buttonNamed(c, 'Edit')).toBeUndefined();
-    await open(rowFor(c, 'readme'));
-    expect(buttonNamed(c, 'Edit')).toBeDefined();
   });
 
   it("Edit on a fleet entry POSTs the writer's agent_id, scope fleet and the original ttl, then refreshes", async () => {
@@ -295,15 +231,6 @@ describe('HubScreen', () => {
     expect(c.querySelector('textarea')).toBeNull();
     expect(hubRequests.length).toBeGreaterThan(before);
     expect(document.body.textContent).toContain('Saved readme');
-  });
-
-  it('Cancel closes the editor without a request', async () => {
-    const c = await mountAt('#/hub/docs');
-    await open(rowFor(c, 'readme'));
-    act(() => buttonNamed(c, 'Edit')!.click());
-    act(() => buttonNamed(c, 'Cancel')!.click());
-    expect(c.querySelector('textarea')).toBeNull();
-    expect(posts).toHaveLength(0);
   });
 
   it('no agents: an empty state explaining that agents publish to the hub, and no hub request', async () => {

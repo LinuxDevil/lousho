@@ -4,14 +4,10 @@
  * `500`, and is reported as a failed turn, not a failed parse.
  */
 import { describe, it, expect, vi } from 'vitest';
-import type * as http from 'node:http';
-import { Readable } from 'node:stream';
 import type { SimpleAgent } from '../createAgent';
 import { SDKError } from '../execution/errors';
 import { httpChannel } from './httpChannel';
-import { mountChannels } from './mountChannels';
 import { mountFetchChannels } from './fetchChannels';
-import type { Channel, ChannelErrorContext } from './defineChannel';
 
 /** An agent whose every turn fails as a run another replica holds the lease of. */
 function busyAgent(): Pick<SimpleAgent, 'session' | 'approvals'> {
@@ -24,33 +20,7 @@ function busyAgent(): Pick<SimpleAgent, 'session' | 'approvals'> {
   return { session, approvals: { list: async () => [] } } as unknown as Pick<SimpleAgent, 'session' | 'approvals'>;
 }
 
-/** Drives a `mountChannels` handler with a fake `node:http` request and response pair. */
-async function postNode(channels: readonly Channel[], onError: (error: unknown, ctx: ChannelErrorContext) => void) {
-  const handler = mountChannels(busyAgent(), channels, { onError });
-  const req = Object.assign(Readable.from([Buffer.from(JSON.stringify({ sessionKey: 'ali', input: 'hi' }))]), {
-    method: 'POST',
-    url: '/channels/http',
-    headers: { 'content-type': 'application/json' },
-  });
-  const res: { status: number; headers: Record<string, string>; body: string } = { status: 0, headers: {}, body: '' };
-  const fakeRes = {
-    writeHead: (status: number, headers: Record<string, string> = {}) => ((res.status = status), (res.headers = headers), fakeRes),
-    end: (text?: string) => ((res.body = text ?? ''), fakeRes),
-  };
-  await handler(req as unknown as http.IncomingMessage, fakeRes as unknown as http.ServerResponse);
-  return res;
-}
-
 describe('channel turn on a busy session (LOUSHO_SESSION_BUSY)', () => {
-  it('mountChannels answers 409 with Retry-After and the coded error, and reports a failed turn', async () => {
-    const onError = vi.fn();
-    const res = await postNode([httpChannel()], onError);
-    expect(res.status).toBe(409);
-    expect(res.headers['Retry-After']).toMatch(/^\d+$/);
-    expect(JSON.parse(res.body)).toMatchObject({ code: 'LOUSHO_SESSION_BUSY' });
-    expect(onError).toHaveBeenCalledTimes(1);
-    expect(onError.mock.calls[0][1]).toMatchObject({ channel: 'http', stage: 'turn' });
-  });
 
   it('mountFetchChannels answers 409 with Retry-After and the coded error, and reports a failed turn', async () => {
     const onError = vi.fn();

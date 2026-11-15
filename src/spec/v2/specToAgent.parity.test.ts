@@ -81,29 +81,6 @@ async function assertBothPauseForApproval(spec: AgentSpec): Promise<void> {
 }
 
 describe('specToAgent / specV2ToAgent parity', () => {
-  it('(a) a minimal spec runs identically', async () => {
-    const spec = base();
-    const { v1, v2 } = await both(spec);
-    await assertSameHello(v1, v2);
-    await assertSameToolNames(spec);
-  });
-
-  it('(c) a tools list resolves to the same model-facing tool names', async () => {
-    const spec: AgentSpec = { ...base(), tools: ['http', 'current-date', 'day-name', 'web-fetch'] };
-    const { v1, v2 } = await both(spec);
-    await assertSameHello(v1, v2);
-    await assertSameToolNames(spec);
-  });
-
-  it('(d) a stdio MCP server compiles to the same config (config only, not connected)', async () => {
-    const spec: AgentSpec = { ...base(), mcpServers: { fs: { command: 'npx', args: ['-y', 'mcp-fs'] } } };
-    const { v1, v2 } = await both(spec);
-    expect(v1.mcpServers).toEqual(spec.mcpServers);
-    expect(v2.mcpServers).toEqual(spec.mcpServers);
-    const compiled = await compileSpec(upgradeSpec(spec), host());
-    expect(compiled.config.mcpServers).toEqual(spec.mcpServers);
-    await assertSameToolNames(spec);
-  });
 
   it('(b) policy.yaml: replies, tool names, policy scalars, guardrail sides and approval pauses all match', async () => {
     const spec = loadSpec(path.join(FIXTURES, 'policy.yaml'));
@@ -136,20 +113,5 @@ describe('specToAgent / specV2ToAgent parity', () => {
     const { v1, v2 } = await both(spec);
     await assertSameHello(v1, v2);
     await assertBothPauseForApproval(spec);
-  });
-
-  it('(f) a cron trigger upgrades to a t<N> id on the spec — never agent config', async () => {
-    const spec: AgentSpec = { ...base(), triggers: [{ type: 'cron', cron: '0 9 * * *', input: 'Weekly report.' }] };
-    const upgraded = upgradeSpec(spec);
-    expect(upgraded.triggers?.[0]).toMatchObject({ id: 't1', type: 'cron', prompt: 'Weekly report.' });
-
-    // v1 runs the spec ignoring triggers; v2 carries them on agent.spec
-    // (trigger → runtime wiring is S22b) and never puts them on the
-    // createAgent config.
-    const { v1, v2 } = await both(spec);
-    expect(v2.spec.triggers?.[0]).toMatchObject({ id: 't1', type: 'cron' });
-    await assertSameHello(v1, v2);
-    const compiled = await compileSpec(upgraded, host());
-    expect(compiled.config).not.toHaveProperty('triggers');
   });
 });

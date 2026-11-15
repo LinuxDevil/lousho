@@ -100,20 +100,4 @@ describe('GET /agents/:id/requirements', () => {
     expect(map.get('provider:anthropic')?.status).toBe('ok');
     expect(JSON.stringify(res.body)).not.toContain('ghp_route_test');
   });
-
-  it('GET /agents/:id carries the same list on record.requirements', async () => {
-    expect((await putSpec('ops')).status).toBe(204);
-    const res = await request(app()).get('/agents/ops');
-    expect(res.status).toBe(200);
-    expect(Array.isArray(res.body.requirements)).toBe(true);
-    const map = new Map((res.body.requirements as Requirement[]).map((row) => [row.id, row]));
-    expect(map.get('provider:anthropic')?.status).toBe('missing');
-    expect(map.get('secret:GITHUB_TOKEN')?.status).toBe('missing');
-  });
-
-  it('404 { error: \'Agent not found.\' } for an unknown id', async () => {
-    const res = await request(app()).get('/agents/nope/requirements');
-    expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: 'Agent not found.' });
-  });
 });

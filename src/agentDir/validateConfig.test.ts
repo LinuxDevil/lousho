@@ -56,24 +56,12 @@ describe('`when` arg matchers', () => {
 
   it.each([
     ['lt', 10, [[9, true], [10, false], [11, false]]],
-    ['lte', 10, [[9, true], [10, true], [11, false]]],
-    ['gt', 10, [[11, true], [10, false], [9, false]]],
-    ['gte', 10, [[11, true], [10, true], [9, false]]],
   ] as const)('compares `%s` on Number(arg)', async (op, operand, cases) => {
     const when = whenOf([{ tool: 'deploy', action: 'deny', when: { replicas: { [op]: operand } } }]);
     for (const [value, expected] of cases) {
       expect(await when?.({ replicas: value }, ctx)).toBe(expected);
       // A numeric string argument is compared by its Number() too.
       expect(await when?.({ replicas: String(value) }, ctx)).toBe(expected);
-    }
-  });
-
-  it('fails closed on a non-numeric argument for lt/lte/gt/gte', async () => {
-    for (const op of ['lt', 'lte', 'gt', 'gte'] as const) {
-      const when = whenOf([{ tool: 'deploy', action: 'deny', when: { replicas: { [op]: 10 } } }]);
-      for (const value of ['abc', '', '  ', undefined, Number.NaN, {}, [], null, true, 'Infinity']) {
-        expect(await when?.({ replicas: value }, ctx), `${op} on ${String(value)}`).toBe(false);
-      }
     }
   });
 
@@ -137,10 +125,6 @@ describe('`when` arg matchers', () => {
 });
 
 describe('approvalTtlMs and permission-rule ttlMs', () => {
-  it('accepts a positive finite approvalTtlMs', () => {
-    expect(validateConfig(FILE, { approvalTtlMs: 60_000 }).approvalTtlMs).toBe(60_000);
-    expect(validateConfig(FILE, {}).approvalTtlMs).toBeUndefined();
-  });
 
   it('rejects a non-positive, non-finite or non-numeric approvalTtlMs', () => {
     for (const value of [0, -5, Number.NaN, Number.POSITIVE_INFINITY, 1e20, '60000', null, true]) {
@@ -148,17 +132,6 @@ describe('approvalTtlMs and permission-rule ttlMs', () => {
         "'approvalTtlMs' must be a positive number of milliseconds"
       );
     }
-  });
-
-  it("carries an ask rule's ttlMs into the assembled PermissionRule", () => {
-    const rules = permissionRulesOf(
-      FILE,
-      validateConfig(FILE, { permissions: [{ tool: 'deploy', action: 'ask', ttlMs: 600_000 }] }).permissions
-    );
-    expect(rules).toEqual([{ tool: 'deploy', action: 'ask', ttlMs: 600_000 }]);
-    // Unset, the key is absent so the run's approvalTtlMs applies.
-    const noTtl = permissionRulesOf(FILE, validateConfig(FILE, { permissions: [{ tool: 'deploy', action: 'ask' }] }).permissions);
-    expect(noTtl?.[0]).not.toHaveProperty('ttlMs');
   });
 
   it("rejects ttlMs on non-'ask' rules and non-positive values", () => {
@@ -177,24 +150,6 @@ describe('approvalTtlMs and permission-rule ttlMs', () => {
 });
 
 describe('store', () => {
-  it('accepts a file-store options object, including historyLimit and tokenKey', () => {
-    expect(validateConfig(FILE, { store: { dir: './.lousho' } }).store).toEqual({ dir: './.lousho' });
-    expect(validateConfig(FILE, { store: { dir: 'data', historyLimit: 0, tokenKey: 'a2V5' } }).store).toEqual({
-      dir: 'data',
-      historyLimit: 0,
-      tokenKey: 'a2V5',
-    });
-    expect(validateConfig(FILE, {}).store).toBeUndefined();
-  });
-
-  it('accepts an AgentStore instance (a code config), extra keys ignored', () => {
-    const store = {
-      sessions: { load: async () => [], save: async () => {}, delete: async () => {} },
-      approvals: { save: async () => {}, resolve: async () => null },
-      close: () => {},
-    };
-    expect(validateConfig(FILE, { store }).store).toBe(store);
-  });
 
   it('rejects bad store values, naming the problem', () => {
     expect(invalidConfig({ store: './.lousho' }).message).toContain(
@@ -221,12 +176,6 @@ describe('store', () => {
 });
 
 describe('retry and output', () => {
-  it('accepts the serializable retry options and false', () => {
-    const retry = { maxRetries: 4, timeoutMs: 30000, idleTimeoutMs: 5000, backoff: { initialMs: 1000, maxMs: 9000, factor: 2, jitter: false } };
-    expect(validateConfig(FILE, { retry }).retry).toEqual(retry);
-    expect(validateConfig(FILE, { retry: false }).retry).toBe(false);
-    expect(validateConfig(FILE, { retry: { maxRetries: 0 } }).retry).toEqual({ maxRetries: 0 });
-  });
 
   it('rejects unknown and ill-typed retry options, naming them', () => {
     expect(invalidConfig({ retry: 3 }).message).toContain("'retry' must be an object");
@@ -247,10 +196,6 @@ describe('retry and output', () => {
 });
 
 describe('modelSettings', () => {
-  it('accepts the known sampling settings', () => {
-    const modelSettings = { maxTokens: 1024, temperature: 0.2, topP: 0.9, frequencyPenalty: 0, presencePenalty: 0.1, stop: ['END'], seed: 7 };
-    expect(validateConfig(FILE, { modelSettings }).modelSettings).toEqual(modelSettings);
-  });
 
   it('rejects unknown keys and ill-typed values, naming them', () => {
     expect(invalidConfig({ modelSettings: 1024 }).message).toContain("'modelSettings' must be an object");

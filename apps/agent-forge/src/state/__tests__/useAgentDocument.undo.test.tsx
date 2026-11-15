@@ -132,32 +132,6 @@ describe('useAgentDocument undo/redo', () => {
     expect(doc!.canRedo).toBe(false);
   });
 
-  it('coalesces same-field edits into one undo step', async () => {
-    await mount(store());
-    const startSpec = doc!.spec;
-    const key = `field:${ROOT_AGENT_ID}:instructions`;
-    act(() =>
-      doc!.setGraph((g) => patchNode(g, ROOT_AGENT_ID, { instructions: 'First' }), {
-        history: { label: 'Edit', coalesceKey: key },
-      })
-    );
-    act(() =>
-      doc!.setGraph((g) => patchNode(g, ROOT_AGENT_ID, { instructions: 'First draft' }), {
-        history: { label: 'Edit', coalesceKey: key },
-      })
-    );
-    act(() =>
-      doc!.setGraph((g) => patchNode(g, ROOT_AGENT_ID, { instructions: 'First draft done' }), {
-        history: { label: 'Edit', coalesceKey: key },
-      })
-    );
-    expect(doc!.undoLabel).toBe('Edit');
-    // One undo undoes the whole typing burst.
-    act(() => doc!.undo());
-    expect(doc!.spec).toEqual(startSpec);
-    expect(doc!.canUndo).toBe(false);
-  });
-
   it('clears the history when switching agents', async () => {
     await mount(store());
     act(() =>

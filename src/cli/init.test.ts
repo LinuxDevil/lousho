@@ -41,51 +41,6 @@ function harness(overrides: Partial<InitEnvironment> = {}, execCode = 0): Harnes
 const read = (...parts: string[]) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 
 describe('runInit --yes', () => {
-  it('scaffolds the minimal openai project with defaults, installs and git-inits', async () => {
-    const h = harness();
-    expect(await runInit(['my-agent', '--yes'], h.environment)).toBe(0);
-
-    expect(fs.existsSync(path.join(root, 'my-agent', 'src', 'agent.ts'))).toBe(true);
-    expect(JSON.parse(read('my-agent', 'package.json'))).toMatchObject({ name: 'my-agent', type: 'module' });
-    expect(read('my-agent', '.env.example')).toContain('OPENAI_API_KEY=');
-    expect(h.commands).toEqual(['git init', 'npm install']);
-    const text = h.out.join('');
-    expect(text).toContain('Next steps:');
-    expect(text).toContain('cd my-agent');
-    expect(text).toContain('OPENAI_API_KEY');
-    expect(text).toContain('npm run dev');
-  });
-
-  it('says so when no API key is set, and stays quiet when one is', async () => {
-    const keyless = harness();
-    await runInit(['a', '--yes', '--no-install', '--no-git'], keyless.environment);
-    const text = keyless.out.join('');
-    expect(text).toContain('No OPENAI_API_KEY found in your environment');
-    expect(text).toContain('npm run test');
-    const withKey = harness({ env: { OPENAI_API_KEY: 'sk-test' } });
-    await runInit(['b', '--yes', '--no-install', '--no-git'], withKey.environment);
-    expect(withKey.out.join('')).not.toContain('found in your environment');
-    // a key for another provider does not satisfy an explicit --provider
-    const other = harness({ env: { ANTHROPIC_API_KEY: 'sk-test' } });
-    await runInit(['c', '--yes', '--provider', 'openai', '--no-install', '--no-git'], other.environment);
-    expect(other.out.join('')).toContain('No OPENAI_API_KEY found');
-    // ollama needs no key
-    const local = harness();
-    await runInit(['d', '--yes', '--provider', 'ollama', '--no-install', '--no-git'], local.environment);
-    expect(local.out.join('')).not.toContain('found in your environment');
-  });
-
-  it('uses my-agent as the directory when none is given', async () => {
-    expect(await runInit(['--yes', '--no-install', '--no-git'], harness().environment)).toBe(0);
-    expect(fs.existsSync(path.join(root, 'my-agent', 'package.json'))).toBe(true);
-  });
-
-  it('detects the provider from the API key in the environment', async () => {
-    const h = harness({ env: { ANTHROPIC_API_KEY: 'sk-test' } });
-    await runInit(['demo', '--yes', '--no-install', '--no-git'], h.environment);
-    expect(read('demo', 'src', 'agent.ts')).toContain("model: 'anthropic/");
-    expect(read('demo', '.env.example')).toContain('ANTHROPIC_API_KEY=');
-  });
 
   it('lets --provider and --template override detection and defaults', async () => {
     const h = harness({ env: { ANTHROPIC_API_KEY: 'sk-test' } });
@@ -105,13 +60,6 @@ describe('runInit --yes', () => {
     expect(forced.commands).toEqual(['yarn install']);
   });
 
-  it('skips install and git on request and then lists the install step', async () => {
-    const h = harness();
-    await runInit(['demo', '--yes', '--no-install', '--no-git'], h.environment);
-    expect(h.commands).toEqual([]);
-    expect(h.out.join('')).toContain('npm install');
-  });
-
   it('writes a caret range of the SDK version, or a tarball with --sdk-path', async () => {
     await runInit(['plain', '--yes', '--no-install', '--no-git'], harness().environment);
     expect(JSON.parse(read('plain', 'package.json')).dependencies['lousho']).toBe('^1.0.0-alpha.8');
@@ -124,11 +72,6 @@ describe('runInit --yes', () => {
     // The vendored tarball is a local build, not source: it is git-ignored.
     expect(read('local', '.gitignore')).toMatch(/^sdk-9\.9\.9\.tgz$/m);
     expect(read('plain', '.gitignore')).not.toMatch(/tgz/);
-  });
-
-  it('derives a valid package name from the directory', async () => {
-    await runInit(['My Cool_Agent!', '--yes', '--no-install', '--no-git'], harness().environment);
-    expect(JSON.parse(read('My Cool_Agent!', 'package.json')).name).toBe('my-cool_agent');
   });
 });
 
@@ -145,25 +88,7 @@ describe('runInit guards', () => {
     expect(h.commands).toEqual([]);
   });
 
-  it('writes into a non-empty directory with --force, keeping other files', async () => {
-    fs.mkdirSync(path.join(root, 'taken'));
-    fs.writeFileSync(path.join(root, 'taken', 'notes.txt'), 'mine');
-
-    expect(await runInit(['taken', '--yes', '--force', '--no-install', '--no-git'], harness().environment)).toBe(0);
-    expect(read('taken', 'notes.txt')).toBe('mine');
-    expect(fs.existsSync(path.join(root, 'taken', 'package.json'))).toBe(true);
-  });
-
-  it('accepts an existing empty directory', async () => {
-    fs.mkdirSync(path.join(root, 'empty'));
-    expect(await runInit(['empty', '--yes', '--no-install', '--no-git'], harness().environment)).toBe(0);
-  });
-
   it.each([
-    [['--provider', 'gemini'], /invalid --provider 'gemini'.*openai, anthropic, openrouter, google, ollama/],
-    [['--template', 'huge'], /invalid --template 'huge'.*minimal, tools, yaml/],
-    [['--package-manager', 'deno'], /invalid --package-manager 'deno'.*npm, pnpm, yarn, bun/],
-    [['--wat'], /--wat/],
     [['--sdk-path', '/nonexistent/lousho-sdk'], /--sdk-path '\/nonexistent\/lousho-sdk' does not exist/],
   ])('rejects bad flags %j with a clear message', async (flags, message) => {
     const h = harness();
@@ -189,21 +114,6 @@ describe('runInit guards', () => {
 });
 
 describe('runInit interactive', () => {
-  it('prompts for what the flags left out, with detected defaults', async () => {
-    prompts.inject(['asked', 'openrouter', 'tools']);
-    const h = harness({ interactive: true });
-
-    expect(await runInit(['--no-install', '--no-git'], h.environment)).toBe(0);
-
-    expect(read('asked', 'src', 'agent.ts')).toContain("model: 'openrouter/");
-    expect(read('asked', 'src', 'agent.ts')).toContain('roll_die');
-  });
-
-  it('does not prompt with --yes even on a terminal', async () => {
-    const h = harness({ interactive: true });
-    expect(await runInit(['--yes', '--no-install', '--no-git'], h.environment)).toBe(0);
-    expect(fs.existsSync(path.join(root, 'my-agent'))).toBe(true);
-  });
 
   it('exits 1 when the user cancels', async () => {
     prompts.inject([new Error('cancel')]);

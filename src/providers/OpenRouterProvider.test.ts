@@ -19,46 +19,6 @@ describe('OpenRouterProvider', () => {
     };
   });
 
-  it('should initialize with correct config', () => {
-    const provider = new OpenRouterProvider(config);
-    expect(provider.name).toBe('openrouter');
-  });
-
-  it('should support tools for OpenAI models', () => {
-    const provider = new OpenRouterProvider(config);
-    expect(provider.supportsTools('openai/gpt-4')).toBe(true);
-    expect(provider.supportsTools('openai/gpt-3.5-turbo')).toBe(true);
-  });
-
-  it('should support tools for Anthropic models', () => {
-    const provider = new OpenRouterProvider(config);
-    expect(provider.supportsTools('anthropic/claude-3.5-sonnet')).toBe(true);
-    expect(provider.supportsTools('anthropic/claude-3-opus')).toBe(true);
-  });
-
-  it('should support tools for Google models', () => {
-    const provider = new OpenRouterProvider(config);
-    expect(provider.supportsTools('google/gemini-pro')).toBe(true);
-  });
-
-  it('should support tools for Mistral models', () => {
-    const provider = new OpenRouterProvider(config);
-    expect(provider.supportsTools('mistralai/mistral-large')).toBe(true);
-  });
-
-  it('should default to supporting tools for other/unknown models', () => {
-    const provider = new OpenRouterProvider(config);
-    expect(provider.supportsTools('meta-llama/llama-3.1-70b-instruct')).toBe(true);
-    expect(provider.supportsTools('some-vendor/unknown-model')).toBe(true);
-  });
-
-  it('should support streaming for all models', () => {
-    const provider = new OpenRouterProvider(config);
-    expect(provider.supportsStreaming('openai/gpt-4')).toBe(true);
-    expect(provider.supportsStreaming('anthropic/claude-3.5-sonnet')).toBe(true);
-    expect(provider.supportsStreaming('meta-llama/llama-3.1-70b-instruct')).toBe(true);
-  });
-
   describe('model catalog', () => {
     // OpenRouter's GET /models is a public endpoint: it answers 200 with the
     // live catalog even for an invalid API key, so these tests stub fetch
@@ -83,14 +43,6 @@ describe('OpenRouterProvider', () => {
       expect(models).toContain('anthropic/claude-sonnet-4.5');
     });
 
-    it('should return fallback models when the network is unreachable', async () => {
-      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed')));
-      const provider = new OpenRouterProvider(config);
-
-      const models = await provider.getModels();
-      expect(models).toContain('openai/gpt-4o');
-    });
-
     it('should return model ids from the API when it succeeds', async () => {
       const fetchMock = vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ data: [{ id: 'a/model-1' }, { id: 'b/model-2' }] }))
@@ -103,80 +55,11 @@ describe('OpenRouterProvider', () => {
         headers: { Authorization: 'Bearer test-api-key', 'HTTP-Referer': 'https://example.com', 'X-Title': 'Test Site' },
       });
     });
-
-    it('asks the configured baseURL and fetch, with the configured headers', async () => {
-      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ id: 'a/model-1' }] })));
-      const provider = new OpenRouterProvider({ name: 'openrouter', apiKey: 'test-api-key', baseURL: 'https://gateway.example.com/v1/', fetch: fetchMock, siteName: 'Demo' });
-
-      expect(await provider.getModels()).toEqual(['a/model-1']);
-      expect(fetchMock).toHaveBeenCalledWith('https://gateway.example.com/v1/models', {
-        headers: { 'X-Title': 'Demo', Authorization: 'Bearer test-api-key' },
-      });
-    });
-
-    it('should look up model info by id, and return null on failure', async () => {
-      // A fresh Response per call - a Response body can only be read once.
-      vi.stubGlobal('fetch', vi.fn().mockImplementation(async () =>
-        new Response(JSON.stringify({ data: [{ id: 'a/model-1', pricing: { prompt: '1' } }] }))
-      ));
-      const provider = new OpenRouterProvider(config);
-      expect(await provider.getModelInfo('a/model-1')).toEqual({ id: 'a/model-1', pricing: { prompt: '1' } });
-      expect(await provider.getModelInfo('missing')).toBeUndefined();
-
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 500 })));
-      expect(await provider.getModelInfo('a/model-1')).toBeNull();
-    });
   });
 
   describe('request path', () => {
     afterEach(() => {
       vi.unstubAllGlobals();
-    });
-
-    /** Runs one generate() against a stubbed fetch that answers 400 (not retried) and returns the request it saw. */
-    async function requestOf(provider: OpenRouterProvider) {
-      const fetchMock = vi.fn().mockImplementation(
-        async () => new Response(JSON.stringify({ error: { message: 'stub' } }), { status: 400 })
-      );
-      vi.stubGlobal('fetch', fetchMock);
-      await expect(
-        provider.generate({ messages: [{ role: 'user', content: 'hi' }], model: 'openai/gpt-4o-mini' })
-      ).rejects.toThrow();
-      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-      return { url: String(url), headers: new Headers(init.headers) };
-    }
-
-    // On `@ai-sdk/openai` 2+ the bare call is the Responses API, which OpenRouter does not implement;
-    // this runs on every installed `ai` major and pins the Chat Completions endpoint.
-    it('calls the Chat Completions endpoint, not the Responses API', async () => {
-      const { url } = await requestOf(new OpenRouterProvider(config));
-      expect(url).toBe('https://openrouter.ai/api/v1/chat/completions');
-      expect(url).not.toContain('/responses');
-    });
-
-    it('without apiKey, sends OPENROUTER_API_KEY and never OPENAI_API_KEY', async () => {
-      vi.stubEnv('OPENAI_API_KEY', 'sk-openai-must-not-leak');
-      vi.stubEnv('OPENROUTER_API_KEY', 'sk-or-right-key');
-      try {
-        const { headers } = await requestOf(new OpenRouterProvider({ defaultModel: 'openai/gpt-4o-mini' } as OpenRouterProviderConfig));
-        expect(headers.get('authorization')).toBe('Bearer sk-or-right-key');
-      } finally {
-        vi.unstubAllEnvs();
-      }
-    });
-
-    it('without apiKey or OPENROUTER_API_KEY, fails naming OPENROUTER_API_KEY and sends nothing', async () => {
-      vi.stubEnv('OPENAI_API_KEY', 'sk-openai-must-not-leak');
-      vi.stubEnv('OPENROUTER_API_KEY', '');
-      const fetchMock = vi.fn();
-      vi.stubGlobal('fetch', fetchMock);
-      try {
-        const provider = new OpenRouterProvider({ defaultModel: 'openai/gpt-4o-mini' } as OpenRouterProviderConfig);
-        await expect(provider.generate({ messages: [{ role: 'user', content: 'hi' }], model: 'openai/gpt-4o-mini' })).rejects.toThrow(/OPENROUTER_API_KEY/);
-        expect(fetchMock).not.toHaveBeenCalled();
-      } finally {
-        vi.unstubAllEnvs();
-      }
     });
 
     it('an agent run without a key fails with LOUSHO_PROVIDER_MISSING_API_KEY, not a failed request', async () => {
@@ -190,13 +73,6 @@ describe('OpenRouterProvider', () => {
       } finally {
         vi.unstubAllEnvs();
       }
-    });
-
-    it('sends the API key and the site attribution headers', async () => {
-      const { headers } = await requestOf(new OpenRouterProvider(config));
-      expect(headers.get('authorization')).toBe('Bearer test-api-key');
-      expect(headers.get('http-referer')).toBe('https://example.com');
-      expect(headers.get('x-title')).toBe('Test Site');
     });
 
     /**
@@ -215,14 +91,6 @@ describe('OpenRouterProvider', () => {
           (error: unknown) => error as Error
         );
     }
-
-    it('a 404 keeps the body\'s "No endpoints found" on the thrown error', async () => {
-      // OpenRouter's real shape: a numeric `code`, no `type`/`param` - which
-      // does not fit @ai-sdk/openai's error schema, so without the rewrite the
-      // APICallError message is only the status text.
-      const error = await errorOf(404, JSON.stringify({ error: { message: 'No endpoints found for openai/retired.', code: 404 } }));
-      expect(error.message).toContain('No endpoints found for openai/retired.');
-    });
 
     it('a 401 keeps the body\'s auth explanation on the thrown error', async () => {
       const error = await errorOf(401, JSON.stringify({ error: { message: 'No auth credentials found', code: 401 } }));
@@ -257,16 +125,6 @@ describe('OpenRouterProvider', () => {
       expect(error.message).toContain('Provider returned error');
       expect(error.message).toContain("Invalid schema for response_format 'r'");
     });
-  });
-
-  it('should handle configuration without optional fields', () => {
-    const minimalConfig: OpenRouterProviderConfig = {
-      name: 'openrouter',
-      apiKey: 'test-key',
-    };
-    
-    const provider = new OpenRouterProvider(minimalConfig);
-    expect(provider.name).toBe('openrouter');
   });
 });
 

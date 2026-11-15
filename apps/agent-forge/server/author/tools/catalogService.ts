@@ -9,6 +9,7 @@
 import { listModels } from 'lousho';
 import type { SecretsStore } from '../../secretsStore';
 import { loadStaticCatalog, withStoredKeyAvailability } from '../../routes/catalogRoutes';
+import { hasOpenRouterKey, withOpenRouterModels } from '../../routes/openRouterCatalog';
 import type { CatalogService } from './index';
 
 /**
@@ -26,7 +27,11 @@ export function createAuthorCatalogService(deps: {
   const { registryItems, tools, guardrails, triggerTypes } = loadStaticCatalog(deps.registryIndexPath);
   return {
     listModels: (provider) =>
-      withStoredKeyAvailability(listModels(provider === undefined ? {} : { provider }), deps.secretsStore),
+      withOpenRouterModels(
+        withStoredKeyAvailability(listModels(provider === undefined ? {} : { provider }), deps.secretsStore),
+        provider,
+        hasOpenRouterKey(deps.secretsStore)
+      ),
     listTools: () => tools,
     listGuardrails: () => guardrails,
     listTriggerTypes: () => triggerTypes,

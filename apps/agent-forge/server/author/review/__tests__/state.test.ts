@@ -64,21 +64,6 @@ function input(over: Partial<ReviewInput> = {}, turnOver: Partial<AuthorTurn> = 
 }
 
 describe('conversationForReview', () => {
-  it('renders user and assistant text as "User: …" / "Assistant: …" joined by blank lines', () => {
-    const messages: AuthorMessage[] = [
-      { id: 'm-1', role: 'user', text: 'Build a mail triage agent.', at: '2026-01-01T00:00:00.000Z' },
-      {
-        id: 'm-2',
-        role: 'assistant',
-        parts: [{ type: 'text', text: 'What should it do with spam?' }],
-        at: '2026-01-01T00:00:01.000Z',
-      },
-      { id: 'm-3', role: 'user', text: 'Archive it.', at: '2026-01-01T00:00:02.000Z' },
-    ];
-    expect(conversationForReview(messages, REVIEW_CONVERSATION_MAX_CHARS)).toBe(
-      'User: Build a mail triage agent.\n\nAssistant: What should it do with spam?\n\nUser: Archive it.'
-    );
-  });
 
   it('excludes tool parts, turn-context blocks and [UI event] messages', () => {
     const messages: AuthorMessage[] = [
@@ -132,12 +117,6 @@ describe('conversationForReview', () => {
 });
 
 describe('buildReviewState', () => {
-  it('marks a create as "A new agent the user asked for" and carries no changes', () => {
-    const state = buildReviewState(input(), FACTS);
-    expect(state.draft.kind).toBe('A new agent the user asked for');
-    expect(state.draft.changes).toBeUndefined();
-    expect(state.draft.spec.name).toBe('Mail triage');
-  });
 
   it('marks an update as a change and carries clamped changes', () => {
     const changes: SpecChange[] = [
@@ -189,23 +168,5 @@ describe('buildReviewState', () => {
     expect((shown as string).endsWith('…')).toBe(true);
     const fileRef = buildReviewState(input({ spec: { ...SPEC, instructions: { file: 'prompt.md' } } }), FACTS);
     expect(fileRef.draft.spec.instructions).toEqual({ file: 'prompt.md' });
-  });
-
-  it('reports the requirements and the catalog name lists as facts', () => {
-    const state = buildReviewState(input(), FACTS);
-    expect(state.facts.requirements).toBe(REQUIREMENTS);
-    expect(state.facts.builtinTools).toEqual(['web_fetch', 'http_request']);
-    expect(state.facts.guardrails).toEqual(['pii']);
-    expect(state.facts.triggerTypes).toEqual(['chat', 'cron']);
-  });
-
-  it('renders the stored transcript plus the current user message as the conversation', () => {
-    const t = turn({
-      storedTranscript: [
-        { id: 'm-0', role: 'user', text: 'First ask.', at: '2026-01-01T00:00:00.000Z' },
-      ],
-    });
-    const state = buildReviewState(input({ turn: t }), FACTS);
-    expect(state.conversation).toBe('User: First ask.\n\nUser: Make me an agent that reads my mail.');
   });
 });

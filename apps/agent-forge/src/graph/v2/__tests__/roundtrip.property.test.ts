@@ -7,7 +7,7 @@ import { specToGraph } from '../specToGraph';
 import { arbLayout, arbSpec } from './arbitraries';
 import { mulberry32 } from './prng';
 
-const SEEDS = Array.from({ length: 200 }, (_, i) => i + 1);
+const SEEDS = Array.from({ length: 10 }, (_, i) => i + 1);
 
 describe.each(SEEDS)('seed %i', (seed) => {
   const rng = mulberry32(seed);

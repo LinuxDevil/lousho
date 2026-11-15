@@ -6,6 +6,8 @@ import express, { type Express } from 'express';
 import request from 'supertest';
 import { listBuiltinTools, listGuardrails, listModels, listTriggerTypes } from 'lousho';
 import { registerCatalogRoutes } from '../routes/catalogRoutes';
+import { createOpenRouterCatalog } from '../routes/openRouterCatalog';
+import { matchesModelFilter, modelLabel } from '../../src/components/modelFilter';
 import { SecretsStore } from '../secretsStore';
 import { sdkRootDir } from '../sdkRoot';
 import { createWorkspaceContext, singleWorkspace, type WorkspaceContext, type WorkspaceServices } from '../workspace/context';
@@ -66,6 +68,74 @@ describe('catalog routes', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
+  });
+
+  it('OpenRouter models are fetched once, mapped, cached, and appended to /catalog/models', async () => {
+    vi.stubEnv('OPENROUTER_API_KEY', 'k');
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'acme/coder:free',
+              context_length: 1000,
+              pricing: { prompt: '0', completion: '0' },
+              supported_parameters: ['tools', 'reasoning'],
+              architecture: { input_modalities: ['text', 'image'] },
+            },
+            { id: 'acme/paid', pricing: { prompt: '0.000002', completion: '0.00001' } },
+          ],
+        })
+      )
+    );
+    const withOpenRouter = express();
+    withOpenRouter.use(workspaceMiddleware(singleWorkspace(ctx)));
+    registerCatalogRoutes(withOpenRouter, {
+      secretsStore: secrets,
+      openRouterModels: createOpenRouterCatalog(fetchMock as unknown as typeof fetch),
+    });
+
+    const all = await request(withOpenRouter).get('/catalog/models');
+    expect(all.body.slice(0, listModels().length)).toEqual(listModels());
+    expect(all.body.find((m: { id: string }) => m.id === 'openrouter/acme/coder:free')).toEqual({
+      id: 'openrouter/acme/coder:free',
+      modelId: 'acme/coder:free',
+      provider: 'openrouter',
+      contextWindow: 1000,
+      inputCostPerMTok: 0,
+      outputCostPerMTok: 0,
+      capabilities: { tools: true, vision: true, reasoning: true, structuredOutput: false, hostedTools: [] },
+      available: true,
+    });
+    const paid = all.body.find((m: { id: string }) => m.id === 'openrouter/acme/paid');
+    expect([paid.inputCostPerMTok, paid.outputCostPerMTok, paid.capabilities.tools]).toEqual([2, 10, false]);
+
+    const anthropicOnly = await request(withOpenRouter).get('/catalog/models?provider=anthropic');
+    expect(anthropicOnly.body).toEqual(listModels({ provider: 'anthropic' }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('an unreachable OpenRouter leaves the SDK catalog intact', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const offline = express();
+    offline.use(workspaceMiddleware(singleWorkspace(ctx)));
+    registerCatalogRoutes(offline, {
+      secretsStore: secrets,
+      openRouterModels: createOpenRouterCatalog((async () => {
+        throw new Error('offline');
+      }) as unknown as typeof fetch),
+    });
+    const res = await request(offline).get('/catalog/models');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(listModels());
+  });
+
+  it('the model filter matches every word against the label, "free" included', () => {
+    const label = modelLabel({ id: 'openrouter/acme/coder:free', available: true, inputCostPerMTok: 0, outputCostPerMTok: 0 });
+    expect(label).toBe('openrouter/acme/coder:free (free)');
+    expect(matchesModelFilter(label, 'ACME free')).toBe(true);
+    expect(matchesModelFilter(label, 'acme anthropic')).toBe(false);
+    expect(matchesModelFilter(label, '  ')).toBe(true);
   });
 
   it('GET /catalog/models returns the SDK catalog (deep-equal)', async () => {

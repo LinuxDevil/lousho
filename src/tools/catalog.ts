@@ -41,9 +41,17 @@ const MUTATING = {
   http_request: true,
   web_fetch: false,
   todo: false,
+  workspace_read: false,
+  workspace_write: true,
+  shell: true,
 } as const satisfies Record<keyof typeof BUILTIN_TOOL_OPTIONS, boolean>;
 
 /** JSON Schema (draft 7) of `schema`: zod 4 and Standard Schemas via `schemaToJsonSchema`, zod 3 via `ai`'s converter. */
+const GROUP_DESCRIPTIONS: Partial<Record<keyof typeof BUILTIN_TOOL_OPTIONS, string>> = {
+  workspace_read: 'Read the project: read_file, list_dir, glob and grep, confined to options.root (default: the workspace folder). .env, .git and .lousho are refused.',
+  workspace_write: 'Change the project: write_file and edit_file, confined to options.root (default: the workspace folder). .env, .git and .lousho are refused.',
+};
+
 function toJsonSchema(schema: unknown): Record<string, unknown> {
   return schemaToJsonSchema(schema) ?? (zodSchema(schema as never).jsonSchema as Record<string, unknown>);
 }
@@ -60,7 +68,7 @@ export function listBuiltinTools(): BuiltinToolInfo[] {
     const options = BUILTIN_TOOL_OPTIONS[name];
     return {
       name,
-      description: primary.description,
+      description: GROUP_DESCRIPTIONS[name] ?? primary.description,
       inputJsonSchema: toJsonSchema(primary.inputSchema),
       needsCredentials: [],
       mutating: MUTATING[name],

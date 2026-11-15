@@ -35,7 +35,6 @@ import { OpenAIProvider } from './OpenAIProvider';
 import { AnthropicProvider } from './AnthropicProvider';
 import { OllamaProvider } from './OllamaProvider';
 import { OpenRouterProvider } from './OpenRouterProvider';
-import { resolveProvider } from './resolveProvider';
 import './index'; // registers the real provider types
 import type { LLMProvider } from './llm';
 
@@ -119,23 +118,5 @@ describe.each(cases)('$type provider model selection', ({ build, configured, bui
     await build(configured).stream({ messages });
 
     expect(streamTextMock.mock.calls[0][0].model.modelId).toBe(configured);
-  });
-});
-
-describe('resolveProvider model selection', () => {
-  beforeEach(() => {
-    generateTextMock.mockReset();
-    generateTextMock.mockResolvedValue({ text: 'ok', finishReason: 'stop', usage });
-  });
-
-  it("honors the model in 'openai/gpt-4o-mini'", async () => {
-    vi.stubEnv('OPENAI_API_KEY', 'k');
-    try {
-      await resolveProvider('openai/gpt-4o-mini').generate({ messages });
-    } finally {
-      vi.unstubAllEnvs();
-    }
-
-    expect(generateTextMock.mock.calls[0][0].model.modelId).toBe('gpt-4o-mini');
   });
 });

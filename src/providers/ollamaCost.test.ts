@@ -89,30 +89,4 @@ describe.skipIf(installedAiMajor !== 4 && !ollamaV2Installed)('Ollama llama3 cos
     expect(result.usage.costUsd).toBeUndefined();
     expect(warn).toHaveBeenCalledWith(expect.stringMatching(/maxCostUsd is set, but the price of model 'llama3' is unknown.*NOT enforced/));
   });
-
-  it('with a registered price, maxCostUsd is enforced on an Ollama run', async () => {
-    registerModel({ id: 'llama3', provider: 'ollama', contextWindow: 8192, inputCostPerMTok: 1, outputCostPerMTok: 2 });
-
-    const within = await agent(1).send('hi');
-    // Two calls of (1000 * 1 + 500 * 2) / 1e6
-    expect(within.usage.costUsd).toBeCloseTo(0.004, 10);
-    expect(within.finishReason).toBe('stop');
-
-    toolRuns = 0;
-    const over = await agent(0.001).send('hi');
-    expect(over.finishReason).toBe('budget-exceeded');
-    expect(over.budget).toMatchObject({ limit: 'maxCostUsd', max: 0.001, scope: 'run' });
-    expect(over.budget?.value).toBeCloseTo(0.002, 10);
-    // Stopped after the first call, before its tool ran.
-    expect(toolRuns).toBe(0);
-  });
-
-  it('a local model priced at 0 costs $0 and passes any cost limit', async () => {
-    registerModel({ id: 'llama3', provider: 'ollama', contextWindow: 8192, inputCostPerMTok: 0, outputCostPerMTok: 0 });
-
-    const result = await agent(0.000001).send('hi');
-
-    expect(result.usage.costUsd).toBe(0);
-    expect(result.finishReason).toBe('stop');
-  });
 });

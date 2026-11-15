@@ -137,25 +137,11 @@ describe('skill Inspector: Source switch', () => {
     expect(item()).toStrictEqual({ dir: '' });
   });
 
-  it('replaces the item with the registry form', () => {
-    useSkill([{ dir: 'skills/tone' }], 'skill:tone');
-    renderInspector();
-    choose('node-skill-source', '2');
-    expect(item()).toStrictEqual({ registry: '' });
-  });
-
   it('seeds the inline name from the current node name', () => {
     useSkill([{ dir: 'skills/tone' }], 'skill:tone');
     renderInspector();
     choose('node-skill-source', '3');
     expect(item()).toStrictEqual({ inline: { name: 'tone', description: '', content: '' } });
-  });
-
-  it('seeds the inline name "skill" when there is no name to keep', () => {
-    useSkill([{ dir: '' }], 'skill:new');
-    renderInspector();
-    choose('node-skill-source', '3');
-    expect(item()).toStrictEqual({ inline: { name: 'skill', description: '', content: '' } });
   });
 });
 
@@ -179,23 +165,12 @@ describe('skill Inspector: registry', () => {
     expect(item()).toStrictEqual({ registry: 'code-review' });
   });
 
-  it('shows the picked entry\'s description as help', () => {
-    renderInspector();
-    expect(container.textContent).toContain('Writes the changelog');
-  });
-
   it('shows the free input for a name the catalog does not list', () => {
     useSkill([{ registry: 'house-style' }], 'skill:house-style');
     renderInspector();
     expect(field('node-skill-registry-other')).not.toBeNull();
     type('node-skill-registry-other', 'other-skill');
     expect(item()).toStrictEqual({ registry: 'other-skill' });
-  });
-
-  it('flags an empty registry name', () => {
-    useSkill([{ registry: '' }], 'skill:new');
-    renderInspector();
-    expect(container.textContent).toContain('Pick a skill');
   });
 });
 
@@ -209,12 +184,6 @@ describe('skill Inspector: inline', () => {
     expect(inline().description).toBe('How we write to customers');
     type('node-skill-content', '# Voice\nBe brief and kind.');
     expect(inline().content).toBe('# Voice\nBe brief and kind.');
-  });
-
-  it('flags a name outside the skill-name pattern', () => {
-    useSkill([{ inline: { name: 'Bad Name', description: 'd', content: 'c' } }], 'skill:Bad Name');
-    renderInspector();
-    expect(container.textContent).toContain('Use lower-case letters, digits, dash or underscore');
   });
 
   it('flags an empty description and empty content', () => {

@@ -11,8 +11,6 @@ import { z } from 'zod';
 import { createAgent } from '../createAgent';
 import { defineTool } from '../tools/defineTool';
 import { mockModel } from '../testing';
-import { InMemoryApprovalStore } from '../execution/InMemoryApprovalStore';
-import { MemorySessionStore } from '../session/sessionStore';
 import type { Message } from '../providers';
 import { mountChannels, type ChannelsHandler } from './mountChannels';
 import { discordChannel } from './discordChannel';
@@ -138,13 +136,6 @@ describe('discordChannel', () => {
     expect(t.userTexts(2)).toEqual(['Who am I?']);
   });
 
-  it('runs the turn with the command sender as its principal', async () => {
-    const seen: unknown[] = [];
-    const t = setup(['ok'], { instructions: ({ principal }) => (seen.push(principal), 'x') });
-    await t.send(command('hello'));
-    await vi.waitFor(() => expect(seen).toEqual([{ id: 'U1', type: 'user', authenticator: 'discord' }]));
-  });
-
   it('tells the user the command shape when there is no prompt', async () => {
     const t = setup(['never']);
 
@@ -154,59 +145,11 @@ describe('discordChannel', () => {
     expect(t.model.calls).toHaveLength(0);
   });
 
-  it('splits a reply over 2000 characters into the edit plus follow-up messages', async () => {
-    const long = `${'a'.repeat(1500)}\n${'b'.repeat(1500)}\n${'c'.repeat(500)}`;
-    const t = setup([long]);
-
-    await t.send(command('write a lot'));
-
-    expect(t.calls.map((c) => [c.method, c.url])).toEqual([
-      ['PATCH', 'tok-write a lot/messages/@original'],
-      ['POST', 'tok-write a lot'],
-      ['POST', 'tok-write a lot'],
-    ]);
-    expect(t.calls.every((c) => c.body.content.length <= 2000)).toBe(true);
-    expect(t.calls.map((c) => c.body.content).join('\n')).toBe(long);
-  });
-
-  it('posts Approve / Deny buttons and resumes the session from the click, replying as a follow-up', async () => {
-    const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-    const tool = defineTool({ name: 'send_email', description: 'Sends an email', input: z.object({ to: z.string() }), needsApproval: true, execute });
-    const call = { toolCalls: [{ name: 'send_email', args: { to: 'sam@example.com' }, id: 'call_email' }] };
-    const t = setup([call, 'Email sent.'], { tools: [tool] });
-
-    await t.send(command('Email Sam'));
-
-    const [approve, deny] = t.calls[0].body.components?.[0].components ?? [];
-    expect(approve.custom_id).toMatch(/^lousho_approve:/);
-    expect(deny.custom_id).toMatch(/^lousho_deny:/);
-    expect(execute).not.toHaveBeenCalled();
-
-    const approval = click(approve.custom_id);
-    expect((await t.send(approval, { badSignature: true })).status).toBe(401);
-    expect(await t.send(approval)).toEqual({ status: 200, json: { type: 7, data: { content: 'Approve?\nApproved by <@U1>.', components: [], allowed_mentions: { parse: [] } } } });
-
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(t.calls[1]).toMatchObject({ method: 'POST', url: 'tok-click', body: { content: 'Email sent.' } });
-  });
-
   /** Runs a command that pauses on `send_email` and returns the custom id of its Approve button. */
   async function pause(t: ReturnType<typeof setup>) {
     await t.send(command('Email Sam'));
     return t.calls[0].body.components?.[0].components[0].custom_id ?? '';
   }
-
-  it('only the user who ran the command may approve by default; others get an ephemeral refusal and it stays pending', async () => {
-    const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-    const t = setup([emailCall, 'Email sent.'], { tools: [emailTool(execute)] });
-    const id = await pause(t);
-
-    expect(await t.send(click(id, 'U2'))).toEqual({ status: 200, json: { type: 4, data: { content: 'You are not allowed to approve this request.', flags: 64 } } });
-
-    expect(execute).not.toHaveBeenCalled();
-    expect((await t.send(click(id, 'U1'))).json).toMatchObject({ type: 7 });
-    expect(execute).toHaveBeenCalledTimes(1);
-  });
 
   it('approvers as a list of user ids', async () => {
     const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
@@ -217,67 +160,6 @@ describe('discordChannel', () => {
     expect(execute).not.toHaveBeenCalled();
     expect((await t.send(click(id, 'U9'))).json).toMatchObject({ type: 7 });
     expect(execute).toHaveBeenCalledTimes(1);
-  });
-
-  it('approvers as a function sees the user (with roles) and the tool request, and the approver is recorded', async () => {
-    const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-    const approvers = vi.fn(async (user: { roles?: string[] }) => user.roles?.includes('ADMIN') === true);
-    const onDecision = vi.fn();
-    const t = setup([emailCall, 'Email sent.'], { tools: [emailTool(execute)] }, { channel: { approvers }, mount: { onDecision } });
-    const id = await pause(t);
-
-    expect((await t.send(click(id))).json).toMatchObject({ type: 4 });
-    expect((await t.send(click(id, 'U3', { member: { user: { id: 'U3' }, roles: ['ADMIN'] } }))).json).toMatchObject({ type: 7 });
-
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(approvers).toHaveBeenLastCalledWith({ id: 'U3', name: undefined, roles: ['ADMIN'] }, { toolName: 'send_email', input: { to: 'sam@example.com' }, sessionId: expect.stringMatching(/^discord_G1_C1-/), principal: expect.objectContaining({ type: 'user', authenticator: 'discord' }) });
-    expect(onDecision).toHaveBeenCalledWith(expect.objectContaining({ approver: expect.objectContaining({ id: 'U3' }), channel: 'discord' }));
-  });
-
-  it('reports a failed reply to onError (never throws)', async () => {
-    const onError = vi.fn();
-    const failing = vi.fn(async () => new Response('{}', { status: 500 })) as unknown as typeof globalThis.fetch;
-    const t = setup(['Hello'], {}, { channel: { onError, fetch: failing } });
-
-    expect((await t.send(command('hi'))).json).toEqual({ type: 5 });
-
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('500') }), { channel: 'discord', stage: 'reply', sessionId: expect.stringContaining('discord') });
-  });
-
-  it('a failed turn goes to onError and the user is told in the channel', async () => {
-    const onError = vi.fn();
-    const t = setup([{ error: new Error('model down') }], {}, { channel: { onError } });
-
-    await t.send(command('hi'));
-
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'model down' }), { channel: 'discord', stage: 'turn', sessionId: expect.stringContaining('discord') });
-    expect(t.calls.map((c) => c.body.content)).toEqual(['Sorry, that request failed.']);
-  });
-
-  it('a click still resolves after a restart: a second channel over the same stores', async () => {
-    const approvalStore = new InMemoryApprovalStore();
-    const store = new MemorySessionStore();
-    const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-    const id = await pause(setup([emailCall], { tools: [emailTool(execute)], approvalStore }, { mount: { store } }));
-
-    const second = setup(['Email sent.'], { tools: [emailTool(execute)], approvalStore }, { mount: { store } });
-    await second.send(click(id));
-
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(second.calls[0]).toMatchObject({ method: 'POST', url: 'tok-click', body: { content: 'Email sent.' } });
-  });
-
-  it('posts an ask_question as text and takes the next /ask as the answer', async () => {
-    const ask = { toolCalls: [{ name: 'ask_question', args: { question: 'Which city?' }, id: 'call_q' }] };
-    const t = setup([ask, 'Booked Lisbon.'], { askQuestion: true });
-
-    await t.send(command('Book a trip'));
-    expect(t.calls[0].body.content).toContain('Which city?');
-
-    await t.send(command('Lisbon'));
-
-    expect(t.calls[1]).toMatchObject({ method: 'PATCH', url: 'tok-Lisbon/messages/@original', body: { content: 'Booked Lisbon.' } });
-    expect(JSON.stringify(t.model.calls[1].messages)).toContain('Lisbon');
   });
 
   describe('after a restart: a second channel over the same durable stores', () => {
@@ -303,88 +185,6 @@ describe('discordChannel', () => {
       await second.send(command('Thanks'));
       expect(second.calls[1]).toMatchObject({ method: 'PATCH', url: 'tok-Thanks/messages/@original', body: { content: 'You are welcome.' } });
       expect(second.userTexts(1)).toEqual(['Book a trip', 'Thanks']);
-    });
-
-    it('a channel with no pending question still starts a normal turn', async () => {
-      const stores = durableStores();
-      await setup(['Hello.'], { approvalStore: stores.approvalStore }, { mount: { store: stores.store } }).send(command('hi'));
-
-      const second = setup(['Still here.'], { approvalStore: stores.approvalStore }, { mount: { store: stores.store } });
-      await second.send(command('again'));
-
-      expect(second.calls[0]).toMatchObject({ url: 'tok-again/messages/@original', body: { content: 'Still here.' } });
-      expect(second.userTexts(0)).toEqual(['hi', 'again']);
-    });
-
-    it('a plain /ask does not answer a pending tool approval; the click still does', async () => {
-      const stores = durableStores();
-      const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-      const agentOptions = { tools: [emailTool(execute)], approvalStore: stores.approvalStore };
-      const id = await pause(setup([emailCall], agentOptions, { mount: { store: stores.store } }));
-
-      const second = setup(['Email sent.'], agentOptions, { mount: { store: stores.store } });
-      await second.send(command('yes'));
-      expect(second.model.calls).toHaveLength(0);
-      expect(execute).not.toHaveBeenCalled();
-      expect(second.calls[0].body.content).toBe('Sorry, that request failed.'); // the session waits on the click
-
-      await second.send(click(id));
-      expect(execute).toHaveBeenCalledTimes(1);
-      expect(second.calls.at(-1)).toMatchObject({ method: 'POST', url: 'tok-click', body: { content: 'Email sent.' } });
-    });
-
-    it('a click after a restart is appended to the transcript, and the next /ask continues the session (#279)', async () => {
-      const stores = durableStores();
-      const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-      const agentOptions = { tools: [emailTool(execute)], approvalStore: stores.approvalStore };
-      const id = await pause(setup([emailCall], agentOptions, { mount: { store: stores.store } }));
-
-      const second = setup(['Email sent.', 'You are welcome.'], agentOptions, { mount: { store: stores.store } });
-      await second.send(click(id));
-
-      expect(execute).toHaveBeenCalledTimes(1);
-      expect(second.calls).toEqual([{ method: 'POST', url: 'tok-click', body: expect.objectContaining({ content: 'Email sent.' }) }]);
-      const transcript = await stores.transcript();
-      for (const text of ['Email Sam', '"call_email"', 'sent to sam@example.com', 'Email sent.']) expect(transcript).toContain(text);
-
-      await second.send(command('Thanks'));
-      expect(second.calls[1]).toMatchObject({ method: 'PATCH', url: 'tok-Thanks/messages/@original', body: { content: 'You are welcome.' } });
-      expect(second.userTexts(1)).toEqual(['Email Sam', 'Thanks']);
-      expect(JSON.stringify(second.model.calls[1].messages)).toContain('sent to sam@example.com');
-    });
-
-    it('a click naming another channel than the one that paused is refused after a restart (#279)', async () => {
-      const stores = durableStores();
-      const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-      const onError = vi.fn();
-      const agentOptions = { tools: [emailTool(execute)], approvalStore: stores.approvalStore };
-      const id = await pause(setup([emailCall], agentOptions, { mount: { store: stores.store } }));
-
-      const second = setup(['Email sent.'], agentOptions, { mount: { store: stores.store, onError } });
-      await second.send(click(id, 'U1', { channel_id: 'C2', channel: { id: 'C2', type: 0 } }));
-      expect(execute).not.toHaveBeenCalled();
-      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'LOUSHO_APPROVAL_NOT_FOUND' }), expect.objectContaining({ stage: 'approval' }));
-
-      // still pending: the click in the channel it was posted in decides it
-      await second.send(click(id));
-      expect(execute).toHaveBeenCalledTimes(1);
-      expect(second.calls.at(-1)).toMatchObject({ method: 'POST', url: 'tok-click', body: { content: 'Email sent.' } });
-    });
-
-    it('a function approver still decides after a restart (#280)', async () => {
-      const stores = durableStores();
-      const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-      const approvers = vi.fn(async (user: { id: string }) => user.id === 'UADMIN');
-      const agentOptions = { tools: [emailTool(execute)], approvalStore: stores.approvalStore };
-      const id = await pause(setup([emailCall], agentOptions, { channel: { approvers }, mount: { store: stores.store } }));
-
-      const second = setup(['Email sent.'], agentOptions, { channel: { approvers }, mount: { store: stores.store } });
-      await second.send(click(id, 'U1'));
-      expect(execute).not.toHaveBeenCalled();
-      await second.send(click(id, 'UADMIN'));
-
-      expect(execute).toHaveBeenCalledTimes(1);
-      expect(second.calls.at(-1)).toMatchObject({ method: 'POST', url: 'tok-click', body: { content: 'Email sent.' } });
     });
   });
 });

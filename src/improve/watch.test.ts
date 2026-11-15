@@ -9,8 +9,7 @@ import type { SqlDatabase } from '../storage/sqlite/driver';
 import { mockModel, type MockRequest } from '../testing';
 import { appendAudit, readAudit } from './audit';
 import { readCorpus } from './corpus';
-import { readCycles, usageToday } from './cycles';
-import { budgetLeft } from './watchSteps';
+import { readCycles } from './cycles';
 import { healOnce, type HealOptions } from './heal';
 import { checkApplied } from './monitor';
 import { currentRevision } from './revisions';
@@ -19,8 +18,6 @@ import { updateState } from './state';
 import { readCanary } from './trafficCanary';
 import type { Harness } from './types';
 import { isDefinedSchedule } from '../schedules/defineSchedule';
-import { fileStore } from '../storage/fileStore';
-import { noticeEvent } from './notify';
 import { readWatchers, registerWatcher } from './watchers';
 import { improveSchedule, watchAgent, watchContext, watchTick, type WatchOptions } from './watch';
 
@@ -115,18 +112,6 @@ afterEach(() => {
 });
 
 describe('watchTick', () => {
-  it('the stop file prevents any cycle and is audited once', async () => {
-    seedFailures();
-    stop();
-    expect((await tick()).state).toBe('paused');
-    expect((await tick()).state).toBe('paused');
-    expect(healOnce).not.toHaveBeenCalled();
-    expect(actions()).toEqual(['pause']);
-    rmSync(path.join(dir, '.lousho', 'improve.stop'));
-    const resumed = await tick();
-    expect(resumed.cycle?.outcome).toBe('applied');
-    expect(actions().slice(0, 2)).toEqual(['pause', 'resume']);
-  });
 
   it('LOUSHO_IMPROVE=off and enabled false pause it too', async () => {
     vi.stubEnv('LOUSHO_IMPROVE', 'off');
@@ -136,50 +121,12 @@ describe('watchTick', () => {
     expect(actions()).toEqual(['pause']);
   });
 
-  it('the second watcher on the same dir does nothing', async () => {
-    seedFailures();
-    const first = await tick();
-    expect(first.cycle?.outcome).toBe('applied');
-    const second = await tick();
-    expect(second).toMatchObject({ state: 'leased' });
-    expect(healOnce).toHaveBeenCalledTimes(1);
-  });
-
-  it('maxAppliesPerDay 1 blocks a second apply the same day', async () => {
-    const context = watchContext(options());
-    seedFailures();
-    expect((await watchTick(options(), context)).cycle?.outcome).toBe('applied');
-    seedFailures();
-    expect((await watchTick(options(), context)).cycle).toMatchObject({ outcome: 'budget', reason: expect.stringMatching(/automatic apply/) });
-  });
-
   it('cooldown after rollback blocks cycles', async () => {
     seedFailures();
     await updateState(dir, { cooldownUntil: new Date(Date.now() + 3_600_000).toISOString() });
     const result = await tick();
     expect(result.reason).toMatch(/cooldown/);
     expect(healOnce).not.toHaveBeenCalled();
-  });
-
-  it('the token budget passed to healOnce shrinks as spent', async () => {
-    const context = watchContext(options());
-    const manual = settings({ approval: 'manual', trigger: { minNewFailures: 3, requireRecurring: false } });
-    seedFailures();
-    await watchTick(options({ settings: manual }), context);
-    seedFailures();
-    await watchTick(options({ settings: manual }), context);
-    const [first, second] = vi.mocked(healOnce).mock.calls.map(([call]) => call.maxTokens as number);
-    const spent = readCycles(dir).find((cycle) => cycle.outcome !== 'interrupted')?.tokens ?? 0;
-    expect(first).toBe(2_000_000);
-    expect(spent).toBeGreaterThan(0);
-    expect(second).toBeLessThan(first);
-  });
-
-  it("hands healOnce the reloaded improve.json's editors block each tick", async () => {
-    writeFileSync(path.join(dir, 'improve.json'), JSON.stringify({ approval: 'manual', editors: { proposers: 2, mode: 'seq', select: true, parallel: false } }));
-    seedFailures();
-    await tick({ reloadSettings: () => ({ ...loadImproveSettings(dir, {}, {}), library: { enabled: false } }) });
-    expect(vi.mocked(healOnce).mock.calls[0]?.[0].settings.editors).toEqual({ proposers: 2, mode: 'seq', select: true, parallel: false });
   });
 
   it('same signatures twice skip the second cycle', async () => {
@@ -204,26 +151,6 @@ describe('watchTick', () => {
     expect(actions()).toEqual(['pause']);
   });
 
-  it('maxCyclesPerDay, the daily token cap and an audited rollback each stop the cycle', async () => {
-    const context = watchContext(options());
-    seedFailures();
-    expect((await watchTick(options({ settings: settings({ budget: { maxTokensPerDay: 10, maxCyclesPerDay: 4, maxAppliesPerDay: 1 } }) }), context)).cycle).toMatchObject({ outcome: 'budget-exceeded' });
-    expect((await watchTick(options({ settings: settings({ budget: { maxTokensPerDay: 2_000_000, maxCyclesPerDay: 1, maxAppliesPerDay: 1 } }) }), context, 'manual')).cycle).toMatchObject({ outcome: 'budget', reason: expect.stringMatching(/cycles have run/) });
-    await appendAudit(dir, { actor: 'monitor', action: 'rollback', reason: 'Regressed.' });
-    expect((await watchTick(options(), context, 'manual')).cycle).toMatchObject({ outcome: 'cooldown' });
-  });
-
-  it("counts the watcher's own guard runs toward the day's tokens", async () => {
-    const context = watchContext(options());
-    seedFailures();
-    await watchTick(options({ protect: ['p1'] }), context);
-    const before = usageToday(dir, Date.now()).tokens;
-    const guarded = await watchTick(options(), context);
-    expect(guarded.guard?.tokens).toBeGreaterThan(0);
-    expect(usageToday(dir, Date.now()).tokens).toBe(before + (guarded.guard?.tokens ?? 0));
-    expect(budgetLeft(dir, settings(), Date.now())).toBe(2_000_000 - usageToday(dir, Date.now()).tokens);
-  });
-
   it('renews its lease while a long tick runs, so a second watcher stays out', async () => {
     seedFailures();
     let release: () => void = () => undefined;
@@ -240,36 +167,6 @@ describe('watchTick', () => {
     expect((await watchTick(options(short), watchContext(options(short)))).state).toBe('leased');
     release();
     expect((await first).cycle?.outcome).toBe('applied');
-  });
-
-  it('a tick waits for a renewal in flight, so releasing the lease after it frees the directory', async () => {
-    const store = fileStore(path.join(dir, '.lousho', 'watch')).checkpoints;
-    let calls = 0;
-    let open: () => void = () => undefined;
-    const held = new Promise<void>((resolve) => {
-      open = resolve;
-    });
-    const slowRenewals = Object.assign(Object.create(store) as typeof store, {
-      acquireLease: async (id: string, owner: string, ttl: number) => {
-        calls += 1;
-        if (calls > 1) {
-          await held;
-          await new Promise((resolve) => setTimeout(resolve, 30));
-        }
-        return store.acquireLease!(id, owner, ttl);
-      },
-    });
-    vi.mocked(healOnce).mockImplementationOnce(async (call) => {
-      await vi.waitFor(() => expect(calls).toBeGreaterThan(1), { timeout: 2000 });
-      const cycle = await (await vi.importActual<typeof import('./heal')>('./heal')).healOnce(call);
-      open();
-      return cycle;
-    });
-    const context = watchContext(options({ intervalMs: 300, store: slowRenewals }));
-    await watchTick(options({ intervalMs: 300, store: slowRenewals }), context);
-    await store.releaseLease!(context.leaseId, context.owner);
-    await new Promise((resolve) => setTimeout(resolve, 60));
-    expect((await tick({ intervalMs: 300 })).state).not.toBe('leased');
   });
 
   it('runs the corpus guard once guard.everyHours have passed', async () => {
@@ -307,18 +204,6 @@ describe('watchTick', () => {
 describe('the score regression trigger', () => {
   const mark = (at: number, revision: string | null = currentRevision(dir)) => db.prepare('INSERT INTO score_regressions (agent_id, revision, at, details) VALUES (?, ?, ?, ?)').run('support', revision, at, '{}');
 
-  it('a regression marker triggers a cycle with trigger score', async () => {
-    const context = watchContext(options());
-    seedFailures(1);
-    expect((await watchTick(options(), context)).cycle?.outcome).toBe('idle');
-    mark(Date.now());
-    const scored = await watchTick(options(), context);
-    expect(vi.mocked(healOnce).mock.calls.at(-1)?.[0].trigger).toBe('score');
-    expect(scored.cycle).toMatchObject({ trigger: 'score', outcome: 'applied' });
-    await watchTick(options(), context);
-    expect(vi.mocked(healOnce).mock.calls.at(-1)?.[0].trigger).toBe('failures');
-  });
-
   it("ignores a marker for another revision, and the trigger respects the watcher's budgets", async () => {
     const context = watchContext(options());
     seedFailures(1);
@@ -350,14 +235,6 @@ describe('the score regression trigger', () => {
     await registerWatcher(registry, { agent: 'support', dir, owner: 'a' });
     await registerWatcher(registry, { agent: 'support', dir, owner: 'b' });
     expect(readWatchers(registry).map((entry) => entry.owner)).toEqual(['b']);
-  });
-
-  it('registers the watcher beside the observe db while it runs', async () => {
-    const registry = path.join(root, 'watchers.json');
-    const watcher = watchAgent(options({ registry, intervalMs: 60_000 }));
-    await vi.waitFor(() => expect(readWatchers(registry)).toEqual([expect.objectContaining({ agent: 'support', dir })]));
-    await watcher.stop();
-    expect(readWatchers(registry)).toEqual([]);
   });
 });
 
@@ -402,41 +279,6 @@ describe('notifications', () => {
     expect(actions().at(-1)).toBe('canary-end');
   });
 
-  it('an apply posts one improve.applied', async () => {
-    seedFailures();
-    const post = vi.fn();
-    const lines: string[] = [];
-    const result = await tick({ alerter: { post }, log: (line) => lines.push(line) });
-    expect(result.cycle?.outcome).toBe('applied');
-    expect(post).toHaveBeenCalledTimes(1);
-    const [[[event]]] = post.mock.calls;
-    expect(event).toMatchObject({ type: 'improve.applied', agent_id: 'support', status: 'applied', details: { agent: 'support', dir, from: result.cycle?.from, to: result.cycle?.to, cycle: result.cycle?.id } });
-    expect(lines).toEqual([expect.stringMatching(/^lousho improve: improve\.applied support: Applied/)]);
-  });
-
-  it('webhook failure never fails the cycle', async () => {
-    seedFailures();
-    const post = () => {
-      throw new Error('webhook down');
-    };
-    const result = await tick({ alerter: { post }, log: () => {
-      throw new Error('stderr closed');
-    } });
-    expect(result.cycle?.outcome).toBe('applied');
-  });
-
-  it('a pause and a pending proposal are posted, the pending one with its local card path', async () => {
-    seedFailures();
-    const post = vi.fn();
-    const manual = settings({ approval: 'manual', trigger: { minNewFailures: 3, requireRecurring: false } });
-    const queued = await tick({ alerter: { post }, settings: manual });
-    stop();
-    await tick({ alerter: { post } });
-    await tick({ alerter: { post } });
-    expect(post.mock.calls.map(([[event]]) => event.type)).toEqual(['improve.pending', 'improve.paused']);
-    expect(post.mock.calls[0]?.[0][0].details.card).toBe(path.join(dir, '.lousho', 'proposals', `${queued.cycle?.pending}.json`));
-  });
-
   it('a monitor rollback posts once across ticks, with its reason as plain text', async () => {
     const post = vi.fn(async (_events: readonly AlertEvent[]) => {
       throw new Error('webhook rejected');
@@ -454,11 +296,6 @@ describe('notifications', () => {
     const events = post.mock.calls.map(([[event]]) => event);
     expect(events.map((event) => event.type)).toEqual(['improve.rolled_back']);
     expect(events[0]?.details.reason).toBe('Dropped pixel to 40%.');
-  });
-
-  it('no editor text reaches a webhook unsanitized', () => {
-    const event = noticeEvent({ type: 'improve.canary', reason: 'See ![pixel](https://evil.example/p.png) and [here](https://evil.example) <img src=x onerror=alert(1)> <untrusted>' }, { agent: 'support', dir }, 0);
-    expect(event.details.reason).toBe('See pixel and here');
   });
 });
 

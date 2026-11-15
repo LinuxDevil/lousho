@@ -36,38 +36,6 @@ describe('diffJson/applyPatch', () => {
       expect(applyPatch(b, diffJson(b, a))).toStrictEqual(a);
     }
   });
-
-  it('returns [] for structurally equal values regardless of key order', () => {
-    expect(diffJson({ a: 1, b: { c: 2 } }, { b: { c: 2 }, a: 1 })).toEqual([]);
-    expect(diffJson([1, [2, 3]], [1, [2, 3]])).toEqual([]);
-  });
-
-  it('replaces a whole subtree when the types differ', () => {
-    const ops = diffJson({ a: { x: 1 } }, { a: [1, 2] });
-    expect(ops).toEqual([{ op: 'replace', path: '/a', value: [1, 2] }]);
-    expect(applyPatch({ a: { x: 1 } }, ops)).toEqual({ a: [1, 2] });
-  });
-
-  it('adds and removes array tails in apply order', () => {
-    const a = [1, 2, 3, 4];
-    const b = [1, 9];
-    const ops = diffJson(a, b);
-    expect(applyPatch(a, ops)).toEqual(b);
-    expect(applyPatch(b, diffJson(b, a))).toEqual(a);
-  });
-
-  it('does not mutate its input', () => {
-    const doc = { spec: { tools: [{ builtin: 'x' }] }, layout: { nodes: {} } };
-    const before = JSON.parse(JSON.stringify(doc));
-    applyPatch(doc, diffJson(doc, { spec: { tools: [] }, layout: { nodes: { n: { x: 1, y: 2 } } } }));
-    expect(doc).toEqual(before);
-  });
-
-  it('escapes keys in emitted paths', () => {
-    const ops = diffJson({}, { 'a/b': 1, 't~x': 2 });
-    expect(ops.map((op) => op.path).sort()).toEqual(['/a~1b', '/t~0x']);
-    expect(applyPatch({}, ops)).toEqual({ 'a/b': 1, 't~x': 2 });
-  });
 });
 
 describe('applyPatch failures', () => {

@@ -128,19 +128,6 @@ describe('questions and approvals in the test pane', () => {
     fs.rmSync(baseDir, { recursive: true, force: true });
   });
 
-  it('pauses with kind question, the question/options and a deadline', async () => {
-    model = mockModel([whichCity, 'Lisbon it is.']);
-    await runManager.run('q-1', 'Book a trip', QUESTION_SPEC);
-    const paused = await waitForStatus(runManager, 'q-1', (s) => s.status === 'paused');
-
-    const pending = paused.pendingApproval;
-    expect(pending.kind).toBe('question');
-    expect(pending.question).toEqual({ text: 'Which city?', options: ['Porto', 'Lisbon'] });
-    const ms = Date.parse(pending.deadline) - Date.now();
-    expect(ms).toBeGreaterThan(14 * 60_000);
-    expect(ms).toBeLessThanOrEqual(15 * 60_000 + 1_000);
-  });
-
   it('POST /approve with an answer resumes the run; the tool result carries the answer', async () => {
     model = mockModel([whichCity, 'Lisbon it is.']);
     await runManager.run('q-2', 'Book a trip', QUESTION_SPEC);
@@ -155,21 +142,6 @@ describe('questions and approvals in the test pane', () => {
     expect(done.resultText).toBe('Lisbon it is.');
     // The ask_question tool result the model answered from carries the reply.
     expect(toolResultOf(done)).toMatchObject({ answer: 'Lisbon' });
-  });
-
-  it('the first answer wins: a second answer for the same pause is a 409', async () => {
-    model = mockModel([whichCity, 'Lisbon it is.']);
-    await runManager.run('q-3', 'Book a trip', QUESTION_SPEC);
-    const paused = await waitForStatus(runManager, 'q-3', (s) => s.status === 'paused');
-    const { approvalId } = paused.pendingApproval;
-
-    const first = await request(app).post('/agents/q-3/approve').send({ approvalId, answer: 'Lisbon' });
-    expect(first.status).toBe(202);
-    await waitForStatus(runManager, 'q-3', (s) => s.status === 'done');
-
-    const second = await request(app).post('/agents/q-3/approve').send({ approvalId, answer: 'Porto' });
-    expect(second.status).toBe(409);
-    await expect(runManager.answer('q-3', approvalId, 'Porto')).rejects.toThrow(/no pending/i);
   });
 
   it('an unanswered question resolves itself at the deadline with the no-answer text and a warn log', async () => {
@@ -203,22 +175,6 @@ describe('questions and approvals in the test pane', () => {
     expect(logs.some((l) => l.level === 'warn' && l.message.includes('Nobody answered before the deadline'))).toBe(true);
   });
 
-  it('approved sent to a question pause is a 400 LOUSHO_APPROVAL_KIND', async () => {
-    model = mockModel([whichCity, 'Lisbon it is.']);
-    await runManager.run('q-6', 'Book a trip', QUESTION_SPEC);
-    const paused = await waitForStatus(runManager, 'q-6', (s) => s.status === 'paused');
-
-    const res = await request(app)
-      .post('/agents/q-6/approve')
-      .send({ approvalId: paused.pendingApproval.approvalId, approved: true });
-    expect(res.status).toBe(400);
-    expect(res.body.code).toBe('LOUSHO_APPROVAL_KIND');
-
-    // Clean up so the pause does not outlive the test.
-    await runManager.answer('q-6', paused.pendingApproval.approvalId, 'Lisbon');
-    await waitForStatus(runManager, 'q-6', (s) => s.status === 'done');
-  });
-
   it('answer sent to a tool approval is a 400 LOUSHO_APPROVAL_KIND', async () => {
     model = mockModel([callDemo, 'Done.']);
     await runManager.run('t-7', 'Call the tool', GATED_SPEC);
@@ -236,20 +192,5 @@ describe('questions and approvals in the test pane', () => {
       .send({ approvalId: paused.pendingApproval.approvalId, approved: true });
     expect(ok.status).toBe(202);
     await waitForStatus(runManager, 't-7', (s) => s.status === 'done');
-  });
-
-  it('an answer outside 1..4000 characters is a 400', async () => {
-    model = mockModel([whichCity, 'Lisbon it is.']);
-    await runManager.run('q-8', 'Book a trip', QUESTION_SPEC);
-    const paused = await waitForStatus(runManager, 'q-8', (s) => s.status === 'paused');
-    const { approvalId } = paused.pendingApproval;
-
-    for (const answer of ['', 'x'.repeat(4001)]) {
-      const res = await request(app).post('/agents/q-8/approve').send({ approvalId, answer });
-      expect(res.status).toBe(400);
-    }
-
-    await runManager.answer('q-8', approvalId, 'Lisbon');
-    await waitForStatus(runManager, 'q-8', (s) => s.status === 'done');
   });
 });

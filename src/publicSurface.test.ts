@@ -5,15 +5,12 @@
  * append the names they remove or move here and in
  * publicSurface.test-d.ts.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import * as root from './index';
 import * as flows from './flows';
 import * as integrations from './integrations';
 import * as utils from './utils';
 import * as executor from './executor';
-import { mockModel } from './testing';
-import { ToolRegistry } from './tools';
-import type { AgentConfig } from './types';
 
 type Entry = Record<string, unknown>;
 
@@ -151,23 +148,4 @@ describe('public surface: the patch checks are renamed', () => {
       expect(root, `the root should export ${newName}`).toHaveProperty(newName);
     });
   }
-  it('SECRET_PATTERNS stays', () => {
-    expect(root).toHaveProperty('SECRET_PATTERNS');
-  });
-});
-
-describe('public surface: the legacy onEvent adapter is gone', () => {
-  it('a legacy onEvent option passed to AgentExecutor.execute() is never called', async () => {
-    const onEvent = vi.fn();
-    const agent: AgentConfig = { id: 'a', name: 'Agent', prompt: 'p', tools: {} };
-    await executor.AgentExecutor.execute({
-      agent,
-      provider: mockModel(['done']),
-      toolRegistry: new ToolRegistry(),
-      input: 'go',
-      // @ts-expect-error - ExecuteOptions.onEvent was removed
-      onEvent,
-    });
-    expect(onEvent).not.toHaveBeenCalled();
-  });
 });

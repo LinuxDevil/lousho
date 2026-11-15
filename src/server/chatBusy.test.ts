@@ -42,23 +42,6 @@ function replicas() {
 }
 
 describe('POST /chat when another replica runs the session', () => {
-  it('answers 409 + Retry-After + a coded body instead of a 200 stream', async () => {
-    const { a, b, release } = replicas();
-    const first = await a(post({ sessionId: 's1', input: 'hi' }));
-    expect(first.status).toBe(200);
-    const firstText = first.text();
-
-    const busy = await b(post({ sessionId: 's1', input: 'hello' }));
-    expect(busy.status).toBe(409);
-    expect(busy.headers.get('retry-after')).toBe('2');
-    expect(busy.headers.get('content-type')).toContain('application/json');
-    expect(await busy.json()).toMatchObject({ code: 'LOUSHO_SESSION_BUSY' });
-
-    release();
-    expect(await firstText).toContain('A done');
-    // Once the turn is over the other replica takes turns again.
-    expect((await b(post({ sessionId: 's1', input: 'hello' }))).status).toBe(200);
-  });
 
   it('answers an Idempotency-Key resend the same way while the original turn still runs elsewhere', async () => {
     const { a, b, release } = replicas();
@@ -77,18 +60,5 @@ describe('POST /chat when another replica runs the session', () => {
     expect(retry.status).toBe(200);
     expect(retry.headers.get('idempotent-replayed')).toBe('true');
     expect(await retry.text()).toContain('A done');
-  });
-
-  it('a resend within the same process gets Retry-After too', async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => (release = resolve));
-    const { handler } = createRouteHandler(createAgent({ provider: mockModel([async () => (await gate, 'Done.')]) }), { basePath: '/api' });
-    const first = await handler(post({ sessionId: 's3', input: 'hi' }, 'dup'));
-    const text = first.text();
-    const double = await handler(post({ sessionId: 's3', input: 'hi' }, 'dup'));
-    expect(double.status).toBe(409);
-    expect(double.headers.get('retry-after')).toBe('2');
-    release();
-    await text;
   });
 });

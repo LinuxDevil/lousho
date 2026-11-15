@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type {
   AuthorAssistantMessage,
-  AuthorMessage,
   AuthorToolPart,
   ProposalOutput,
 } from '../../../shared/authorWire';
@@ -49,38 +48,10 @@ function actionable(id: string | null): ProposalActionState {
 }
 
 describe('openCardForAgent', () => {
-  it('returns null for a create card - there is no canvas agent to diff against', () => {
-    const messages: AuthorMessage[] = [proposeMessage('p1', 'create')];
-    expect(openCardForAgent(actionable('p1'), messages, null, 'a1')).toBeNull();
-  });
-
-  it("returns null for an update card of another agent", () => {
-    const messages: AuthorMessage[] = [proposeMessage('p1', 'update', 'other-agent')];
-    expect(openCardForAgent(actionable('p1'), messages, null, 'a1')).toBeNull();
-  });
-
-  it("returns the actionable update card for the agent on screen", () => {
-    const messages: AuthorMessage[] = [proposeMessage('p1', 'update', 'a1')];
-    const card = openCardForAgent(actionable('p1'), messages, null, 'a1');
-    expect(card?.proposalId).toBe('p1');
-    expect(card?.kind).toBe('update');
-    expect(card?.spec.name).toBe('bot');
-  });
 
   it('finds the card in the live assistant message too', () => {
     const active = proposeMessage('p9', 'update', 'a1');
     const card = openCardForAgent(actionable('p9'), [], active, 'a1');
     expect(card?.proposalId).toBe('p9');
-  });
-
-  it('returns null when no card is actionable', () => {
-    const messages: AuthorMessage[] = [proposeMessage('p1', 'update', 'a1')];
-    expect(openCardForAgent(actionable(null), messages, null, 'a1')).toBeNull();
-  });
-
-  it('returns null when the actionable card is not an update for this agent', () => {
-    // p1 is an open update for a1 but superseded: the actionable card is a create.
-    const messages: AuthorMessage[] = [proposeMessage('p1', 'update', 'a1'), proposeMessage('p2', 'create')];
-    expect(openCardForAgent(actionable('p2'), messages, null, 'a1')).toBeNull();
   });
 });

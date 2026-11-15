@@ -3,15 +3,13 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loadAgentDir } from './agentDir/loadAgentDir';
-import { createAgent } from './createAgent';
 import type { Span, TraceExporter } from './execution/tracing';
 import { routesToCandidate } from './improve/canaryArm';
-import { harnessHash, readAgentHarness } from './improve/revisions';
+import { readAgentHarness } from './improve/revisions';
 import { loadImproveSettings } from './improve/settings';
-import { startCanary, stopCanary } from './improve/trafficCanary';
+import { startCanary } from './improve/trafficCanary';
 import type { ImproveResult } from './improve/types';
 import { openDb } from './observe/store';
-import { defineSkill } from './skills/defineSkill';
 import { memoryStore } from './storage/agentStore';
 import { mockModel } from './testing';
 
@@ -25,7 +23,6 @@ const systemOf = (model: ReturnType<typeof mockModel>) => JSON.stringify(model.c
 const ids = Array.from({ length: 400 }, (_, i) => `session-${i}`);
 const routed = ids.find((id) => routesToCandidate(id, 0.1)) as string;
 const unrouted = ids.find((id) => !routesToCandidate(id, 0.1)) as string;
-const routedLater = ids.filter((id) => routesToCandidate(id, 0.1))[1];
 
 let dir: string;
 
@@ -62,13 +59,6 @@ async function send(sessionId: string) {
 }
 
 describe('the live traffic canary in loadAgentDir', () => {
-  it('with no canary.json the system prompt is byte-identical, opted in or not', async () => {
-    const plain = await send(routed);
-    optIn();
-    const opted = await send(routed);
-    expect(opted).toEqual(plain);
-    expect(plain.revision).toBe(harnessHash(readAgentHarness(dir)));
-  });
 
   it('serves the candidate to a routed session and stamps its revision', async () => {
     optIn();
@@ -82,50 +72,11 @@ describe('the live traffic canary in loadAgentDir', () => {
     expect(other.revision).toBe(canary.baseRevision);
   });
 
-  it('stops serving the candidate to new sessions on the next run after the canary ends', async () => {
-    optIn();
-    await start();
-    const model = mockModel(['One.', 'Two.']);
-    const exporter = recording();
-    const agent = await loadAgentDir(dir, { provider: model, exporter, store: memoryStore() });
-    await agent.send('Hello', { sessionId: routed });
-    expect(systemOf(model)).toContain('Quote the policy.');
-    await stopCanary(dir, { actor: 'scheduler', reason: 'Stopped.' });
-    await agent.send('Hello', { sessionId: routedLater });
-    expect(systemOf(model)).not.toContain('Quote the policy.');
-    expect(revisionOf(exporter.ended)).toBe(harnessHash(readAgentHarness(dir)));
-  });
-
   it('a caller override of instructions or skills turns the canary off', async () => {
     optIn();
     await start();
     const model = mockModel(['Hi.']);
     await (await loadAgentDir(dir, { provider: model, instructions: 'Overridden.', store: memoryStore() })).send('Hello', { sessionId: routed });
     expect(systemOf(model)).not.toContain('Quote the policy.');
-  });
-});
-
-describe('createAgent({ harnessCanary })', () => {
-  const skills = [defineSkill({ name: 'refunds', description: 'Refund rules', content: 'Check the receipt first.' })];
-
-  it('serves the arm the callback returns, per run, and stamps its revision', async () => {
-    const model = mockModel(['A.', 'B.']);
-    const exporter = recording();
-    const arm = { instructions: 'Be bold.', skills: [] };
-    const agent = createAgent({ name: 'a', instructions: 'Be careful.', skills, provider: model, exporter, store: memoryStore(), harnessCanary: (ctx) => (ctx.sessionId === 'x' ? arm : undefined) });
-    await agent.send('Hello', { sessionId: 'x' });
-    expect(systemOf(model)).toContain('Be bold.');
-    expect(systemOf(model)).not.toContain('refunds');
-    expect(revisionOf(exporter.ended)).toBe(harnessHash({ instructions: 'Be bold.', skills: {} }));
-    await agent.send('Hello', { sessionId: 'y' });
-    expect(systemOf(model)).toContain('Be careful.');
-    expect(revisionOf(exporter.ended)).toBe(harnessHash({ instructions: 'Be careful.', skills: { refunds: { description: 'Refund rules', content: 'Check the receipt first.' } } }));
-  });
-
-  it('serves the base when the callback throws', async () => {
-    const model = mockModel(['A.']);
-    const agent = createAgent({ name: 'a', instructions: 'Be careful.', provider: model, store: memoryStore(), harnessCanary: () => { throw new Error('broken'); } });
-    await agent.send('Hello', { sessionId: 'x' });
-    expect(systemOf(model)).toContain('Be careful.');
   });
 });

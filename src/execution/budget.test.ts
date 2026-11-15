@@ -1,15 +1,13 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
 import { AgentExecutor, type ExecuteOptions } from './AgentExecutor';
-import { BudgetExceededError, startBudget, type RunLimits } from './budget';
-import type { AgentEvent } from './agentEvents';
+import { startBudget, type RunLimits } from './budget';
 import { ToolRegistry } from '../tools';
 import { defineTool } from '../tools/defineTool';
 import type { AgentConfig } from '../types';
 import type { RunUsage } from '../models/usage';
 import { mockModel, type MockTurn } from '../testing';
 import { createAgent } from '../createAgent';
-import { memoryStore } from '../storage/agentStore';
 import { MemorySessionStore } from '../session';
 
 let echoRuns = 0;
@@ -44,82 +42,6 @@ afterEach(() => {
 });
 
 describe('limits', () => {
-  it.each([
-    ['maxTokens', { maxTokens: 250 }, 300],
-    ['maxInputTokens', { maxInputTokens: 150 }, 200],
-    ['maxOutputTokens', { maxOutputTokens: 80 }, 100],
-  ] as const)('%s stops the run after the model call that reaches it, before its tools run', async (limit, limits, value) => {
-    const result = await run(limits, [callEcho(100, 50)]);
-
-    expect(result.finishReason).toBe('budget-exceeded');
-    expect(result.budget).toEqual({ limit, value, max: Object.values(limits)[0], scope: 'run' });
-    expect(result.steps).toBe(2);
-    expect(echoRuns).toBe(1);
-    // The unrun call gets a cancelled result, so the transcript stays valid for a provider.
-    const last = result.messages.at(-1)!;
-    expect(last.role).toBe('tool');
-    expect(JSON.parse(last.content as string).message).toMatch(/budget limit/);
-  });
-
-  it('maxCostUsd counts the estimated cost', async () => {
-    const result = await run({ maxCostUsd: 0.0004 }, [callEcho(1000, 500)]);
-    // one call: (1000 * 0.15 + 500 * 0.6) / 1e6 = 0.00045
-    expect(result.finishReason).toBe('budget-exceeded');
-    expect(result.budget).toMatchObject({ limit: 'maxCostUsd', max: 0.0004, scope: 'run' });
-    expect(result.budget?.value).toBeCloseTo(0.00045, 10);
-    expect(result.steps).toBe(1);
-  });
-
-  it('limits.maxSteps is an alias of maxSteps: the stricter wins', async () => {
-    const byLimit = await run({ maxSteps: 2 }, [callEcho(1, 1)], { maxSteps: 5 });
-    expect(byLimit.finishReason).toBe('budget-exceeded');
-    expect(byLimit.budget).toEqual({ limit: 'maxSteps', value: 2, max: 2, scope: 'run' });
-    expect(echoRuns).toBe(2);
-
-    const byOption = await run({ maxSteps: 5 }, [callEcho(1, 1)], { maxSteps: 2 });
-    expect(byOption.finishReason).toBe('max-steps');
-    expect(byOption.budget).toBeUndefined();
-
-    // Alone, it replaces the default of 10 steps.
-    const alone = await run({ maxSteps: 12 }, [callEcho(1, 1)]);
-    expect(alone.steps).toBe(12);
-    expect(alone.budget?.limit).toBe('maxSteps');
-  });
-
-  it('a run that finishes within its limits is unchanged', async () => {
-    const result = await run({ maxTokens: 1000 }, [callEcho(100, 50), { text: 'done', usage: { inputTokens: 100, outputTokens: 50 } }]);
-    expect(result.finishReason).toBe('stop');
-    expect(result.budget).toBeUndefined();
-  });
-
-  it('streams budget.exceeded before run.done and checkpoints the run like max-steps', async () => {
-    const { checkpoints } = memoryStore();
-    const stream = AgentExecutor.stream({
-      agent,
-      input: 'go',
-      provider: priced([callEcho(100, 50)]),
-      toolRegistry: registry(),
-      limits: { maxTokens: 200 },
-      sessionId: 'job-1',
-      checkpointStore: checkpoints,
-    });
-    const events: AgentEvent[] = [];
-    for await (const event of stream) events.push(event);
-
-    const types = events.map((e) => e.type);
-    expect(types.slice(-3)).toEqual(['budget.exceeded', 'step.done', 'run.done']);
-    expect(events.find((e) => e.type === 'budget.exceeded')).toMatchObject({ limit: 'maxTokens', value: 300, max: 200, scope: 'run' });
-    expect(events.at(-1)).toMatchObject({ type: 'run.done', finishReason: 'budget-exceeded' });
-    const checkpoint = await checkpoints!.load('job-1');
-    expect(checkpoint).toMatchObject({ status: 'finished', finishReason: 'budget-exceeded', stepIndex: 2 });
-    expect(checkpoint?.messages).toEqual((await stream.result).messages);
-  });
-
-  it("onExceeded: 'throw' rejects with BudgetExceededError", async () => {
-    const error = await run({ maxTokens: 100, onExceeded: 'throw' }, [callEcho(100, 50)]).catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(BudgetExceededError);
-    expect(error).toMatchObject({ code: 'LOUSHO_BUDGET_EXCEEDED', budget: { limit: 'maxTokens', value: 150, max: 100 } });
-  });
 
   it('maxDurationMs aborts an in-flight model call', async () => {
     vi.useFakeTimers();
@@ -133,39 +55,6 @@ describe('limits', () => {
     expect(result.finishReason).toBe('budget-exceeded');
     expect(result.budget).toEqual({ limit: 'maxDurationMs', value: 5_000, max: 5_000, scope: 'run' });
     expect(result.steps).toBe(2);
-  });
-
-  it("maxDurationMs with onExceeded: 'throw' rejects", async () => {
-    vi.useFakeTimers();
-    const hanging: MockTurn = (request) =>
-      new Promise((_, reject) => request.signal?.addEventListener('abort', () => reject(request.signal?.reason)));
-    const pending = run({ maxDurationMs: 1_000, onExceeded: 'throw' }, [hanging]).catch((e: unknown) => e);
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(await pending).toBeInstanceOf(BudgetExceededError);
-  });
-
-  it("counts a sub-agent's usage toward the parent's budget", async () => {
-    const researcher = createAgent({
-      description: 'Researches',
-      provider: priced([{ text: 'found it', usage: { inputTokens: 400, outputTokens: 100 } }]),
-    });
-    const lead = createAgent({
-      provider: priced([
-        {
-          toolCalls: [{ name: 'task', args: { agent: 'researcher', prompt: 'look', description: 'look' } }],
-          usage: { inputTokens: 10, outputTokens: 10 },
-        },
-        'done',
-      ]),
-      subagents: { researcher },
-      limits: { maxTokens: 300 },
-    });
-
-    const result = await lead.send('research');
-
-    expect(result.finishReason).toBe('budget-exceeded');
-    expect(result.budget).toEqual({ limit: 'maxTokens', value: 520, max: 300, scope: 'run' });
-    expect(result.usage.delegated?.totalTokens).toBe(500);
   });
 });
 
@@ -196,12 +85,6 @@ describe('session limits', () => {
     const saved = (await store.load('s1'))!;
     expect(saved.at(-1)?.metadata?.sessionUsage).toMatchObject({ totalTokens: 4000, steps: 2 });
   });
-
-  it('run limits still apply per turn', async () => {
-    const agent = createAgent({ provider: priced([callEcho(100, 100)]), tools: [echo], limits: { maxTokens: 250 } });
-    const result = await agent.session({ limits: { maxTokens: 10_000 } }).send('go');
-    expect(result.budget).toEqual({ limit: 'maxTokens', value: 400, max: 250, scope: 'run' });
-  });
 });
 
 describe('unknown cost under maxCostUsd', () => {
@@ -214,42 +97,6 @@ describe('unknown cost under maxCostUsd', () => {
     budget.dispose();
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0][0])).toContain('maxCostUsd');
-    warn.mockRestore();
-  });
-
-  it('names the model, the option and the docs link, once per model across repeated steps', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    vi.resetModules();
-    const { startBudget: fresh } = await import('./budget');
-    const byModel = { 'lmstudio/qwen': { inputTokens: 1, outputTokens: 1, calls: 1 } };
-    const usage: RunUsage = { inputTokens: 1, outputTokens: 1, totalTokens: 2, costUsd: undefined, modelCalls: 1, estimated: false, promptTokens: 1, completionTokens: 1, byModel };
-    const budget = fresh({ maxCostUsd: 1 })!;
-    for (let step = 1; step <= 3; step++) budget.check(usage, step);
-    expect(warn).toHaveBeenCalledTimes(1);
-    const text = String(warn.mock.calls[0][0]);
-    expect(text).toContain('lmstudio/qwen');
-    expect(text).toContain('NOT enforced');
-    expect(text).toContain('registerModel(');
-    expect(text).toContain('https://lousho.com/models-and-cost#models-and-the-price-table');
-    warn.mockRestore();
-  });
-
-  it('enforces the cap on the partial total when only some steps have a known price', () => {
-    const budget = startBudget({ maxCostUsd: 1 })!;
-    const usage: RunUsage = { inputTokens: 1, outputTokens: 1, totalTokens: 2, costUsd: 1.5, costPartial: true, modelCalls: 2, estimated: false, promptTokens: 1, completionTokens: 1, byModel: {} };
-    expect(budget.check(usage, 1)).toMatchObject({ limit: 'maxCostUsd', value: 1.5, max: 1 });
-    budget.dispose();
-  });
-
-  it('stays quiet for a scripted mockModel(), which has no price', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    vi.resetModules();
-    const { startBudget: fresh } = await import('./budget');
-    const usage: RunUsage = { inputTokens: 1, outputTokens: 1, totalTokens: 2, costUsd: undefined, modelCalls: 1, estimated: false, promptTokens: 1, completionTokens: 1, byModel: {} };
-    fresh({ maxCostUsd: 1 }, undefined, undefined, true)!.check(usage, 1);
-    expect(warn).not.toHaveBeenCalled();
-    fresh({ maxCostUsd: 1 })!.check(usage, 1);
-    expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
   });
 });

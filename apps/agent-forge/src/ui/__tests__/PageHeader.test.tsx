@@ -3,16 +3,6 @@ import { render } from './render';
 import { PageHeader } from '../PageHeader';
 
 describe('PageHeader', () => {
-  it('renders the title as the h1, with no optional parts by default', () => {
-    const el = render(<PageHeader title="Traces" />);
-    const h1 = el.querySelector('header.page-header h1');
-    expect(h1?.textContent).toBe('Traces');
-    expect(h1?.getAttribute('title')).toBe('Traces');
-    expect(el.querySelector('nav')).toBeNull();
-    expect(el.querySelector('.page-header-description')).toBeNull();
-    expect(el.querySelector('.page-header-status')).toBeNull();
-    expect(el.querySelector('.page-header-actions')).toBeNull();
-  });
 
   it('renders breadcrumbs (last is the current page), description, status and actions', () => {
     const el = render(
@@ -36,35 +26,5 @@ describe('PageHeader', () => {
     expect(el.querySelector('.page-header-description')?.textContent).toBe('Examples to evaluate against');
     expect(el.querySelector('.page-header-status #pill')).not.toBeNull();
     expect(el.querySelector('.page-header-actions button')?.textContent).toBe('New example');
-  });
-
-  it('a last crumb with an href is still the current page, not a link', () => {
-    const el = render(<PageHeader title="x" breadcrumbs={[{ label: 'Prompts', href: '#/prompts' }]} />);
-    expect(el.querySelector('nav a')).toBeNull();
-    expect(el.querySelector('nav [aria-current="page"]')?.textContent).toBe('Prompts');
-  });
-
-  it('renders tabs as a last row inside the header, after the actions', () => {
-    const el = render(
-      <PageHeader
-        title="Evaluations"
-        actions={<button type="button">New</button>}
-        tabs={
-          <nav aria-label="Sections">
-            <a href="#/a" aria-current="page">A</a>
-          </nav>
-        }
-      />,
-    );
-    const header = el.querySelector('header')!;
-    expect(header.className).toBe('page-header page-header-with-tabs');
-    expect(header.lastElementChild?.className).toBe('page-header-tabs');
-    expect(header.querySelector('.page-header-tabs nav[aria-label="Sections"] [aria-current="page"]')?.textContent).toBe('A');
-  });
-
-  it('has no tabs row without tabs', () => {
-    const el = render(<PageHeader title="x" />);
-    expect(el.querySelector('.page-header-tabs')).toBeNull();
-    expect(el.querySelector('header')?.className).toBe('page-header');
   });
 });

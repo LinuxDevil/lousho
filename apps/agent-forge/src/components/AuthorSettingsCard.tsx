@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 import { runtimeClient } from '../runtime/runtimeClient';
 import type { CatalogModel } from '../../shared/wireTypes';
 import type { AuthorSettings, AuthorSettingsPayload } from '../../shared/authorWire';
 import { Field } from '../ui/Field';
-import { Select, Switch, type SelectOption } from '../ui/controls';
+import { Input, Select, Switch, type SelectOption } from '../ui/controls';
+import { matchesModelFilter, modelLabel } from './modelFilter';
 import { SettingRow, SettingsCard, TonePill } from './SettingsCard';
 import { errorMessage } from './errorMessage';
 
@@ -31,7 +32,7 @@ function scrollToProviderKeys(): void {
 function modelOptions(models: readonly CatalogModel[], current: string): SelectOption[] {
   const options = models
     .filter((m) => m.capabilities.tools)
-    .map((m) => ({ value: m.id, label: m.available ? m.id : `${m.id} (no key)`, disabled: !m.available }));
+    .map((m) => ({ value: m.id, label: modelLabel(m), disabled: !m.available }));
   if (current !== '' && !options.some((o) => o.value === current)) {
     options.unshift({ value: current, label: current, disabled: false });
   }
@@ -64,11 +65,24 @@ interface ModelRowProps {
 
 /** One model picker row; the Field carries the PUT error under the select and names it for assistive tech. */
 function ModelRow({ label, hint, options, value, disabled, error, onChange }: ModelRowProps): JSX.Element {
+  const [filter, setFilter] = useState('');
+  const filterId = useId();
+  const shown = options.filter((o) => o.value === value || matchesModelFilter(o.label, filter));
   return (
     <SettingRow label={label} hint={hint}>
       <Field label={<span className="visually-hidden">{label}</span>} error={error}>
+        <Input
+          type="search"
+          id={filterId}
+          aria-required={false}
+          aria-label={`Filter ${label.toLowerCase()} list`}
+          placeholder={`Filter ${options.length} models…`}
+          value={filter}
+          disabled={disabled}
+          onChange={(e) => setFilter(e.target.value)}
+        />
         <Select
-          options={options}
+          options={shown}
           placeholder={value === '' ? 'Loading…' : undefined}
           value={value}
           disabled={disabled}

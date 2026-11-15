@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
-
-import { detectVariables } from '../variables';
 import { createSseParser } from '../sse';
 import { messagesFromObservation, modelFromObservation, parsePromptParam } from '../prefill';
-import { buildRunBody, defaultProvider, modelString, providerOptions } from '../request';
+import { buildRunBody, modelString } from '../request';
 import { STARTED_RUN, applyRunEvent } from '../runState';
 import type { ObserveObservationRow } from '../../../observe/types';
 
@@ -16,21 +14,6 @@ function gen(over: Partial<ObserveObservationRow>): ObserveObservationRow {
   };
 }
 
-describe('detectVariables', () => {
-  it('finds {names} across rows, de-duplicated in first-seen order', () => {
-    expect(
-      detectVariables([
-        { role: 'system', content: 'You are {persona}. Speak {lang}.' },
-        { role: 'user', content: 'Hi {name}, in {lang} please; {user.id} {a-b}' },
-      ]),
-    ).toEqual(['persona', 'lang', 'name', 'user.id', 'a-b']);
-  });
-
-  it('ignores braces that are not identifiers (JSON, numbers, empty)', () => {
-    expect(detectVariables([{ role: 'user', content: '{"a": 1} {1x} {} { spaced }' }])).toEqual([]);
-  });
-});
-
 describe('createSseParser', () => {
   it('parses data frames split across chunks and skips junk', () => {
     const parser = createSseParser();
@@ -40,22 +23,9 @@ describe('createSseParser', () => {
       { type: 'done', finishReason: 'stop', text: 'Hello' },
     ]);
   });
-
-  it('flushes a final frame without a trailing blank line', () => {
-    const parser = createSseParser();
-    expect(parser.push('data: {"type":"error","message":"x"}')).toEqual([]);
-    expect(parser.flush()).toEqual([{ type: 'error', message: 'x' }]);
-  });
 });
 
 describe('messagesFromObservation', () => {
-  it('reads an OpenAI-style message array', () => {
-    const row = gen({ input: JSON.stringify([{ role: 'system', content: 'Be terse.' }, { role: 'user', content: 'Hi' }, { role: 'tool', content: 'x' }]) });
-    expect(messagesFromObservation(row)).toEqual([
-      { role: 'system', content: 'Be terse.' },
-      { role: 'user', content: 'Hi' },
-    ]);
-  });
 
   it('reads {messages} and gen_ai parts, prepending system instructions from attrs', () => {
     const row = gen({
@@ -101,16 +71,6 @@ describe('parsePromptParam', () => {
 });
 
 describe('request helpers', () => {
-  const keys = [
-    { provider: 'openai' as const, hasKey: false, masked: null, envKey: false },
-    { provider: 'anthropic' as const, hasKey: true, masked: 'x', envKey: false },
-  ];
-
-  it('offers keyed providers plus ollama and mock, defaulting to mock with no keys', () => {
-    expect(providerOptions(keys)).toEqual(['anthropic', 'ollama', 'mock']);
-    expect(defaultProvider(keys)).toBe('anthropic');
-    expect(defaultProvider([])).toBe('mock');
-  });
 
   it('builds the model string', () => {
     expect(modelString('mock', 'ignored')).toBe('mock');

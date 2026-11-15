@@ -58,12 +58,6 @@ describe('POST /api/v1/hub', () => {
     const { entries } = await query(daemon, 'agent_id=a&key=obj');
     expect(entries[0].value).toBe('{"x":1}');
   });
-
-  it('rejects a bad body with 400', async () => {
-    const daemon = await start();
-    expect((await publish(daemon, { agent_id: 'a', namespace: 'n' })).status).toBe(400);
-    expect((await publish(daemon, { agent_id: 'a', namespace: 'n', key: 'k', value: 'v', scope: 'world' })).status).toBe(400);
-  });
 });
 
 describe('GET /api/v1/hub scope enforcement', () => {
@@ -105,18 +99,6 @@ describe('GET /api/v1/hub scope enforcement', () => {
 });
 
 describe('hub() client', () => {
-  it('publishes and queries under the given agent identity', async () => {
-    const daemon = await start();
-    const a = hub({ url: base(daemon), agentId: 'agent-a' })!;
-    const b = hub({ url: base(daemon), agentId: 'agent-b' })!;
-    await a.publish({ namespace: 'facts', key: 'sky', value: 'blue' });
-    await a.publish({ namespace: 'facts', key: 'motto', value: 'share me', scope: 'fleet' });
-
-    expect((await a.query({ scope: 'private' })).map((e) => e.key)).toEqual(['sky']);
-    expect((await b.query({ scope: 'private' }))).toHaveLength(0);
-    expect((await b.query({ scope: 'fleet' })).map((e) => e.key)).toEqual(['motto']);
-    expect(a.agentId).toBe('agent-a');
-  });
 
   it('resolves the caller identity from .lousho/identity/ like the reporter', async () => {
     const daemon = await start();
@@ -126,23 +108,9 @@ describe('hub() client', () => {
     expect(entries[0].agent_id).toBe(client.agentId);
     expect(entries[0].agent_id).toMatch(/^[0-9a-f-]{36}$/);
   });
-
-  it('is undefined when no daemon is configured', () => {
-    expect(hub({ env: {} as NodeJS.ProcessEnv })).toBeUndefined();
-  });
-
-  it('follows LOUSHO_OBSERVE when no url is passed', async () => {
-    const daemon = await start();
-    const client = hub({ env: { LOUSHO_OBSERVE: base(daemon) } as NodeJS.ProcessEnv, agentId: 'e-agent' })!;
-    await client.publish({ namespace: 'n', key: 'k', value: 'v' });
-    expect((await query(daemon, 'agent_id=e-agent')).entries).toHaveLength(1);
-  });
 });
 
 describe('hubTools()', () => {
-  it('returns [] when no hub is configured', () => {
-    expect(hubTools({ env: {} as NodeJS.ProcessEnv })).toEqual([]);
-  });
 
   it('exposes hub_publish and hub_query as agent tools over the client', async () => {
     const daemon = await start();

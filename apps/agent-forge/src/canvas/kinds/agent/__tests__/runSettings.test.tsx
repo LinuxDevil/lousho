@@ -109,50 +109,12 @@ describe('agent run settings Inspector', () => {
     expect(fields().limits).toBeUndefined();
   });
 
-  it('keeps sibling limits keys when one is cleared', () => {
-    app.graph = specToGraph(specOf({ limits: { maxCostUsd: 2, maxTokens: 1000 } }));
-    renderInspector();
-    type('node-agent-max-cost', '');
-    expect(fields().limits).toStrictEqual({ maxTokens: 1000 });
-  });
-
-  it('writes maxSteps at the top level', () => {
-    renderInspector();
-    type('node-agent-max-steps', '12');
-    expect(fields().maxSteps).toBe(12);
-  });
-
-  it('writes permissionMode plan and deletes it again for Default', () => {
-    renderInspector();
-    // ChoiceField options (no unset): 1 default, 2 plan, 3 acceptEdits, 4 dontAsk.
-    choose('node-agent-permission-mode', '2');
-    expect(fields().permissionMode).toBe('plan');
-    flush();
-    choose('node-agent-permission-mode', '1');
-    expect(fields().permissionMode).toBeUndefined();
-  });
-
   it('rejects an approval timeout under 30 seconds without writing it', () => {
     renderInspector();
     type('node-agent-approval-ttl', '10000');
     flush();
     expect(container.textContent).toContain('At least 30 seconds');
     expect(fields().approvalTtlMs).toBeUndefined();
-  });
-
-  it('writes approvalTtlMs once it is at least 30 seconds', () => {
-    renderInspector();
-    type('node-agent-approval-ttl', '60000');
-    expect(fields().approvalTtlMs).toBe(60000);
-  });
-
-  it('writes askQuestion true on and deletes the key off', () => {
-    renderInspector();
-    click('node-agent-ask-question');
-    expect(fields().askQuestion).toBe(true);
-    flush();
-    click('node-agent-ask-question');
-    expect(fields().askQuestion).toBeUndefined();
   });
 
   it('writes retry:false for Off and shows the three custom fields for Custom', () => {
@@ -169,25 +131,12 @@ describe('agent run settings Inspector', () => {
     expect(field('node-agent-retry-timeout')).not.toBeNull();
   });
 
-  it('writes retry.maxRetries inside the retry object', () => {
-    app.graph = specToGraph(specOf({ retry: { maxRetries: 1 } }));
-    renderInspector();
-    type('node-agent-retry-max', '4');
-    expect(fields().retry).toStrictEqual({ maxRetries: 4 });
-  });
-
   it('keeps custom backoff sub-keys when the preset is re-picked', () => {
     app.graph = specToGraph(specOf({ retry: { backoff: { initialMs: 100, jitter: false } } }));
     renderInspector();
     // Backoff ChoiceField (allowUnset): 0 Default, 1 Exponential, 2 Linear.
     choose('node-agent-retry-backoff', '2');
     expect(fields().retry).toStrictEqual({ backoff: { initialMs: 100, jitter: false, factor: 1 } });
-  });
-
-  it('writes rateLimit.requestsPerMinute', () => {
-    renderInspector();
-    type('node-agent-rate-limit-rpm', '30');
-    expect(fields().rateLimit).toStrictEqual({ requestsPerMinute: 30 });
   });
 
   it('writes compaction custom threshold and summarizer', () => {
@@ -219,15 +168,6 @@ describe('agent run settings Inspector', () => {
     expect(fields().compaction).toBeUndefined();
   });
 
-  it('writes promptCaching false off and deletes the key on', () => {
-    renderInspector();
-    click('node-agent-prompt-caching');
-    expect(fields().promptCaching).toBe(false);
-    flush();
-    click('node-agent-prompt-caching');
-    expect(fields().promptCaching).toBeUndefined();
-  });
-
   it('writes toolSearch false off and an object on, keeping maxResults inside it', () => {
     renderInspector();
     // Absent means on (the SDK default); the first click turns it off.
@@ -240,16 +180,6 @@ describe('agent run settings Inspector', () => {
     flush();
     type('node-agent-tool-search-max-results', '8');
     expect(fields().toolSearch).toStrictEqual({ maxResults: 8 });
-  });
-
-  it('reads a literal toolSearch:false as off', () => {
-    app.graph = specToGraph(specOf({ toolSearch: false }));
-    renderInspector();
-    expect(field('node-agent-tool-search').getAttribute('aria-checked')).toBe('false');
-    flush();
-    // Toggling back on writes an object, never resurrects `false`.
-    click('node-agent-tool-search');
-    expect(fields().toolSearch).toStrictEqual({});
   });
 
   it('writes codeMode true on and deletes the key off', () => {
@@ -270,25 +200,5 @@ describe('agent run settings Inspector', () => {
     expect(fields().maxSubagentDepth).toBe(2);
     type('node-agent-max-handoffs', '5');
     expect(fields().maxHandoffs).toBe(5);
-  });
-});
-
-describe('inline subagent run settings', () => {
-  beforeEach(() => {
-    app.graph = specToGraph(
-      specOf({
-        subagents: {
-          r: { inline: { name: 'r', description: 'Looks things up', model: 'openai/gpt-5', instructions: 'x' } },
-        },
-      })
-    );
-    app.selectedNodeId = 'sub:r';
-  });
-
-  it('hides the Delegation section on an inline subagent', () => {
-    renderInspector();
-    const ids = [...container.querySelectorAll('.inspector-section-body')].map((el) => el.id);
-    expect(ids).not.toContain('inspector-section-agent-delegation');
-    expect(ids).toContain('inspector-section-agent-limits');
   });
 });

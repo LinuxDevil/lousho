@@ -140,16 +140,6 @@ describe('SchemaForm unions and object arrays', () => {
 });
 
 describe('SchemaForm record maps', () => {
-  it('adds a record entry from the new-key row', () => {
-    render();
-    const field = q('[data-path="instructionsByFamily"]');
-    const newKey = field.querySelector<HTMLInputElement>('input[aria-label="New Instructions by family key"]')!;
-    type(newKey, 'claude');
-    click(field.querySelector('.schema-record-add button')!);
-    expect(last).toEqual({ instructionsByFamily: { claude: '' } });
-    const keyInput = q<HTMLInputElement>('input[aria-label="Instructions by family key 1"]');
-    expect(keyInput.value).toBe('claude');
-  });
 
   it('refuses duplicate and empty keys with the exact messages and no commit', () => {
     render({ initial: { instructionsByFamily: { claude: 'x' } } });

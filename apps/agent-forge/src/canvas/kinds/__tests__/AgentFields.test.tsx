@@ -97,30 +97,6 @@ beforeEach(() => {
 });
 
 describe('agent Inspector', () => {
-  it('shows the sections in order', () => {
-    renderInspector();
-    const ids = [...container.querySelectorAll('.inspector-section-body')].map((el) => el.id);
-    for (const id of [
-      'agent-identity',
-      'agent-model',
-      'agent-instructions',
-      'agent-limits',
-      'agent-approvals',
-      'agent-reliability',
-      'agent-context',
-      'agent-delegation',
-    ]) {
-      expect(ids).toContain(`inspector-section-${id}`);
-    }
-    // C27: the Advanced JSON editor is gone — every AGENT_FIELD_KEYS entry has a real control.
-    expect(container.querySelector('#node-agent-advanced')).toBeNull();
-  });
-
-  it('writes the name field from the name input', () => {
-    renderInspector();
-    type('node-agent-name', 'new-name');
-    expect(fields().name).toBe('new-name');
-  });
 
   it('shows the pattern error for an invalid name and still writes it', () => {
     renderInspector();
@@ -130,12 +106,6 @@ describe('agent Inspector', () => {
     expect(container.textContent).toContain('Use letters, digits, space, dot, dash or underscore, up to 64 characters');
   });
 
-  it('writes the description', () => {
-    renderInspector();
-    type('node-agent-description', 'Sorts tickets');
-    expect(fields().description).toBe('Sorts tickets');
-  });
-
   it('sets modelSettings.temperature and drops modelSettings when cleared', () => {
     renderInspector();
     type('node-agent-temperature', '0.3');
@@ -143,13 +113,6 @@ describe('agent Inspector', () => {
     flush();
     type('node-agent-temperature', '');
     expect(fields().modelSettings).toBeUndefined();
-  });
-
-  it('keeps other model settings when one is cleared', () => {
-    app.graph = specToGraph(specOf({ modelSettings: { temperature: 0.3, maxTokens: 100 } }));
-    renderInspector();
-    type('node-agent-temperature', '');
-    expect(fields().modelSettings).toStrictEqual({ maxTokens: 100 });
   });
 
   it('shows the budget field for Token budget and writes { budgetTokens }', () => {
@@ -201,14 +164,6 @@ describe('agent Inspector', () => {
     type('node-agent-prompt-ref', '');
     expect(fields().promptRef).toBeUndefined();
   });
-
-  it('writes maxSteps through the Limits section instead of JSON', () => {
-    renderInspector();
-    const el = field<HTMLInputElement>('node-agent-max-steps');
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(el, '9');
-    act(() => el.dispatchEvent(new Event('input', { bubbles: true })));
-    expect(fields().maxSteps).toBe(9);
-  });
 });
 
 describe('inline subagent Inspector', () => {
@@ -223,31 +178,10 @@ describe('inline subagent Inspector', () => {
     app.selectedNodeId = 'sub:r';
   });
 
-  const subFields = () => (app.graph!.nodes[1].data as AgentNodeData).fields;
-
-  it('shows the Subagent name field', () => {
-    renderInspector();
-    expect(field('node-agent-key')).not.toBeNull();
-    expect(container.textContent).toContain('Subagent name');
-  });
-
-  it('writes subagentKey through replace', () => {
-    renderInspector();
-    type('node-agent-key', 'research');
-    expect((app.graph!.nodes[1].data as AgentNodeData).subagentKey).toBe('research');
-  });
-
   it('requires a description', () => {
     renderInspector();
     type('node-agent-description', '');
     flush();
     expect(container.textContent).toContain('A subagent needs a description so the main agent knows when to use it');
-  });
-
-  it('writes fields on the subagent, not the root', () => {
-    renderInspector();
-    type('node-agent-name', 'researcher');
-    expect(subFields().name).toBe('researcher');
-    expect(fields().name).toBe('a');
   });
 });

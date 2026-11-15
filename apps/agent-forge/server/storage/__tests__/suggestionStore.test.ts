@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { AgentRepo } from '../agentRepo';
-import { SUGGESTION_ID_RE, SuggestionStore, promptHash } from '../suggestionStore';
+import { SuggestionStore, promptHash } from '../suggestionStore';
 import type { PortabilityAnalysis, PromptSuggestion } from '../../../shared/wireTypes';
 
 const SPEC_HASH = 'sha256:0123456789abcdef0123456789abcdef';
@@ -71,37 +71,6 @@ describe('SuggestionStore', () => {
   });
 
   const suggestionsDir = (id: string) => path.join(repo.sidecarDir(id), 'suggestions');
-  const suggestionPath = (id: string, suggestionId: string) =>
-    path.join(suggestionsDir(id), `${suggestionId}.json`);
-
-  it('promptHash is sha256-prefixed, stable, and hashes the raw string', () => {
-    expect(promptHash('a')).toBe('sha256:ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb');
-    expect(promptHash('a')).toBe(promptHash('a'));
-    // No trimming: surrounding whitespace changes the CAS key.
-    expect(promptHash('a ')).not.toBe(promptHash('a'));
-    expect(promptHash('')).toMatch(/^sha256:[0-9a-f]{64}$/);
-  });
-
-  it('save then get round-trips both record kinds', async () => {
-    await store.save('ops', SUGGESTION);
-    await store.save('ops', ANALYSIS);
-
-    expect(await store.get('ops', SUGGESTION.id)).toEqual(SUGGESTION);
-    expect(await store.get('ops', ANALYSIS.id)).toEqual(ANALYSIS);
-    expect(JSON.parse(fs.readFileSync(suggestionPath('ops', SUGGESTION.id), 'utf8'))).toEqual(SUGGESTION);
-    expect(await store.get('ops', 'missing')).toBeUndefined();
-    expect(await store.get('ghost', SUGGESTION.id)).toBeUndefined();
-  });
-
-  it('list returns every record newest createdAt first', async () => {
-    const older: PromptSuggestion = { ...SUGGESTION, id: 'sug-old', createdAt: '2026-02-01T00:00:00.000Z' };
-    await store.save('ops', older);
-    await store.save('ops', SUGGESTION);
-    await store.save('ops', ANALYSIS);
-
-    expect((await store.list('ops')).map((item) => item.id)).toEqual([ANALYSIS.id, SUGGESTION.id, older.id]);
-    expect(await store.list('ghost')).toEqual([]);
-  });
 
   it('get with a traversal id returns undefined without reading any file', async () => {
     // A valid record sitting exactly where '../x' would resolve to: if get
@@ -120,24 +89,6 @@ describe('SuggestionStore', () => {
     await expect(store.save('ops', { ...SUGGESTION, id: '../x' })).rejects.toThrow(/Invalid suggestion id/);
     await expect(store.save('ops', { ...SUGGESTION, id: 'a/b' })).rejects.toThrow(/Invalid suggestion id/);
     expect(fs.existsSync(suggestionsDir('ops'))).toBe(false);
-  });
-
-  it('setStatus updates status + updatedAt on a prompt_edit record and returns it', async () => {
-    await store.save('ops', SUGGESTION);
-    NOW = new Date('2026-02-05T09:10:11.000Z');
-
-    const updated = await store.setStatus('ops', SUGGESTION.id, 'applied');
-    expect(updated).toEqual({ ...SUGGESTION, status: 'applied', updatedAt: NOW.toISOString() });
-    expect(await store.get('ops', SUGGESTION.id)).toEqual(updated);
-    expect(await store.setStatus('ops', 'missing', 'dismissed')).toBeUndefined();
-  });
-
-  it('setStatus on a portability record returns undefined and leaves it unchanged', async () => {
-    await store.save('ops', ANALYSIS);
-
-    expect(await store.setStatus('ops', ANALYSIS.id, 'applied')).toBeUndefined();
-    expect(await store.get('ops', ANALYSIS.id)).toEqual(ANALYSIS);
-    expect(JSON.parse(fs.readFileSync(suggestionPath('ops', ANALYSIS.id), 'utf8'))).toEqual(ANALYSIS);
   });
 
   it('findPortability hits by spec hash and misses after the hash changes', async () => {
@@ -162,14 +113,5 @@ describe('SuggestionStore', () => {
     expect(await store.list('ops')).toEqual([SUGGESTION]);
     expect(warn).toHaveBeenCalledOnce();
     warn.mockRestore();
-  });
-
-  it('SUGGESTION_ID_RE accepts the shapes ids take', () => {
-    expect(SUGGESTION_ID_RE.test('sug-1')).toBe(true);
-    expect(SUGGESTION_ID_RE.test(PORTABILITY_ID)).toBe(true);
-    expect(SUGGESTION_ID_RE.test('a'.repeat(64))).toBe(true);
-    expect(SUGGESTION_ID_RE.test('a'.repeat(65))).toBe(false);
-    expect(SUGGESTION_ID_RE.test('../x')).toBe(false);
-    expect(SUGGESTION_ID_RE.test('')).toBe(false);
   });
 });

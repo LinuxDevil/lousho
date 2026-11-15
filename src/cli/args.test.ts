@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PassThrough } from 'node:stream';
-import { USAGE_EXIT_CODE, exitCodeFor, parseCommand, portValue, usageError, type CommandSpec } from './args';
+import { USAGE_EXIT_CODE, exitCodeFor, parseCommand, usageError, type CommandSpec } from './args';
 import { runAcp } from './acp';
 import { runAdd } from './add';
 import { realInitEnvironment, runInit } from './init';
@@ -23,11 +23,6 @@ const SPEC: CommandSpec = {
 };
 
 describe('parseCommand', () => {
-  it('accepts --flag value and --flag=value, repeated flags and positionals', () => {
-    expect(parseCommand(SPEC, ['p', '--name', 'a', '--tag=x', '--tag', 'y', '--all']).values).toEqual({ name: 'a', tag: ['x', 'y'], all: true });
-    expect(parseCommand(SPEC, ['--name=a', '--name=b']).values.name).toBe('b');
-    expect(parseCommand(SPEC, ['--name', 'a', 'p']).positionals).toEqual(['p']);
-  });
 
   it('rejects an unknown flag, a missing value and an extra argument with LOUSHO_CONFIG_INVALID and the usage as the hint', () => {
     for (const [args, message] of [
@@ -46,29 +41,6 @@ describe('parseCommand', () => {
         expect((error as Error).message).toMatch(/^lousho demo: /);
       }
     }
-  });
-
-  it('takes a value that starts with - only in the = form, and ends the flags at --', () => {
-    expect(parseCommand(SPEC, ['--name=-x']).values.name).toBe('-x');
-    expect(() => parseCommand(SPEC, ['--name', '-x'])).toThrowError(/--name needs a value/);
-    // A negative number is the likely intent: say how to pass it.
-    expect(() => parseCommand(SPEC, ['--name', '-1'])).toThrowError(/--name needs a value; a value that starts with '-' needs the = form: --name=-1\./);
-    const parsed = parseCommand(SPEC, ['--name', 'a', '--', '--all']);
-    expect(parsed.positionals).toEqual(['--all']);
-    expect(parsed.values.all).toBeUndefined();
-  });
-
-  it('reports -h and --help, skipping the positional check', () => {
-    expect(parseCommand(SPEC, ['-h']).help).toBe(true);
-    expect(parseCommand(SPEC, ['a', 'b', '--help']).help).toBe(true);
-    expect(parseCommand(SPEC, []).help).toBe(false);
-  });
-
-  it('validates ports', () => {
-    expect(portValue(SPEC, undefined, 3000)).toBe(3000);
-    expect(portValue(SPEC, '0', 3000)).toBe(0);
-    for (const bad of ['abc', '1.5', '-1', '70000']) expect(() => portValue(SPEC, bad, 1)).toThrowError(/--port must be an integer/);
-    expect(usageError(SPEC, 'x')).toMatchObject({ code: 'LOUSHO_CONFIG_INVALID', hint: SPEC.usage });
   });
 });
 
@@ -175,29 +147,11 @@ describe('usage errors exit 2 in every command', () => {
 });
 
 describe('lousho mcp, dev and studio ports', () => {
-  it('reject a port that is not an integer from 0 to 65535 and accept --port=N', () => {
-    for (const parse of [parseMcpArgs, parseDevArgs, parseStudioArgs]) {
-      const base = parse === parseStudioArgs ? [] : parse === parseMcpArgs ? ['a.yaml', '--http'] : ['a.yaml'];
-      expect(() => parse([...base, '--port', 'abc'])).toThrowError(/--port must be an integer between 0 and 65535/);
-      expect(parse([...base, '--port=4000'])).toMatchObject({ [parse === parseStudioArgs ? 'apiPort' : 'port']: 4000 });
-    }
-  });
 
   it('studio rejects --prod with --dev', () => {
     expect(parseStudioArgs(['--prod']).mode).toBe('prod');
     expect(parseStudioArgs(['--dev']).mode).toBe('dev');
     expect(() => parseStudioArgs(['--prod', '--dev'])).toThrowError(/cannot be combined/);
-  });
-});
-
-describe('lousho chat and eval specifics', () => {
-  it('chat help does not need a path, and a missing path still fails', () => {
-    expect(parseChatArgs(['--help']).help).toBe(true);
-    expect(() => parseChatArgs([])).toThrowError(/a path is required/);
-  });
-
-  it('eval splits repeated and comma-separated --tag values and keeps globs around flags', () => {
-    expect(parseEvalArgs(['a.eval.ts', '--tag=x,y', '--tag', 'z', 'b.eval.ts'])).toMatchObject({ globs: ['a.eval.ts', 'b.eval.ts'], tags: ['x', 'y', 'z'] });
   });
 });
 

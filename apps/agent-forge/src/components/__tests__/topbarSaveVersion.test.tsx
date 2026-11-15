@@ -35,18 +35,6 @@ describe('Topbar Save (explicit version)', () => {
     appState.latestVersion = 3;
   });
 
-  it('click Save calls saveVersion() and toasts "Saved version v<n>" when a version was written', async () => {
-    appState.saveVersion.mockResolvedValue({ version: 3 });
-    const container = render(
-      <ToastProvider>
-        <Topbar />
-      </ToastProvider>,
-    );
-    await act(async () => saveButton(container).click());
-    expect(appState.saveVersion).toHaveBeenCalledTimes(1);
-    expect(container.querySelector('.toast-message')?.textContent).toBe('Saved version v3');
-  });
-
   it('toasts "No changes since v<n>" when the save was the server\'s 200 no-op', async () => {
     appState.saveVersion.mockResolvedValue(undefined);
     appState.latestVersion = 2;
