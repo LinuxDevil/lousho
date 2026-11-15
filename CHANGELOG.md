@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- `lousho deploy` puts Studio and agent folders on your own server over SSH: Docker Compose behind HTTPS (Caddy, or the server's Traefik), Studio behind a username and password, each agent at `https://<agent>.<domain>` (default `<ip>.sslip.io`). A wizard asks for anything missing and remembers it in `lousho.deploy.json`, with secrets in `~/.config/lousho/deploy-<name>.env`. `lousho deploy github-app` creates a GitHub App for an agent and wires its webhook. Studio's Serve card shows the command. See [Deploying to your own server](docs/hostinger-vps.md).
+- `examples/hostinger-deploy/deploy.mjs` is removed; use `lousho deploy`.
 - `github_submit_review` posts one pull-request review with a verdict and inline comments; `createGitHubTools()` also authenticates as a GitHub App (`app: { appId, privateKey }`) or with a token function. See [Tools](docs/tools.md).
 - `githubChannel({ pullRequestEvents, replyToPullRequest })` re-reviews pull requests on every push (drafts skipped until ready) and can stay silent when the agent posts its own review. See [Channels](docs/channels.md).
 - Built-in `workspace_read`, `workspace_write` and `shell` tools, confined to `options.root` and refusing `.env`, `.git` and `.lousho`.

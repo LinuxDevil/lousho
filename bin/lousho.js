@@ -23,6 +23,10 @@ const USAGE = [
   '      Install a tool, skill, channel, schedule or kit from a registry into an agent directory.',
   '  lousho build <agent-dir|spec|agent.ts> --target=<node-server|cloudflare-worker|docker> [--out=<dir>]   (or --agent=<path>)',
   '      Bundle an agent for deployment (default output: .lousho/build/<target>).',
+  '  lousho deploy [--host H] [--agent DIR]... [--studio-user U | --no-studio] [--domain D] [--env KEY]... [--local] [--dry-run] [--yes]',
+  '      Deploy Studio and agents to a server over SSH: Docker Compose behind HTTPS, with a wizard for anything missing.',
+  '  lousho deploy github-app --agent <name>',
+  '      Create a GitHub App for a deployed agent and save its credentials for the next deploy.',
   '  lousho studio [--port N] [--host H]',
   '      Open Lousho Studio on this project (a separate install: npm i -g lousho-studio).',
   '  lousho bridge',
@@ -72,6 +76,7 @@ const COMMANDS = new Map([
   // Installs a tool, skill, channel, schedule or memory slot from a JSON registry; see src/cli/add.ts.
   ['add', { module: 'add', run: 'runAdd' }],
   ['build', { module: 'build', run: 'runBuild', env: true }],
+  ['deploy', { module: 'deploy', run: 'runDeploy', env: true }],
   // Finds an installed lousho-studio (or the SDK checkout's
   // apps/agent-forge) and opens this folder as a workspace; inside the
   // checkout, --prod/--dev pick the launch mode - see src/cli/studio.ts.
