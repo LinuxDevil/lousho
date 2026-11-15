@@ -130,6 +130,9 @@ export function StringListField({
           value={draft}
           onChange={onText}
           onKeyDown={onKeyDown}
+          onBlur={() => {
+            if (addItem(draft)) setDraft('');
+          }}
           placeholder={placeholder}
           list={suggestions === undefined ? undefined : listId}
         />

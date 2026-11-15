@@ -190,18 +190,37 @@ const fileSearchOptions = z
  * Keys are the model-facing names; `src/tools/builtinRegistry.ts`'s mapped
  * factory type keeps this key set and the builders equal at compile time.
  */
+const workspaceOptions = z
+  .object({
+    root: z.string().min(1).optional(),
+  })
+  .strict();
+
+const shellOptions = z
+  .object({
+    root: z.string().min(1).optional(),
+    needsApproval: z.boolean().optional(),
+  })
+  .strict();
+
 export const BUILTIN_TOOL_OPTIONS: {
   current_date: null;
   day_name: null;
   http_request: z.ZodTypeAny;
   web_fetch: z.ZodTypeAny;
   todo: null;
+  workspace_read: z.ZodTypeAny;
+  workspace_write: z.ZodTypeAny;
+  shell: z.ZodTypeAny;
 } = {
   current_date: null,
   day_name: null,
   http_request: httpRequestOptions,
   web_fetch: webFetchOptions,
   todo: null,
+  workspace_read: workspaceOptions,
+  workspace_write: workspaceOptions,
+  shell: shellOptions,
 };
 
 /** The `{ builtin }` names a spec may write (BUILTIN_TOOL_OPTIONS key order). */

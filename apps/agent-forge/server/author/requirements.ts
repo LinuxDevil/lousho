@@ -20,6 +20,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { listBuiltinTools, listModels, type AgentSpecV2 } from 'lousho';
+import { hasOpenRouterKey, withOpenRouterModels } from '../routes/openRouterCatalog';
 import type { Requirement } from '../../shared/authorWire';
 import { isSecretProvider, PROVIDER_KEY_ENV, type SecretProvider, type SecretsStore } from '../secretsStore';
 
@@ -56,11 +57,11 @@ const KEYLESS_PROVIDERS = new Set(['ollama', 'mock']);
 const MANAGED_PROVIDER_LABELS: Record<SecretProvider, string> = {
   openai: 'OpenAI API key',
   anthropic: 'Anthropic API key',
+  openrouter: 'OpenRouter API key',
 };
 
 /** Env-keyed providers outside `PROVIDER_KEY_ENV` (Studio stores no key for them), from PROVIDERS in src/providers/providerSpec.ts. */
 const ENV_KEYED_PROVIDERS: Record<string, { envKey: string; label: string }> = {
-  openrouter: { envKey: 'OPENROUTER_API_KEY', label: 'OpenRouter API key' },
   google: { envKey: 'GOOGLE_GENERATIVE_AI_API_KEY', label: 'Google API key' },
 };
 
@@ -132,7 +133,7 @@ function providerRows(spec: AgentSpecV2, deps: RequirementDeps): Requirement[] {
 /** `model:<id>` rows for `model`/`fallbackModels` absent from `modelIds`. */
 function modelRows(spec: AgentSpecV2, modelIds: ReadonlySet<string>): Requirement[] {
   return modelIdsOf(spec)
-    .filter((model) => !modelIds.has(model))
+    .filter((model) => !modelIds.has(model) && !KEYLESS_PROVIDERS.has(providerOf(model)))
     .map((model) => ({
       id: `model:${model}`,
       kind: 'model' as const,
@@ -346,7 +347,7 @@ export function requirementDeps(root: string, secrets: SecretsStore): Requiremen
     },
     env: process.env,
     catalog: {
-      modelIds: async () => new Set(listModels().map((model) => model.id)),
+      modelIds: async () => new Set((await withOpenRouterModels(listModels(), undefined, hasOpenRouterKey(secrets))).map((model) => model.id)),
       builtinTools: async () => listBuiltinTools(),
     },
     fileExists: (relPath) => {

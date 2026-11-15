@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- `github_submit_review` posts one pull-request review with a verdict and inline comments; `createGitHubTools()` also authenticates as a GitHub App (`app: { appId, privateKey }`) or with a token function. See [Tools](docs/tools.md).
+- `githubChannel({ pullRequestEvents, replyToPullRequest })` re-reviews pull requests on every push (drafts skipped until ready) and can stay silent when the agent posts its own review. See [Channels](docs/channels.md).
+- Built-in `workspace_read`, `workspace_write` and `shell` tools, confined to `options.root` and refusing `.env`, `.git` and `.lousho`.
 - Model strings resolve any official AI SDK provider: `mistral/...`, `groq/...`, `xai/...`, `bedrock/...`, `vertex/...`, `azure/...` and 13 more load `@ai-sdk/<vendor>` on the first call, and `ai-sdk/<vendor>/<model>` loads any other `@ai-sdk/*` package. The package reads its own credentials. See [Providers](docs/providers.md#any-ai-sdk-vendor-by-name).
 
 ## [1.0.0-alpha.117] - 2026-11-09

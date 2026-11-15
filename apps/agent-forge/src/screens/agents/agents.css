@@ -479,7 +479,14 @@ button.breakpoint-toggle {
   padding: var(--space-4);
   pointer-events: none;
 }
+.canvas-empty-close {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+}
+
 .canvas-empty-card {
+  position: relative;
   pointer-events: auto;
   max-width: 480px;
   width: 100%;

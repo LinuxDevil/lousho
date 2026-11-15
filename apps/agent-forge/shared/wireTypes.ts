@@ -320,7 +320,7 @@ export type StudioEvent =
 
 /** Masked provider key status. Never carries a real key. */
 export interface ProviderKeyStatus {
-  provider: 'openai' | 'anthropic';
+  provider: 'openai' | 'anthropic' | 'openrouter';
   hasKey: boolean;
   /** Last-4-visible masked form for display, e.g. '••••••••3f2a'. `null` when no key is stored. Never the real key. */
   masked: string | null;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { LayoutTemplate, Plus, Sparkles, Zap, type LucideIcon } from 'lucide-react';
+import { LayoutTemplate, Plus, Sparkles, X, Zap, type LucideIcon } from 'lucide-react';
 import { openAuthor } from '../author/authorEntry';
 import { useAppState } from '../state/AppState';
 import { AGENT_TEMPLATES, graphFromTemplate, type TemplateId } from './templates';
@@ -44,9 +44,10 @@ function useDragInProgress(): boolean {
 export function EmptyCanvas() {
   const { displayGraph, spec, setGraph, setSelectedNodeId, proposal, agentId } = useAppState();
   const dragging = useDragInProgress();
+  const [dismissedFor, setDismissedFor] = useState<string | undefined>(undefined);
   // "Empty" is the root agent node and nothing else (no capability nodes, no notes).
   const onlyRoot = displayGraph.nodes.every((n) => n.id === ROOT_AGENT_ID && n.kind === 'agent');
-  if (!onlyRoot || dragging) return null;
+  if (!onlyRoot || dragging || dismissedFor === agentId) return null;
 
   function choose(id: TemplateId) {
     // The canvas is read-only while a proposal overlay is shown (C21).
@@ -59,6 +60,14 @@ export function EmptyCanvas() {
   return (
     <div className="canvas-empty">
       <section className="canvas-empty-card" aria-labelledby="canvas-empty-title">
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm canvas-empty-close"
+          aria-label="Close and edit the agent on the canvas"
+          onClick={() => setDismissedFor(agentId)}
+        >
+          <X size={14} aria-hidden="true" />
+        </button>
         <span className="canvas-empty-icon" aria-hidden="true">
           <LayoutTemplate size={20} strokeWidth={1.75} />
         </span>
@@ -66,7 +75,7 @@ export function EmptyCanvas() {
           Start from a template
         </h2>
         <p className="canvas-empty-hint">
-          This agent&apos;s canvas is empty. Pick a template, or drag a node in from the Nodes palette.
+          This agent has no tools or triggers yet. Pick a template, add nodes from the Nodes palette, or close this to edit the agent as it is.
         </p>
         <button
           type="button"

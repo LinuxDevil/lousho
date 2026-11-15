@@ -7,11 +7,12 @@ import { errorMessage } from './errorMessage';
 import { AgentAuthorSection, AppearanceSection, CollectorSection, ShortcutsSection } from './SettingsAppSections';
 import { SettingsCard, TonePill } from './SettingsCard';
 
-type KeyedProviderId = 'openai' | 'anthropic';
+type KeyedProviderId = 'openai' | 'anthropic' | 'openrouter';
 
 const KEYED_PROVIDERS: { id: KeyedProviderId; label: string; envVar: string }[] = [
   { id: 'openai', label: 'OpenAI API key', envVar: 'OPENAI_API_KEY' },
   { id: 'anthropic', label: 'Anthropic API key', envVar: 'ANTHROPIC_API_KEY' },
+  { id: 'openrouter', label: 'OpenRouter API key', envVar: 'OPENROUTER_API_KEY' },
 ];
 
 const PROVIDER_TYPES = ['mock', 'openai', 'anthropic', 'ollama', 'openrouter'];

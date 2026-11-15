@@ -123,6 +123,7 @@ import { registerAgentRoutes } from './routes/agentRoutes';
 import { registerDraftRoutes } from './routes/draftRoutes';
 import { registerVersionRoutes } from './routes/versionRoutes';
 import { registerCatalogRoutes } from './routes/catalogRoutes';
+import { openRouterModels } from './routes/openRouterCatalog';
 import { registerMcpProbeRoute } from './routes/mcpProbe';
 import { AuthorSessionStore } from './author/sessionStore';
 import { registerAuthorRoutes } from './author/routes';
@@ -725,12 +726,17 @@ function registerProviderKeyRoutes(app: Express, secrets: SecretsStore): void {
     (req, res) => {
       const provider = req.params.provider;
       if (!isSecretProvider(provider)) {
-        res.status(400).json({ error: `Unknown provider '${provider}'. Known: ${['openai', 'anthropic'].join(', ')}` });
+        res.status(400).json({ error: `Unknown provider '${provider}'. Known: ${['openai', 'anthropic', 'openrouter'].join(', ')}` });
         return;
       }
       const { apiKey } = req.body as { apiKey?: string };
       if (typeof apiKey !== 'string' || !apiKey.trim()) {
         res.status(400).json({ error: "Request body must include a non-empty 'apiKey' string" });
+        return;
+      }
+      const looksLike = keyProviderOf(apiKey);
+      if (looksLike !== undefined && looksLike !== provider) {
+        res.status(400).json({ error: `This looks like an ${KEY_LABELS[looksLike]} key. Paste it into the ${KEY_LABELS[looksLike]} API key field instead.` });
         return;
       }
       try {
@@ -904,6 +910,15 @@ function legacyWorkspaceContext(options: CreateAppOptions & { workspace?: undefi
   };
 }
 
+const KEY_LABELS = { openai: 'OpenAI', anthropic: 'Anthropic', openrouter: 'OpenRouter' } as const;
+
+export function keyProviderOf(apiKey: string): keyof typeof KEY_LABELS | undefined {
+  const key = apiKey.trim();
+  if (key.startsWith('sk-or-')) return 'openrouter';
+  if (key.startsWith('sk-ant-')) return 'anthropic';
+  return undefined;
+}
+
 export function createApp(options: CreateAppOptions): Express {
   const { baseDir, staticDir, access, playgroundObserve, judge } = options;
   // The Studio home is process-wide and configured once, here, before any
@@ -1026,7 +1041,7 @@ export function createApp(options: CreateAppOptions): Express {
   // The SDK catalogs + registry index the pickers and the Author read
   // (routes/catalogRoutes.ts) - a Studio-global route family, mounted on
   // every workspace's app like the settings routes are.
-  registerCatalogRoutes(app, { secretsStore: secrets });
+  registerCatalogRoutes(app, { secretsStore: secrets, openRouterModels });
   // The MCP node's Probe button: connect/list/close one server under a 10 s
   // deadline (routes/mcpProbe.ts). Secret refs resolve through the same
   // store Settings writes - names may appear in errors, values never do.

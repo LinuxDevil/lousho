@@ -13,6 +13,8 @@ import { Input, Select, type SelectGroup } from '../../../ui/controls';
 import { refreshCatalog, useCatalog } from '../../useCatalog';
 import { AGENT_MODEL_PATTERN } from '../../../graph/v2/kinds/agent';
 import '../../fields/fields.css';
+import { matchesModelFilter, modelLabel } from '../../../components/modelFilter';
+import type { CatalogModel } from '../../../../shared/wireTypes';
 
 /** Props for {@link ModelPicker}. */
 export interface ModelPickerProps {
@@ -31,13 +33,12 @@ export const MODEL_ID_ERROR = 'Use provider/model, e.g. anthropic/claude-sonnet-
 const OTHER = '__other__';
 
 /** One `<optgroup>` per provider, alphabetically; an unavailable model is labelled '(no key)'. */
-function groupsOf(models: { id: string; provider: string; available: boolean }[]): SelectGroup[] {
-  const providers = [...new Set(models.map((m) => m.provider))].sort();
+function groupsOf(models: CatalogModel[], filter: string, value: string | undefined): SelectGroup[] {
+  const shown = models.filter((m) => m.id === value || matchesModelFilter(modelLabel(m), filter));
+  const providers = [...new Set(shown.map((m) => m.provider))].sort();
   return providers.map((provider) => ({
     label: provider,
-    options: models
-      .filter((m) => m.provider === provider)
-      .map((m) => ({ value: m.id, label: m.available ? m.id : `${m.id} (no key)` })),
+    options: shown.filter((m) => m.provider === provider).map((m) => ({ value: m.id, label: modelLabel(m) })),
   }));
 }
 
@@ -74,9 +75,11 @@ function FreeText({
 export function ModelPicker({ id, value, onChange }: ModelPickerProps): JSX.Element {
   const catalog = useCatalog('models');
   const [other, setOther] = useState(false);
+  const [filter, setFilter] = useState('');
   const models = catalog.data;
   const inCatalog = models !== undefined && value !== undefined && value !== '' && models.some((m) => m.id === value);
-  const freeText = catalog.error !== undefined || other || (models !== undefined && !inCatalog && value !== undefined && value !== '');
+  const freeText = catalog.error !== undefined || other;
+  const custom = models !== undefined && !inCatalog && value !== undefined && value !== '' ? value : undefined;
 
   const onSelect = (event: ChangeEvent<HTMLSelectElement>) => {
     if (event.target.value === OTHER) {
@@ -98,7 +101,7 @@ export function ModelPicker({ id, value, onChange }: ModelPickerProps): JSX.Elem
   };
 
   const hint =
-    freeText && !inCatalog && catalog.error === undefined
+    (freeText || custom !== undefined) && !inCatalog && catalog.error === undefined
       ? 'Not in the catalog. It will still be tried.'
       : 'Models without a key in Settings are marked (no key).';
 
@@ -109,13 +112,27 @@ export function ModelPicker({ id, value, onChange }: ModelPickerProps): JSX.Elem
       ) : freeText ? (
         <FreeText value={value} catalogError={catalog.error} onChange={onText} />
       ) : (
-        <Select
-          value={value ?? ''}
-          placeholder="Pick a model"
-          groups={groupsOf(models ?? [])}
-          options={[{ value: OTHER, label: 'Other…' }]}
-          onChange={onSelect}
-        />
+        <>
+          <Input
+            type="search"
+            id={`${id}-filter`}
+            aria-required={false}
+            aria-label="Filter models"
+            placeholder={`Filter ${models?.length ?? 0} models…`}
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          <Select
+            value={value ?? ''}
+            placeholder="Pick a model"
+            groups={[
+              ...(custom === undefined ? [] : [{ label: 'Current', options: [{ value: custom, label: `${custom} (not in catalog)` }] }]),
+              ...groupsOf(models ?? [], filter, value),
+            ]}
+            options={[{ value: OTHER, label: 'Other…' }]}
+            onChange={onSelect}
+          />
+        </>
       )}
     </Field>
   );

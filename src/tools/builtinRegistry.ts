@@ -16,6 +16,21 @@ import { dayNameTool } from './built-in/dayName';
 import { createHttpTool, type HttpToolOptions } from './built-in/http';
 import { createTodoTools } from './built-in/todo';
 import { createWebFetchTool, type WebFetchToolOptions } from './built-in/webFetch';
+import { createFsTools } from './workspace/fsTools';
+import { createShellTool } from './workspace/shellTool';
+import { NodeWorkspace } from './workspace/NodeWorkspace';
+import type { DefinedTool } from './defineTool';
+
+const READ_ONLY_FS_TOOLS = new Set(['read_file', 'list_dir', 'glob', 'grep']);
+const WORKSPACE_DENY = ['.git', '.env', '.env.*', '.lousho'];
+
+function workspaceFor(options: Record<string, unknown>): NodeWorkspace {
+  return new NodeWorkspace({ root: typeof options.root === 'string' ? options.root : process.cwd() });
+}
+
+function byName(tools: DefinedTool[]): Record<string, ToolDescriptor> {
+  return Object.fromEntries(tools.map((tool) => [tool.name, tool]));
+}
 
 /**
  * One `{ builtin: <key> }` ref → the tools it registers, keyed by model-facing
@@ -32,4 +47,13 @@ export const BUILTIN_TOOL_FACTORIES: {
     const { todoWrite, todoRead } = createTodoTools();
     return { todo_write: todoWrite, todo_read: todoRead };
   },
+  workspace_read: (options) => byName(createFsTools(workspaceFor(options), { readOnly: true, deny: WORKSPACE_DENY })),
+  workspace_write: (options) =>
+    byName(createFsTools(workspaceFor(options), { deny: WORKSPACE_DENY }).filter((tool) => !READ_ONLY_FS_TOOLS.has(tool.name))),
+  shell: (options) => ({
+    shell: createShellTool(
+      workspaceFor(options),
+      typeof options.needsApproval === 'boolean' ? { needsApproval: options.needsApproval } : {}
+    ),
+  }),
 };

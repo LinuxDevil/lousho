@@ -9,7 +9,7 @@ import { isDefinedTool, type DefinedTool } from '../tools/defineTool';
 import { SDKError } from '../execution/errors';
 
 const TOOL_FILE = /\.[cm]?[jt]s$/;
-const NOT_A_TOOL_FILE = /\.d\.[cm]?ts$|\.(?:test|spec)\./;
+const NOT_A_TOOL_FILE = /^\.|\.d\.[cm]?ts$|\.(?:test|spec)\./;
 
 /** True for a file name under `tools/` that is loaded as a tool file (`.ts`/`.js`/`.mjs`/`.cjs`/`.mts`/`.cts`, not a `.d.ts`, test or spec file). */
 export function isToolFileName(name: string): boolean {

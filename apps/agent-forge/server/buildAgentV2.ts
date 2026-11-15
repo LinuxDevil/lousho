@@ -172,12 +172,27 @@ function mergeLocalTools(configTools: unknown, localTools: Record<string, ToolDe
  * ref, missing secret, unusable provider) rejects with the SDK's or
  * `resolveProviderForModel`'s ConfigurationError and no run is started.
  */
+const WORKSPACE_BUILTINS = new Set(['workspace_read', 'workspace_write', 'shell']);
+
+export function withWorkspaceRoots(spec: AgentSpecV2, root: string): AgentSpecV2 {
+  if (!(spec.tools ?? []).some((ref) => 'builtin' in ref && WORKSPACE_BUILTINS.has(ref.builtin))) return spec;
+  return {
+    ...spec,
+    tools: (spec.tools ?? []).map((ref) => {
+      if (!('builtin' in ref) || !WORKSPACE_BUILTINS.has(ref.builtin)) return ref;
+      const options = (ref.options ?? {}) as Record<string, unknown>;
+      return typeof options.root === 'string' && options.root !== '' ? ref : { ...ref, options: { ...options, root } };
+    }),
+  };
+}
+
 export async function buildRunnableAgent(
-  spec: AgentSpecV2,
+  savedSpec: AgentSpecV2,
   agentId: string,
   deps: StudioRunDeps,
   wiring: RunWiring
 ): Promise<RunnableAgent> {
+  const spec = withWorkspaceRoots(savedSpec, deps.baseDir);
   const approvals = scopedApprovalStore(deps.approvalStore, agentId);
   const host: SpecHost = {
     baseDir: path.join(deps.baseDir, '.lousho', 'agents'),
@@ -225,11 +240,11 @@ export async function buildRunnableAgent(
     if (seeded && envVar !== undefined) delete process.env[envVar];
   }
   const { config } = compiled;
-  // The compiled provider is Studio's (stored keys over env); `model` keeps
-  // the spec's string for reporting/fallbacks (a provider INSTANCE wins
-  // over `model` in createAgent's resolveModelSource).
+  // The compiled provider is Studio's (stored keys over env). With a provider
+  // instance, createAgent sends `model` as each request's model, so it must be
+  // the provider's own id ('nvidia/x:free'), not the 'openrouter/...' spec string.
   config.provider = provider;
-  config.model = spec.model;
+  config.model = spec.model.slice(spec.model.indexOf('/') + 1);
   if (Object.keys(localTools).length > 0) {
     config.tools = mergeLocalTools(config.tools, localTools) as typeof config.tools;
   }

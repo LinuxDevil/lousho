@@ -34,6 +34,7 @@ import type {
 } from '../../shared/wireTypes';
 import { asyncRoute, sendError } from '../http/routeUtils';
 import { sdkRootDir } from '../sdkRoot';
+import { hasOpenRouterKey, withOpenRouterModels } from './openRouterCatalog';
 import { isSecretProvider, type SecretsStore } from '../secretsStore';
 
 /** Deps for {@link registerCatalogRoutes}. */
@@ -42,6 +43,7 @@ export interface CatalogRouteDeps {
   secretsStore: SecretsStore;
   /** Defaults to `<sdkRoot>/registry/dist/index.json`. */
   registryIndexPath?: string;
+  openRouterModels?: () => Promise<CatalogModel[]>;
 }
 
 /**
@@ -134,14 +136,18 @@ export function loadStaticCatalog(registryIndexPath?: string): StaticCatalog {
 export function registerCatalogRoutes(app: Express, deps: CatalogRouteDeps): void {
   const { registryItems, tools, guardrails, triggerTypes } = loadStaticCatalog(deps.registryIndexPath);
 
-  app.get('/catalog/models', (req, res) => {
-    const parsed = parseProvider(req.query.provider);
-    if (parsed.error !== undefined) {
-      sendError(res, 400, parsed.error, 'LOUSHO_QUERY_INVALID');
-      return;
-    }
-    res.json(withStoredKeyAvailability(listModels(parsed.provider === undefined ? {} : { provider: parsed.provider }), deps.secretsStore));
-  });
+  app.get(
+    '/catalog/models',
+    asyncRoute(async (req, res) => {
+      const parsed = parseProvider(req.query.provider);
+      if (parsed.error !== undefined) {
+        sendError(res, 400, parsed.error, 'LOUSHO_QUERY_INVALID');
+        return;
+      }
+      const sdk = withStoredKeyAvailability(listModels(parsed.provider === undefined ? {} : { provider: parsed.provider }), deps.secretsStore);
+      res.json(deps.openRouterModels === undefined ? sdk : await withOpenRouterModels(sdk, parsed.provider, hasOpenRouterKey(deps.secretsStore), deps.openRouterModels));
+    })
+  );
 
   app.get('/catalog/tools', (_req, res) => {
     res.json(tools);

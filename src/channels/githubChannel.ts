@@ -85,6 +85,19 @@ export interface GitHubChannelOptions {
    */
   pullRequestOpened?: boolean;
   /**
+   * Which `pull_request` actions start a turn (wins over `pullRequestOpened`).
+   * Draft PRs are skipped except on `ready_for_review`. The input names the
+   * action and the head commit, so a reviewer can re-review every push with
+   * `['opened', 'synchronize', 'reopened', 'ready_for_review']`.
+   */
+  pullRequestEvents?: readonly PullRequestAction[];
+  /**
+   * Post the turn's final text as a PR comment after a `pull_request` turn.
+   * Set `false` when the agent posts its own output (e.g. a review with
+   * `github_submit_review`). Default `true`. Comment-started turns always reply.
+   */
+  replyToPullRequest?: boolean;
+  /**
    * Where `X-GitHub-Delivery` ids are recorded, so a redelivery is not run
    * twice. Default: in memory for an hour, which a restart or a second
    * replica does not share; pass a durable, shared {@link DeliveryStore} then.
@@ -121,6 +134,8 @@ export interface GitHubTarget {
   /** Set for a review thread: the first comment of the thread, which replies are posted under. */
   reviewCommentId?: number;
   installationId?: number;
+  /** A pull_request-event turn whose final text is not posted (`replyToPullRequest: false`). */
+  silent?: boolean;
 }
 
 /** The webhook payload fields the channel reads. */
@@ -133,6 +148,8 @@ interface Payload {
     number?: number;
     title?: string;
     body?: string | null;
+    draft?: boolean;
+    head?: { sha?: string };
     author_association?: string;
     user?: { login?: string; type?: string };
   };
@@ -140,7 +157,19 @@ interface Payload {
 }
 
 /** A `pull_request.opened` webhook, as the channel reads it (`pullRequestOpened: true`). */
+/** A `pull_request` webhook action `pullRequestEvents` can start a turn on. */
+export type PullRequestAction = 'opened' | 'synchronize' | 'reopened' | 'ready_for_review';
+
+const PR_ACTION_VERBS: Record<PullRequestAction, string> = {
+  opened: 'opened',
+  synchronize: 'updated with new commits',
+  reopened: 'reopened',
+  ready_for_review: 'marked ready for review',
+};
+
 interface PullRequestOpenedEvent {
+  action: PullRequestAction;
+  headSha?: string;
   owner: string;
   repo: string;
   number: number;
@@ -342,15 +371,22 @@ export function githubChannel(options: GitHubChannelOptions): Channel<GitHubComm
    * rules as a comment. Everything else (`synchronize`, `closed`, `reopened`,
    * a bot's PR) is `null`.
    */
+  const prActions: ReadonlySet<string> = new Set(options.pullRequestEvents ?? (options.pullRequestOpened ? ['opened'] : []));
+
   function readPullRequestOpened(payload: Payload): PullRequestOpenedEvent | null {
     const { pull_request: pr, repository } = payload;
     const owner = repository?.owner?.login;
     const repo = repository?.name;
     const login = pr?.user?.login;
-    if (payload.action !== 'opened' || typeof pr?.number !== 'number' || !owner || !repo || !login) return null;
+    const action = payload.action as PullRequestAction;
+    if (!prActions.has(action) || typeof pr?.number !== 'number' || !owner || !repo || !login) return null;
+    if (pr.draft === true && action !== 'ready_for_review') return null;
     if (pr.user?.type === 'Bot' || ownLogins.has(login.toLowerCase())) return null;
     const installationId = payload.installation?.id;
+    const headSha = pr.head?.sha;
     return {
+      action,
+      ...(typeof headSha === 'string' ? { headSha } : {}),
       owner,
       repo,
       number: pr.number,
@@ -365,8 +401,15 @@ export function githubChannel(options: GitHubChannelOptions): Channel<GitHubComm
   /** The opened PR as an inbound turn: the session it shares with the PR's comments, `triggers` applied to its author. */
   async function openedToInbound(pr: PullRequestOpenedEvent): Promise<ChannelInbound<GitHubCommentEvent> | null> {
     if (!(await mayTrigger({ login: pr.author, association: pr.association }))) return null;
-    const input = `Pull request #${pr.number} opened by @${pr.author}: ${pr.title}`.trim() + (pr.body ? `\n\n${pr.body}` : '');
-    const target: GitHubTarget = { owner: pr.owner, repo: pr.repo, number: pr.number, ...(pr.installationId === undefined ? {} : { installationId: pr.installationId }) };
+    const head = pr.headSha ? `\nHead commit: ${pr.headSha}` : '';
+    const input = `Pull request #${pr.number} ${PR_ACTION_VERBS[pr.action]} by @${pr.author}: ${pr.title}`.trim() + head + (pr.body ? `\n\n${pr.body}` : '');
+    const target: GitHubTarget = {
+      owner: pr.owner,
+      repo: pr.repo,
+      number: pr.number,
+      ...(pr.installationId === undefined ? {} : { installationId: pr.installationId }),
+      ...(options.replyToPullRequest === false ? { silent: true } : {}),
+    };
     return {
       sessionKey: `${pr.owner}/${pr.repo}#${pr.number}`,
       input,
@@ -448,14 +491,18 @@ export function githubChannel(options: GitHubChannelOptions): Channel<GitHubComm
       if (typeof delivery === 'string' && (await delivered(delivery))) return null;
       const kind = req.headers['x-github-event'];
       if (kind === 'pull_request') {
-        const pr = options.pullRequestOpened ? readPullRequestOpened(JSON.parse(req.text || '{}') as Payload) : null;
+        const pr = prActions.size > 0 ? readPullRequestOpened(JSON.parse(req.text || '{}') as Payload) : null;
         return pr ? openedToInbound(pr) : null;
       }
       if (kind !== 'issue_comment' && kind !== 'pull_request_review_comment') return null; // ping and everything else
       const event = readEvent(kind, JSON.parse(req.text || '{}') as Payload);
       return event ? readMessage(event, ctx) : null;
     },
-    reply: ({ inbound, text }) => post(inbound.replyTo as GitHubTarget, text),
+    reply: async ({ inbound, text }) => {
+      const target = inbound.replyTo as GitHubTarget;
+      if (target.silent) return;
+      await post(target, text);
+    },
     async onApproval({ inbound, approval }) {
       const target = inbound.replyTo as GitHubTarget;
       // A thread is public, and whoever opens a sign-in link binds their own account to the asker's grant: no link here.

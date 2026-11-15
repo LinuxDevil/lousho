@@ -62,9 +62,6 @@ export function resolveAuthorProvider(model: string, secrets: SecretsStore): Aut
   if (isSecretProvider(provider)) {
     apiKey = secrets.getKey(provider) || process.env[PROVIDER_KEY_ENV[provider]];
     if (!apiKey) return missingKey(provider);
-  } else if (provider === 'openrouter') {
-    apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) return missingKey(provider);
   } else if (provider !== 'ollama') {
     return notUsable(provider, model);
   }

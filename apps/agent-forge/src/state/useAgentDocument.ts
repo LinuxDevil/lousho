@@ -52,6 +52,7 @@ function sameJson(a: DocumentJson, b: DocumentJson): boolean {
 
 interface AutosaveDeps extends SaveDeps {
   dirty: boolean;
+  setAutosaveError: (message: string | undefined) => void;
 }
 
 interface SaveDeps {
@@ -86,7 +87,7 @@ function pendingSaves(store: AgentStore, agentId: string, derived: GraphToSpecRe
  * `<id>.yaml`. A failed save leaves the document dirty (HttpAgentStore
  * keeps a draft).
  */
-function useAutosave({ store, agentId, derived, dirty, setDirty, refreshAgents, lastSavedJson, latestJson }: AutosaveDeps): void {
+function useAutosave({ store, agentId, derived, dirty, setDirty, refreshAgents, lastSavedJson, latestJson, setAutosaveError }: AutosaveDeps): void {
   const autosaveTimer = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => {
     if (!dirty) return;
@@ -100,6 +101,7 @@ function useAutosave({ store, agentId, derived, dirty, setDirty, refreshAgents, 
       Promise.all(writes).then(
         () => {
           lastSavedJson.current = json;
+          setAutosaveError(undefined);
           // Clear dirty only when no newer edit landed while the write was
           // in flight: a stale write clearing dirty would cancel the newer
           // edit's pending autosave (this effect re-runs on `dirty`) and
@@ -109,15 +111,15 @@ function useAutosave({ store, agentId, derived, dirty, setDirty, refreshAgents, 
           }
           void refreshAgents();
         },
-        () => {
-          // Stays dirty: the UNSAVED badge keeps showing, and the next edit or Save retries.
+        (error: unknown) => {
+          setAutosaveError(error instanceof Error ? error.message : String(error));
         }
       );
     }, AUTOSAVE_DEBOUNCE_MS);
     return () => {
       if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     };
-  }, [derived, dirty, store, agentId, refreshAgents, lastSavedJson, latestJson]);
+  }, [derived, dirty, store, agentId, refreshAgents, lastSavedJson, latestJson, setAutosaveError]);
 }
 
 function useExplicitSave({ store, agentId, derived, setDirty, refreshAgents, lastSavedJson, latestJson }: SaveDeps) {
@@ -590,7 +592,8 @@ export function useAgentDocument(store: AgentStore, initialId?: string) {
   const { setGraph, setSpec } = useGraphEditors(doc);
   const historyControls = useHistoryControls(doc, history);
 
-  useAutosave({ ...saveDeps, dirty });
+  const [autosaveError, setAutosaveError] = useState<string | undefined>(undefined);
+  useAutosave({ ...saveDeps, dirty, setAutosaveError });
 
   /**
    * Re-reads the open agent (`store.load` → `GET /agents/:id`) and shows
@@ -637,6 +640,8 @@ export function useAgentDocument(store: AgentStore, initialId?: string) {
     setSelectedNodeId,
     agents,
     agentsLoaded,
+    refreshAgents,
+    autosaveError,
     switchAgent,
     createAgent,
     ...historyControls,

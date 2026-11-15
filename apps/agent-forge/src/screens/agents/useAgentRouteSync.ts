@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { navigate } from '../../router/router';
 import { useRoute } from '../../router/useRoute';
 import { useAppState } from '../../state/AppState';
@@ -15,18 +15,25 @@ import { confirmDiscardChanges } from './unsavedChanges';
  * to `#/agents` (the list).
  */
 export function useAgentRouteSync(): void {
-  const { agentId, agents, agentsLoaded, dirty, switchAgent } = useAppState();
+  const { agentId, agents, agentsLoaded, dirty, switchAgent, refreshAgents } = useAppState();
   const hash = `#${useRoute().path}`;
   const routeId = agentRouteId(hash);
   const toast = useToast();
+  const refreshedFor = useRef<string | undefined>(undefined);
+  const [refreshes, setRefreshes] = useState(0);
   // Read inside the hash-driven effect without re-running it when the document changes.
-  const latest = useRef({ agentId, agents, dirty, switchAgent, toast });
-  latest.current = { agentId, agents, dirty, switchAgent, toast };
+  const latest = useRef({ agentId, agents, dirty, switchAgent, toast, refreshAgents });
+  latest.current = { agentId, agents, dirty, switchAgent, toast, refreshAgents };
 
   useEffect(() => {
     const { agentId: openId, agents: saved, dirty: unsaved, switchAgent: open, toast: notify } = latest.current;
     const action = routeSyncAction(routeId, openId, saved, agentsLoaded);
     if (action.kind === 'fallback') {
+      if (refreshedFor.current !== routeId) {
+        refreshedFor.current = routeId;
+        void latest.current.refreshAgents().finally(() => setRefreshes((n) => n + 1));
+        return;
+      }
       navigate('/agents', { replace: true });
       return;
     }
@@ -39,7 +46,7 @@ export function useAgentRouteSync(): void {
       notify.show({ tone: 'error', message: `Could not open agent ${action.id}: ${err instanceof Error ? err.message : String(err)}` });
       navigate('/agents', { replace: true });
     });
-  }, [routeId, agentsLoaded]);
+  }, [routeId, agentsLoaded, refreshes]);
 
   // The agent the URL last agreed with; `undefined` until the list has loaded.
   const synced = useRef<string | undefined>(undefined);

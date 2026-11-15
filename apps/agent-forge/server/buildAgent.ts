@@ -91,7 +91,7 @@ export interface BuiltAgent {
 }
 
 /** Real provider types this app doesn't manage a stored key for (no plain-API-key concept, or not yet wired into secretsStore) - env-var-only. */
-const REAL_ENV_ONLY_PROVIDERS = new Set(['ollama', 'openrouter']);
+const REAL_ENV_ONLY_PROVIDERS = new Set(['ollama']);
 
 /**
  * A real provider with no usable credential. The studio used to

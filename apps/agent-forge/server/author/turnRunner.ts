@@ -121,6 +121,7 @@ interface RunContext {
   stepsDone: number;
   /** `run.done`'s finishReason, once it arrives. */
   finishReason?: string;
+  lastError?: { message: string; code?: string };
   builder: TranscriptBuilder;
   /** `tool.start` args by call id, for `tool.pending`'s `input`. */
   toolInputs: Map<string, unknown>;
@@ -352,6 +353,7 @@ export class AuthorTurnRunner extends EventEmitter {
       for await (const ev of agent.stream(input, { signal: ctx.slot.controller.signal, throwOnError: false })) {
         this.handleEvent(sessionId, ctx, ev);
       }
+      if (ctx.finishReason === 'error' && ctx.lastError !== undefined) failed = ctx.lastError;
     } catch (error) {
       if (!ctx.slot.controller.signal.aborted) {
         failed = {
@@ -399,6 +401,9 @@ export class AuthorTurnRunner extends EventEmitter {
         break;
       case 'run.done':
         ctx.finishReason = ev.finishReason;
+        break;
+      case 'error':
+        ctx.lastError = { message: ev.error.message, code: ev.error.code };
         break;
       default:
         break;
