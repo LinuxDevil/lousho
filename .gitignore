@@ -84,3 +84,4 @@ apps/agent-forge/evals/author/results/*.json
 
 # Studio pack-time SDK-range pin backup
 .package.json.prepack
+lousho.deploy.json

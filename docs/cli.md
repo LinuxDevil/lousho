@@ -35,6 +35,8 @@ lousho chat <spec.yaml|spec.json|agent-dir|agent.ts> [--model provider/model] [-
 lousho acp <spec.yaml|spec.json|agent-dir|agent.ts> [--model provider/model]
 lousho add <name> [--registry <url-or-path>] [--dir <agent-dir>] [--yes] [--allow <list>] [--overwrite] [--dry-run]    (or --list)
 lousho build <agent-dir|spec|agent.ts> --target=<node-server|cloudflare-worker|docker> [--out=<dir>]    (or --agent=<path>)
+lousho deploy [--host H] [--agent DIR]... [--studio-user U | --no-studio] [--domain D] [--env KEY]... [--local] [--dry-run] [--yes]
+lousho deploy github-app --agent <name>
 lousho studio [--port N] [--host H]
 lousho bridge
 lousho workspace <init|ls|show|validate|run> [args] [--source <dir> | --service <url>]
@@ -264,6 +266,18 @@ Writes the artifact to `--out` (default `.lousho/build/<target>`) and prints
 the command to run or deploy it. Building needs `tsup`
 (`npm install --save-dev tsup`). Targets, the HTTP API they serve and the
 Workers limits are in [Deployment](./deployment.md).
+
+## `lousho deploy`
+
+```bash
+npx lousho deploy                                   # the wizard asks for the server, Studio login and agents
+npx lousho deploy --host 203.0.113.7 --agent agents/support --no-studio --yes
+```
+
+Builds every agent with the docker target and runs them, with Studio, on
+your server behind HTTPS. Answers are saved to `lousho.deploy.json`, secrets
+to `~/.config/lousho/deploy-<name>.env`. See
+[Deploying to your own server](./hostinger-vps.md).
 
 ## `lousho studio`
 

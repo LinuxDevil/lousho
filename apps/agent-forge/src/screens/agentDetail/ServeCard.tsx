@@ -541,6 +541,20 @@ function McpServeRows({ agentId, published, mcp, onCopy }: McpServeRowsProps): J
   );
 }
 
+function DeployToServer({ agentId, onCopy }: { agentId: string; onCopy: (text: string) => void }): JSX.Element {
+  const command = `npx lousho deploy --agent .lousho/agents/${agentId}/published.yaml`;
+  return (
+    <details className="serve-card-snippet">
+      <summary>Deploy to your own server</summary>
+      <pre className="serve-card-pre">{command}</pre>
+      <p className="serve-card-hint">Run it in this workspace after publishing. It asks for the server and secrets, then serves the agent over HTTPS.</p>
+      <button type="button" className="btn btn-ghost btn-icon btn-sm" aria-label="Copy deploy command" onClick={() => onCopy(command)}>
+        <Copy size={14} strokeWidth={1.75} aria-hidden="true" />
+      </button>
+    </details>
+  );
+}
+
 /**
  * The Serve card (X02b, PLAN §16.3): turns `/serve/<id>` on for the
  * published version, shows the endpoint + masked bearer, and edits the
@@ -614,6 +628,7 @@ export function ServeCard({ agentId }: { agentId: string }): JSX.Element {
       {/* The MCP section stays visible unpublished too: its Start button is
           the discoverable "publish first" affordance (X03). */}
       <McpServeRows agentId={agentId} published={published} mcp={mcp} onCopy={(text) => void copy(text)} />
+      <DeployToServer agentId={agentId} onCopy={(text) => void copy(text)} />
     </Card>
   );
 }

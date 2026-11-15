@@ -18,12 +18,12 @@ It reviews PRs opened by owners, members and collaborators, re-reviews on every 
 
 GitHub App permissions: Pull requests read and write, Contents read, Issues read, Metadata read. Subscribe to **Pull request** events. Webhook URL: `http://<host>:<port>/channels/github`.
 
-## Deploy to the Hostinger VPS
+## Deploy
 
 ```bash
-node examples/hostinger-deploy/deploy.mjs --vm <id|hostname|ip> \
-  --agent agents/reviewer --name lousho-reviewer --port 3100 --no-smoke \
-  --env REVIEWER_APP_ID --env REVIEWER_APP_PRIVATE_KEY --env REVIEWER_WEBHOOK_SECRET --env REVIEWER_BOT_NAME
+npx lousho deploy --agent agents/reviewer --no-studio
+npx lousho deploy github-app --agent reviewer --prefix REVIEWER_ --app-name lousho-ai --repo LinuxDevil/lousho
+npx lousho deploy
 ```
 
-`HOSTINGER_API_TOKEN`, `OPENROUTER_API_KEY` and `LOUSHO_API_TOKEN` must be set too.
+The first deploy asks for the server and `OPENROUTER_API_KEY`. `github-app` creates the App with its webhook pointed at `https://reviewer.<domain>/channels/github` and saves its credentials; the second deploy hands them to the agent. With an existing App, pass `--env REVIEWER_APP_ID --env REVIEWER_APP_PRIVATE_KEY --env REVIEWER_WEBHOOK_SECRET --env REVIEWER_BOT_NAME` with those variables set instead.
