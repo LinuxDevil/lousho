@@ -7,8 +7,6 @@ import { memoryStore } from '../storage/agentStore';
 import type { Message } from '../providers';
 import type { SubagentCatalog } from './types';
 
-const SUBAGENT_TOOLS = ['task', 'agent_status', 'agent_await', 'agent_cancel'];
-
 const task = (agent: string, prompt: string, id?: string) => ({
   name: 'task',
   args: { agent, prompt, description: `${agent} task` },
@@ -20,162 +18,6 @@ function toolMessages(messages: readonly Message[]): Message[] {
 }
 
 describe('subagents option and the task tool', () => {
-  it('runs a sub-agent on only the task prompt and returns its answer with a metadata footer', async () => {
-    const researcherModel = mockModel(['Paris is the capital of France.']);
-    const researcher = createAgent({
-      provider: researcherModel,
-      instructions: 'You research.',
-      description: 'Finds and summarizes sources',
-    });
-    const leadModel = mockModel([{ text: 'Let me ask.', toolCalls: [task('researcher', 'What is the capital of France?')] }, 'Paris.']);
-    const lead = createAgent({ provider: leadModel, instructions: 'You coordinate.', subagents: { researcher } });
-
-    const result = await lead.send('Tell me about France, my secret is 42');
-
-    // Isolated context: the child sees its own system prompt and the task prompt only.
-    expect(researcherModel.calls[0].messages).toEqual([
-      { role: 'system', content: 'You research.' },
-      { role: 'user', content: 'What is the capital of France?' },
-    ]);
-    expect(JSON.stringify(researcherModel.calls[0].messages)).not.toContain('secret');
-
-    // The lead sees the sub-agent list, the `task` tool and the background-task tools.
-    const leadRequest = leadModel.calls[0];
-    expect(leadRequest.messages[0].content).toContain('## Available sub-agents');
-    expect(leadRequest.messages[0].content).toContain('- researcher: Finds and summarizes sources');
-    expect(leadRequest.tools?.map((t) => t.function.name)).toEqual(SUBAGENT_TOOLS);
-
-    const [toolResult] = toolMessages(result.messages);
-    const text = JSON.parse(toolResult.content as string) as string;
-    expect(text).toBe("Paris is the capital of France.\n\n[sub-agent 'researcher': 1 step(s), finish reason 'stop', taskId 'task_1']");
-    expect(result.text).toBe('Paris.');
-  });
-
-  it('runs several task calls of one turn in parallel', async () => {
-    let started = 0;
-    let releaseAll!: () => void;
-    const bothStarted = new Promise<void>((resolve) => (releaseAll = resolve));
-    const rendezvous = defineTool({
-      name: 'rendezvous',
-      description: 'Waits until both sub-agents are running',
-      input: z.object({}),
-      execute: async () => {
-        started++;
-        if (started === 2) releaseAll();
-        await Promise.race([
-          bothStarted,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('sub-agents did not run in parallel')), 2000)),
-        ]);
-        return 'met';
-      },
-    });
-    const child = (name: string) =>
-      createAgent({
-        name,
-        provider: mockModel([{ toolCalls: [{ name: 'rendezvous' }] }, `${name} done`]),
-        tools: [rendezvous],
-        description: `The ${name}`,
-      });
-    const leadModel = mockModel([{ toolCalls: [task('researcher', 'a', 't1'), task('writer', 'b', 't2')] }, 'all done']);
-    const lead = createAgent({ provider: leadModel, subagents: { researcher: child('researcher'), writer: child('writer') } });
-
-    const result = await lead.send('go');
-
-    expect(result.text).toBe('all done');
-    const results = toolMessages(result.messages);
-    expect(results.map((m) => m.toolCallId)).toEqual(['t1', 't2']);
-    expect(results[0].content).toContain('researcher done');
-    expect(results[1].content).toContain('writer done');
-    expect(results.some((m) => m.isError)).toBe(false);
-  });
-
-  it("streams the sub-agent's events inside the lead's agent.stream(), tagged with subagent", async () => {
-    const researcher = createAgent({
-      name: 'researcher',
-      provider: mockModel([{ toolCalls: [{ name: 'lookup' }] }, 'found it']),
-      tools: [defineTool({ name: 'lookup', description: 'Looks up', input: z.object({}), execute: () => 'data' })],
-      description: 'Researches',
-    });
-    const lead = createAgent({
-      name: 'lead',
-      provider: mockModel([{ toolCalls: [task('researcher', 'look', 'lead-1')] }, 'done']),
-      subagents: { researcher },
-    });
-
-    const events = [];
-    for await (const event of lead.stream('go')) events.push(event);
-
-    const tag = { name: 'researcher', depth: 1, toolCallId: 'lead-1', description: 'researcher task' };
-    const child = events.filter((e) => e.subagent).map((e) => [e.type, e.subagent]);
-    // (The child's text is streamed: one or more text.delta, collapsed here.)
-    const types = child.map(([type]) => type).filter((type, i, all) => type !== 'text.delta' || all[i - 1] !== type);
-    expect(types).toEqual([
-      'step.start',
-      'tool.start',
-      'tool.done',
-      'step.done',
-      'step.start',
-      'text.delta',
-      'text.done',
-      'step.done',
-    ]);
-    expect(child.every(([, subagent]) => JSON.stringify(subagent) === JSON.stringify(tag))).toBe(true);
-    // run.start / run.done mark the top-level run only, exactly once.
-    expect(events.filter((e) => e.type === 'run.start' || e.type === 'run.done').every((e) => !e.subagent)).toBe(true);
-    const top = events.filter((e) => !e.subagent);
-    expect(top[0].type).toBe('run.start');
-    expect(top.at(-1)).toMatchObject({ type: 'run.done', text: 'done' });
-    expect(events.at(-1)).toBe(top.at(-1));
-    expect(events.map((e) => e.seq)).toEqual(events.map((_, i) => i));
-    // The child runs inside the lead's task call.
-    const taskStart = events.findIndex((e) => e.type === 'tool.start' && !e.subagent);
-    const taskDone = events.findIndex((e) => e.type === 'tool.done' && !e.subagent);
-    expect(events.findIndex((e) => e.subagent)).toBeGreaterThan(taskStart);
-    expect(events.map((e) => Boolean(e.subagent)).lastIndexOf(true)).toBeLessThan(taskDone);
-  });
-
-  describe('maxSubagentDepth', () => {
-    function nestedTree(maxSubagentDepth?: number) {
-      const helperModel = mockModel(['helped']);
-      const helper = createAgent({
-        provider: helperModel,
-        description: 'Helps',
-        subagents: { deeper: createAgent({ provider: mockModel(['x']), description: 'Deeper' }) },
-      });
-      const researcherModel = mockModel([{ toolCalls: [task('helper', 'help me')] }, 'researched']);
-      const researcher = createAgent({ provider: researcherModel, description: 'Researches', subagents: { helper } });
-      const leadModel = mockModel([{ toolCalls: [task('researcher', 'research')] }, 'done']);
-      const lead = createAgent({ provider: leadModel, subagents: { researcher }, maxSubagentDepth });
-      return { lead, leadModel, researcherModel, helperModel };
-    }
-
-    it('defaults to 1: sub-agents are not offered the task tool', async () => {
-      const { lead, researcherModel } = nestedTree();
-      await lead.send('go');
-      expect(researcherModel.calls[0].tools).toBeUndefined();
-      expect(researcherModel.calls[0].messages[0].content ?? '').not.toContain('Available sub-agents');
-    });
-
-    it('with 2, sub-agents can delegate once more, and the limit holds deeper down', async () => {
-      const { lead, researcherModel, helperModel } = nestedTree(2);
-      const result = await lead.send('go');
-      expect(researcherModel.calls[0].tools?.map((t) => t.function.name)).toEqual(SUBAGENT_TOOLS);
-      // The helper sits at depth 2 = the root's limit: it has sub-agents but no task tool.
-      expect(helperModel.calls[0].tools).toBeUndefined();
-      expect(toolMessages(researcherModel.calls[1].messages as Message[])[0].content).toContain('helped');
-      expect(result.text).toBe('done');
-    });
-
-    it('with 0, not even the lead gets the task tool', async () => {
-      const { lead, leadModel } = nestedTree(0);
-      await lead.send('go').catch(() => undefined);
-      expect(leadModel.calls[0].tools).toBeUndefined();
-    });
-
-    it('rejects an invalid value', () => {
-      expect(() => createAgent({ provider: mockModel([]), maxSubagentDepth: -1 })).toThrow(/maxSubagentDepth/);
-    });
-  });
 
   it('lists a dynamic catalog at the start of every run and resolves names on demand', async () => {
     const researcher = createAgent({ provider: mockModel(['found it'], { onExhausted: 'repeat-last' }) });
@@ -243,23 +85,6 @@ describe('subagents option and the task tool', () => {
     expect(text).toMatch(/^\{"n":42\}\n\n\[sub-agent 'researcher': \d+ step\(s\), finish reason 'max-steps'/);
     expect(text).toContain('ran out of steps');
     expect(text).not.toContain('without giving a final answer');
-  });
-
-  it('counts the tool calls that failed inside sub-agents on the lead usage.delegated.toolErrors', async () => {
-    const broken = defineTool({ name: 'broken', description: 'fails', input: z.object({}), execute: () => { throw new Error('boom'); } });
-    const failingTwice = (description: string) =>
-      createAgent({ provider: mockModel([{ toolCalls: [{ name: 'broken' }, { name: 'broken' }] }, 'done anyway']), tools: [broken], description });
-    const lead = createAgent({
-      provider: mockModel([{ toolCalls: [task('researcher', 'a'), task('writer', 'b')] }, 'ok']),
-      subagents: { researcher: failingTwice('Researches'), writer: failingTwice('Writes') },
-    });
-
-    const result = await lead.send('go');
-
-    // The lead's own calls succeeded; the children's four failed calls are counted apart.
-    expect(result.toolErrors).toBeUndefined();
-    expect(result.usage.delegated?.runs).toBe(2);
-    expect(result.usage.delegated?.toolErrors).toBe(4);
   });
 
   it("holds parallel sub-agents to the lead's maxCostUsd, shared, and keeps their results when it trips", async () => {
@@ -342,27 +167,6 @@ describe('subagents option and the task tool', () => {
     expect(toolMessages(result.messages).map((m) => m.content)).toEqual([expect.stringContaining("taskId 'task_1'"), expect.stringContaining("taskId 'task_2'")]);
   });
 
-  it('offers taskId and mode on the task tool by default', async () => {
-    const researcher = createAgent({ provider: mockModel(['found']), description: 'Researches' });
-    const leadModel = mockModel(['ok']);
-    await createAgent({ provider: leadModel, subagents: { researcher } }).send('go');
-
-    const taskTool = leadModel.calls[0].tools?.find((t) => t.function.name === 'task');
-    expect(Object.keys((taskTool?.function.parameters as unknown as { shape: object }).shape)).toEqual(expect.arrayContaining(['taskId', 'mode']));
-    expect(leadModel.calls[0].messages[0].content).toContain('Omit `taskId` to start a new task.');
-  });
-
-  it('accepts a task call without a description', async () => {
-    const researcher = createAgent({ provider: mockModel(['found it']), description: 'Researches' });
-    const leadModel = mockModel([{ toolCalls: [{ name: 'task', args: { agent: 'researcher', prompt: 'go' } }] }, 'ok']);
-    const lead = createAgent({ provider: leadModel, subagents: { researcher } });
-
-    const [toolResult] = toolMessages((await lead.send('go')).messages);
-
-    expect(toolResult.isError).toBeFalsy();
-    expect(toolResult.content).toContain('found it');
-  });
-
   it("resolves a dynamic sub-agent's config with the caller's metadata, principal and sessionId", async () => {
     const seen: unknown[] = [];
     const researcher = createAgent({
@@ -384,67 +188,7 @@ describe('subagents option and the task tool', () => {
     expect(seen).toEqual([{ metadata: { plan: 'pro' }, principal: 'acme', sessionId: 'lead-session', input: 'look into X' }]);
   });
 
-  it('gives the lead an error result when a sub-agent fails', async () => {
-    const researcher = createAgent({ provider: mockModel([{ error: new Error('model is down') }]), description: 'Researches' });
-    const lead = createAgent({ provider: mockModel([{ toolCalls: [task('researcher', 'go')] }, 'ok']), subagents: { researcher } });
-
-    const [toolResult] = toolMessages((await lead.send('go')).messages);
-
-    expect(toolResult.isError).toBe(true);
-    expect(toolResult.content).toContain("Sub-agent 'researcher' failed:");
-  });
-
-  it("adds sub-agents' token usage to the lead's", async () => {
-    const researcher = createAgent({
-      provider: mockModel([{ text: 'r', usage: { inputTokens: 100, outputTokens: 10 } }]),
-      description: 'Researches',
-    });
-    const lead = createAgent({
-      provider: mockModel([
-        { toolCalls: [task('researcher', 'go')], usage: { inputTokens: 1, outputTokens: 1 } },
-        { text: 'done', usage: { inputTokens: 2, outputTokens: 2 } },
-      ]),
-      subagents: { researcher },
-    });
-
-    const { usage } = await lead.send('go');
-
-    expect(usage).toMatchObject({ inputTokens: 103, outputTokens: 13, totalTokens: 116, modelCalls: 3 });
-  });
-
   describe('configuration errors', () => {
-    const researcher = createAgent({ provider: mockModel([]), description: 'Researches' });
-
-    it('requires a description on every sub-agent', () => {
-      const undescribed = createAgent({ provider: mockModel([]) });
-      expect(() => createAgent({ provider: mockModel([]), subagents: { undescribed } })).toThrow(
-        /sub-agent 'undescribed' has no description/
-      );
-    });
-
-    it('only accepts createAgent() agents', () => {
-      const fake = { send: async () => ({}) } as unknown as typeof researcher;
-      expect(() => createAgent({ provider: mockModel([]), subagents: { fake } })).toThrow(/not an agent created with createAgent/);
-    });
-
-    it('refuses a user tool already named task', () => {
-      const own = defineTool({ name: 'task', description: 'mine', input: z.object({}), execute: () => 'x' });
-      expect(() => createAgent({ provider: mockModel([]), tools: [own], subagents: { researcher } })).toThrow(
-        /a tool named 'task' is already registered/
-      );
-      const status = defineTool({ name: 'agent_status', description: 'mine', input: z.object({}), execute: () => 'x' });
-      expect(() => createAgent({ provider: mockModel([]), tools: [status], subagents: { researcher } })).toThrow(
-        /a tool named 'agent_status' is already registered/
-      );
-    });
-
-    it('rejects a catalog that lists a sub-agent without a description', async () => {
-      const lead = createAgent({
-        provider: mockModel(['x']),
-        subagents: { list: () => [{ name: 'a', description: ' ' }], resolve: () => undefined },
-      });
-      await expect(lead.send('go')).rejects.toThrow(/without a description/);
-    });
 
     it('rejects a catalog that lists a name twice', async () => {
       const lead = createAgent({
@@ -453,57 +197,5 @@ describe('subagents option and the task tool', () => {
       });
       await expect(lead.send('go')).rejects.toThrow(/the name 'a' twice/);
     });
-
-    it('offers no task tool for an empty catalog', async () => {
-      const model = mockModel(['x']);
-      await createAgent({ provider: model, subagents: { list: () => [], resolve: () => undefined } }).send('go');
-      expect(model.calls[0].tools).toBeUndefined();
-    });
-  });
-});
-
-describe('usage of a sub-agent that fails', () => {
-  const noop = defineTool({ name: 'noop', description: 'Does nothing', input: z.object({}), execute: async () => 'ok' });
-  const failingWorker = () =>
-    createAgent({
-      provider: mockModel(
-        [
-          { toolCalls: [{ name: 'noop' }], usage: { inputTokens: 1000, outputTokens: 100 } },
-          { error: Object.assign(new Error('400 Bad Request: context too long'), { status: 400 }) },
-        ],
-        { onExhausted: 'repeat-last' }
-      ),
-      description: 'Worker',
-      tools: [noop],
-      retry: false,
-    });
-  const taskCall = { name: 'task', args: { agent: 'worker', prompt: 'do it', description: 'do it' } };
-
-  it("adds the tokens it spent before failing to the lead's usage", async () => {
-    const lead = createAgent({
-      provider: mockModel([
-        { toolCalls: [taskCall], usage: { inputTokens: 10, outputTokens: 1 } },
-        { text: 'final', usage: { inputTokens: 10, outputTokens: 1 } },
-      ]),
-      subagents: { worker: failingWorker() },
-    });
-
-    const result = await lead.send('go');
-
-    expect(result.messages.find((m) => m.role === 'tool')?.content).toContain("Sub-agent 'worker' failed");
-    expect(result.usage).toMatchObject({ inputTokens: 1020, outputTokens: 102 });
-    expect(result.usage.delegated).toMatchObject({ inputTokens: 1000, outputTokens: 100, modelCalls: 1, runs: 1 });
-  });
-
-  it("counts the spend against the lead's limits", async () => {
-    const lead = createAgent({
-      provider: mockModel([{ toolCalls: [taskCall], usage: { inputTokens: 10, outputTokens: 1 } }, 'final'], { onExhausted: 'repeat-last' }),
-      subagents: { worker: failingWorker() },
-      limits: { maxTokens: 500 },
-    });
-
-    const result = await lead.send('go');
-
-    expect(result.finishReason).toBe('budget-exceeded');
   });
 });

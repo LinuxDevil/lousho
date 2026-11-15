@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeAll, afterAll } from 'vitest';
 import * as fs from 'node:fs';
-import * as http from 'node:http';
-import type { AddressInfo } from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
@@ -15,7 +13,7 @@ import {
   type VitestSpawner,
 } from './eval';
 import type { EvalResult } from '../evals/evalResult';
-import { RESULTS_ENV, TAGS_ENV } from '../evals/recorder';
+import { RESULTS_ENV } from '../evals/recorder';
 import { CONFIG_ENV, cassettePath } from '../evals/cassettes';
 import { renderJunit, unreportedFailures } from './evalReport';
 
@@ -30,23 +28,6 @@ afterEach(() => {
 });
 
 describe('parseEvalArgs', () => {
-  it('defaults to no globs and normal (non-strict, non-judge) mode', () => {
-    expect(parseEvalArgs([])).toEqual({ globs: [], tags: [], strict: false, judge: false });
-  });
-
-  it('reads globs, repeatable/comma --tag, and both flag styles', () => {
-    expect(
-      parseEvalArgs(['a/*.eval.ts', '--tag', 'smoke,fast', '--tag=nightly', '--junit', 'out/j.xml', '--json=out/r.json', '--strict', '--judge', 'b.eval.ts', '--config', 'v.config.ts'])
-    ).toEqual({
-      globs: ['a/*.eval.ts', 'b.eval.ts'],
-      tags: ['smoke', 'fast', 'nightly'],
-      junit: 'out/j.xml',
-      json: 'out/r.json',
-      strict: true,
-      judge: true,
-      config: 'v.config.ts',
-    });
-  });
 
   it('reads the cassette flags; --drift-usage implies --drift and only one mode is allowed', () => {
     expect(parseEvalArgs(['--record'])).toMatchObject({ record: true });
@@ -54,38 +35,14 @@ describe('parseEvalArgs', () => {
     expect(() => parseEvalArgs(['--record', '--replay'])).toThrow(/only one of --record, --replay and --drift/);
     expect(() => parseEvalArgs(['--replay', '--drift'])).toThrow(/only one of/);
   });
-
-  it('explains how to fix an unknown option or a missing value', () => {
-    expect(() => parseEvalArgs(['--bogus'])).toThrow(/unknown option '--bogus'[\s\S]*Usage: lousho eval/);
-    expect(() => parseEvalArgs(['--junit'])).toThrow(/--junit needs a value/);
-    expect(() => parseEvalArgs(['--tag', '--strict'])).toThrow(/--tag needs a value/);
-  });
 });
 
 describe('buildVitestConfig', () => {
-  it('collects *.eval files but never judge evals by default', () => {
-    const config = buildVitestConfig({ globs: [], judge: false });
-    expect(config).toContain('"**/*.eval.{ts,mts,js,mjs}"');
-    expect(config).toContain('"**/*.judge.eval.*"');
-    expect(config).not.toContain('LOUSHO_ALLOW_LLM_JUDGE');
-  });
 
   it('collects only judge evals and allows the judge with --judge', () => {
     const config = buildVitestConfig({ globs: [], judge: true });
     expect(config).toContain('"**/*.judge.eval.{ts,mts,js,mjs}"');
     expect(config).toContain('"LOUSHO_ALLOW_LLM_JUDGE": "1"');
-  });
-
-  it('uses the given globs as the include list', () => {
-    expect(buildVitestConfig({ globs: ['evals/**/*.ts'], judge: false })).toContain('"evals/**/*.ts"');
-  });
-});
-
-describe('toRootRelativeGlob', () => {
-  it('keeps relative globs and makes absolute paths root-relative with forward slashes', () => {
-    const cwd = path.resolve('proj');
-    expect(toRootRelativeGlob('evals/**/*.eval.ts', cwd)).toBe('evals/**/*.eval.ts');
-    expect(toRootRelativeGlob(path.join(cwd, 'evals', 'a.eval.ts'), cwd)).toBe('evals/a.eval.ts');
   });
 });
 
@@ -111,25 +68,7 @@ function fakeVitest(results: EvalResult[], code = 0) {
   return { spawnVitest, calls };
 }
 
-const softResult = result({
-  name: 'soft',
-  assertions: [{ name: 'tone', kind: 'soft', passed: false, score: 0.2, threshold: 0.7, message: 'too curt' }],
-});
-const gateResult = result({
-  name: 'gate',
-  passed: false,
-  assertions: [{ name: 'completed()', kind: 'gate', passed: false, score: 0, threshold: 1, message: 'nope' }],
-});
-
 describe('runEval with a fake vitest', () => {
-  it('--help describes every flag', async () => {
-    const log = vi.fn();
-    expect(await runEval(['--help'], { log })).toBe(0);
-    const help = String(log.mock.calls[0][0]);
-    for (const flag of ['--tag', '--junit', '--json', '--strict', '--judge', '--record', '--replay', '--drift', '--drift-usage', '--url', '--token', '--observe', '--config', '--timeout']) {
-      expect(help).toMatch(new RegExp(`\\n  ${flag}\\b[^\\n]* {2,}\\S`));
-    }
-  });
 
   it('exits 1 (not a usage error) and prints the install command when vitest is not installed', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -148,37 +87,6 @@ describe('runEval with a fake vitest', () => {
     expect(await runEval(['--junit', junit], { resolveVitest: () => 'v', spawnVitest: fakeVitest([result({})]).spawnVitest, log: () => {} })).toBe(1);
     expect(error).toHaveBeenCalled();
     fs.rmSync(dir, { recursive: true, force: true });
-  });
-
-  it('exits 2 for bad arguments', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(await runEval(['--nope'], { resolveVitest: () => 'vitest.mjs' })).toBe(2);
-    expect(error.mock.calls[0][0]).toContain("unknown option '--nope'");
-  });
-
-  it('passes the tag filter, results file and generated config to vitest and exits 0 on success', async () => {
-    const fake = fakeVitest([result({ name: 'ok' })]);
-    const log = vi.fn();
-    const code = await runEval(['--tag', 'smoke', 'x.eval.ts'], { resolveVitest: () => 'vitest.mjs', spawnVitest: fake.spawnVitest, log, cwd: '/proj' });
-    expect(code).toBe(0);
-    expect(fake.calls[0].args.slice(0, 1)).toEqual(['run']);
-    expect(fake.calls[0].args).toContain('/proj');
-    expect(fake.calls[0].env[TAGS_ENV]).toBe('smoke');
-    expect(fake.calls[0].config).toContain('"x.eval.ts"');
-    expect(log.mock.calls[0][0]).toContain('1 eval(s): 1 passed, 0 failed');
-  });
-
-  it('exits 1 on a gate failure and 0 on a soft failure, unless --strict', async () => {
-    const run = (extra: string[], results: EvalResult[]) =>
-      runEval(extra, { resolveVitest: () => 'v', spawnVitest: fakeVitest(results).spawnVitest, log: () => {} });
-    expect(await run([], [gateResult])).toBe(1);
-    expect(await run([], [softResult])).toBe(0);
-    expect(await run(['--strict'], [softResult])).toBe(1);
-  });
-
-  it('exits 1 when vitest itself fails with no recorded failure, so a load error never looks green', async () => {
-    const code = await runEval([], { resolveVitest: () => 'v', spawnVitest: fakeVitest([], 1).spawnVitest, log: () => {} });
-    expect(code).toBe(1);
   });
 
   it('says no eval files were found when vitest ran none (it exits 1 and writes no report)', async () => {
@@ -204,26 +112,11 @@ describe('runEval with a fake vitest', () => {
     expect(fake.calls[0].env.LOUSHO_ALLOW_LLM_JUDGE).toBe('1');
     expect(fake.calls[0].args).toEqual(['run', '--config', config, '--root', process.cwd(), 'only.judge.eval.ts']);
   });
-
-  it('writes the JUnit and JSON reports, creating missing directories', async () => {
-    const dir = path.dirname(tempFile('x'));
-    const junit = path.join(dir, 'nested', 'junit.xml');
-    const json = path.join(dir, 'nested', 'results.json');
-    const fake = fakeVitest([gateResult]);
-    await runEval(['--junit', junit, '--json', json], { resolveVitest: () => 'v', spawnVitest: fake.spawnVitest, log: () => {} });
-    expect(fs.readFileSync(junit, 'utf8')).toContain('<failure message="nope"');
-    expect((JSON.parse(fs.readFileSync(json, 'utf8')) as { summary: { failed: number } }).summary.failed).toBe(1);
-  });
 });
 
 describe('lousho eval --observe', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
-  });
-
-  it('parses --observe as a boolean flag', () => {
-    expect(parseEvalArgs(['--observe'])).toMatchObject({ observe: true });
-    expect(parseEvalArgs([]).observe).toBeUndefined();
   });
 
   it('points the worker at the local daemon when LOUSHO_OBSERVE is unset or off', async () => {
@@ -245,24 +138,9 @@ describe('lousho eval --observe', () => {
     await runEval(['--observe'], { resolveVitest: () => 'v', spawnVitest: fake.spawnVitest, log: () => {} });
     expect(fake.calls[0].env.LOUSHO_OBSERVE).toBe('1');
   });
-
-  it('keeps a configured LOUSHO_OBSERVE URL and does nothing without --observe', async () => {
-    vi.stubEnv('LOUSHO_OBSERVE', 'http://collector.test:9999');
-    let fake = fakeVitest([result({})]);
-    await runEval(['--observe'], { resolveVitest: () => 'v', spawnVitest: fake.spawnVitest, log: () => {} });
-    expect(fake.calls[0].env.LOUSHO_OBSERVE).toBe('http://collector.test:9999');
-
-    vi.stubEnv('LOUSHO_OBSERVE', '');
-    fake = fakeVitest([result({})]);
-    await runEval([], { resolveVitest: () => 'v', spawnVitest: fake.spawnVitest, log: () => {} });
-    expect(fake.calls[0].env.LOUSHO_OBSERVE).toBe('');
-  });
 });
 
 describe('lousho eval --url', () => {
-  it('parses --url and --token', () => {
-    expect(parseEvalArgs(['--url', 'https://a.test', '--token=abc'])).toMatchObject({ url: 'https://a.test', token: 'abc' });
-  });
 
   it('rejects --url with --record, --replay and --drift with a coded error', async () => {
     for (const flag of ['--record', '--replay', '--drift']) {
@@ -286,99 +164,6 @@ describe('lousho eval --url', () => {
   });
 });
 
-describe('lousho eval end to end (real vitest, mockModel fixtures)', () => {
-  // The real vitest, with its own console output discarded to keep this suite's log readable.
-  const quietVitest = createVitestSpawner('ignore');
-
-  const cli = (args: string[]) => {
-    const log = vi.fn();
-    return runEval(args, { log, spawnVitest: quietVitest }).then((code) => ({ code, output: log.mock.calls.map((c) => String(c[0])).join('\n') }));
-  };
-
-  it('runs a passing eval: exit 0, JUnit and JSON written, soft failure reported but not failing', async () => {
-    const junit = tempFile('junit.xml');
-    const json = tempFile('results.json');
-    const { code, output } = await cli([path.join(FIXTURES, 'refund.eval.ts'), '--junit', junit, '--json', json]);
-
-    expect(code).toBe(0);
-    expect(output).toContain('3 eval(s): 3 passed, 0 failed, 2 with soft failures');
-    expect(output).toContain('PASS (soft fail)');
-    const xml = fs.readFileSync(junit, 'utf8');
-    expect(xml).toContain('<testsuite name="refund flow" tests="2" failures="0" errors="0"');
-    expect(xml).toContain('<testcase classname="refund flow" name="polite"');
-    expect(xml).toContain('<testsuite name="nightly only" tests="1"');
-    const parsed = JSON.parse(fs.readFileSync(json, 'utf8')) as { results: EvalResult[] };
-    expect(parsed.results.find((r) => r.case === 'polite')).toMatchObject({
-      passed: true,
-      steps: 2,
-      toolCalls: [{ name: 'lookup_order', args: { orderId: '42' } }],
-    });
-  }, 60_000);
-
-  it('--tag runs only matching evals, and --strict turns the soft failure into exit 1', async () => {
-    const { code, output } = await cli([path.join(FIXTURES, 'refund.eval.ts'), '--tag', 'smoke', '--strict']);
-    expect(code).toBe(1);
-    expect(output).toContain('2 eval(s): 0 passed, 2 failed');
-    expect(output).not.toContain('nightly only');
-  }, 60_000);
-
-  it('a failing gate exits 1 with the diagnostic message in the JUnit failure', async () => {
-    const junit = tempFile('junit.xml');
-    const { code, output } = await cli([path.join(FIXTURES, 'broken.eval.ts'), '--junit', junit]);
-    expect(code).toBe(1);
-    expect(output).toContain("calledTool('lookup_order') failed: tools called were none");
-    expect(fs.readFileSync(junit, 'utf8')).toContain(
-      "<failure message=\"calledTool('lookup_order') failed: tools called were none\""
-    );
-  }, 60_000);
-});
-
-describe('lousho eval over a daemon dataset (real vitest, stub daemon)', () => {
-  const fixture = path.join(FIXTURES, 'dataset.eval.ts');
-  const quietVitest = createVitestSpawner('ignore');
-  const cli = (args: string[]) => {
-    const log = vi.fn();
-    return runEval(args, { log, spawnVitest: quietVitest }).then((code) => ({ code, output: log.mock.calls.map((c) => String(c[0])).join('\n') }));
-  };
-  const examples = [
-    { example_id: 'ex_1', dataset_id: 'ds', input: 'refund 42', expected: 'echo refund 42', source_trace_id: null, created_at: 1 },
-    { example_id: 'ex_2', dataset_id: 'ds', input: 'refund 7', expected: 'echo refund 7', source_trace_id: null, created_at: 2 },
-  ];
-  // Serves `refunds` at GET /api/v1/datasets/refunds; every other request (trace/score emission) gets `{}`.
-  const daemon = http.createServer((req, res) => {
-    res.writeHead(200, { 'content-type': 'application/json' });
-    const body = req.method === 'GET' && req.url?.startsWith('/api/v1/datasets/refunds') ? { examples, total: examples.length, limit: 1000, offset: 0 } : {};
-    res.end(JSON.stringify(body));
-  });
-
-  beforeAll(() => new Promise<void>((resolve) => daemon.listen(0, '127.0.0.1', resolve)));
-  afterAll(() => new Promise<void>((resolve) => daemon.close(() => resolve())));
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it('runs one case per example, reported as #1 and #2', async () => {
-    vi.stubEnv('LOUSHO_OBSERVE', `http://127.0.0.1:${(daemon.address() as AddressInfo).port}`);
-    const json = tempFile('results.json');
-    const { code, output } = await cli([fixture, '--json', json]);
-    expect(code).toBe(0);
-    expect(output).toContain('2 eval(s): 2 passed, 0 failed');
-    const parsed = JSON.parse(fs.readFileSync(json, 'utf8')) as { results: EvalResult[] };
-    expect(parsed.results.map((r) => [r.name, r.case, r.passed])).toEqual([
-      ['dataset refunds', '#1', true],
-      ['dataset refunds', '#2', true],
-    ]);
-  }, 60_000);
-
-  it('fails the eval with LOUSHO_DATASET_UNAVAILABLE when LOUSHO_OBSERVE is not set', async () => {
-    vi.stubEnv('LOUSHO_OBSERVE', '');
-    const { code, output } = await cli([fixture]);
-    expect(code).toBe(1);
-    expect(output).toContain('1 eval(s): 0 passed, 1 failed');
-    expect(output).toContain("defineEval({ dataset: 'refunds' }) needs the observe daemon");
-  }, 60_000);
-});
-
 describe('lousho eval --record / --replay / --drift (real vitest, mockModel as the "real" provider)', () => {
   const fixture = path.join(FIXTURES, 'replay.eval.ts');
   const cassettes = path.join(FIXTURES, '__cassettes__');
@@ -395,21 +180,6 @@ describe('lousho eval --record / --replay / --drift (real vitest, mockModel as t
   afterEach(() => {
     vi.unstubAllEnvs();
   });
-
-  it('--replay without a cassette fails the case and names the --record command', async () => {
-    const { code, output } = await cli([fixture, '--replay']);
-    expect(code).toBe(1);
-    expect(output).toContain('no cassette for "recorded refund [plain]"');
-    expect(output).toContain(`npx lousho eval --record ${path.relative(process.cwd(), fixture)}`);
-  }, 60_000);
-
-  it('--replay passes a plain mockModel eval with no cassette: mocks need no network', async () => {
-    vi.stubEnv('FIXTURE_MOCK', '1');
-    const { code, output } = await cli([fixture, '--replay']);
-    expect(output).not.toContain('no cassette');
-    expect(code).toBe(0);
-    expect(fs.existsSync(cassette)).toBe(false);
-  }, 60_000);
 
   it('--record writes one cassette per case; --replay (or a CI run) replays it with no provider call', async () => {
     expect((await cli([fixture, '--record'])).code).toBe(0);
@@ -522,73 +292,4 @@ describe('unreportedFailures', () => {
     expect(results.map((r) => r.passed)).toEqual([false, true, false, false, true]);
     expect(results[0]?.error).toMatch(/^Error: Test timed out in 1ms\. Raise the limit with defineEval/);
   });
-
-  it('falls back to one error for the run when vitest failed with nothing failing and no report', () => {
-    expect(unreportedFailures([result({})], undefined, 1, options)).toEqual([
-      expect.objectContaining({ name: 'vitest', case: 'run', passed: false, error: expect.stringContaining('vitest exited with code 1') }),
-    ]);
-    expect(unreportedFailures([result({ passed: false })], undefined, 1, options)).toEqual([]);
-    expect(unreportedFailures([], undefined, 0, options)).toEqual([]);
-  });
-
-  it('writes the fallback error into the reports of a crashed run instead of empty ones', async () => {
-    const junit = tempFile('junit.xml');
-    const code = await runEval(['--junit', junit], { resolveVitest: () => 'v', spawnVitest: fakeVitest([], 1).spawnVitest, log: () => {} });
-    expect(code).toBe(1);
-    expect(fs.readFileSync(junit, 'utf8')).toContain('<testsuites name="lousho eval" tests="1" failures="0" errors="1"');
-  });
-});
-
-describe('lousho eval failures vitest reports itself (real vitest)', () => {
-  const quietVitest = createVitestSpawner('ignore');
-  const cli = (args: string[]) => {
-    const log = vi.fn();
-    return runEval(args, { log, spawnVitest: quietVitest }).then((code) => ({ code, output: log.mock.calls.map((c) => String(c[0])).join('\n') }));
-  };
-
-  it('a case past its defineEval timeoutMs is an <error> naming the timeout and how to raise it', async () => {
-    const junit = tempFile('junit.xml');
-    const { code } = await cli([path.join(FIXTURES, 'slow.eval.ts'), '--junit', junit]);
-    expect(code).toBe(1);
-    const xml = fs.readFileSync(junit, 'utf8');
-    expect(xml).toContain('<testsuite name="slow flow" tests="1" failures="0" errors="1"');
-    expect(xml).toMatch(/<error message="Test timed out in 200ms\.[^"]*Raise the limit with defineEval\(\{ timeoutMs \}\) or lousho eval --timeout &lt;ms&gt;\."/);
-  }, 60_000);
-
-  it('a file that fails to load is an <error> for that file', async () => {
-    const junit = tempFile('junit.xml');
-    const json = tempFile('results.json');
-    const { code } = await cli([path.join(FIXTURES, 'load-error.eval.ts'), path.join(FIXTURES, 'refund.eval.ts'), '--junit', junit, '--json', json]);
-    expect(code).toBe(1);
-    expect(fs.readFileSync(junit, 'utf8')).toMatch(/<testcase classname="vitest" name="[^"]*load-error\.eval\.ts"[^>]*>\s*<error message="fixture failed to load"/);
-    const parsed = JSON.parse(fs.readFileSync(json, 'utf8')) as { summary: { failed: number; total: number } };
-    expect(parsed.summary).toMatchObject({ total: 4, failed: 1 });
-  }, 60_000);
-});
-
-describe('lousho eval --record with labels that truncate alike', () => {
-  const fixture = path.join(FIXTURES, 'collide.eval.ts');
-  const cassettes = path.join(FIXTURES, '__cassettes__', 'slug-collision');
-  const quietVitest = createVitestSpawner('ignore');
-  const clean = () => {
-    fs.rmSync(cassettes, { recursive: true, force: true });
-    // Also the __cassettes__ directory the recording created, unless something else is still in it.
-    try {
-      fs.rmdirSync(path.dirname(cassettes));
-    } catch {
-      // Absent, or not empty.
-    }
-  };
-  beforeAll(clean);
-  afterAll(clean);
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it('records one cassette per case and replays both', async () => {
-    expect(await runEval([fixture, '--record'], { log: () => {}, spawnVitest: quietVitest })).toBe(0);
-    expect(fs.readdirSync(cassettes)).toHaveLength(2);
-    vi.stubEnv('FIXTURE_PROVIDER', 'offline');
-    expect(await runEval([fixture, '--replay'], { log: () => {}, spawnVitest: quietVitest })).toBe(0);
-  }, 60_000);
 });

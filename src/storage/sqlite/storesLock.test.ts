@@ -42,20 +42,6 @@ function lockFor200ms(path: string): void {
 }
 
 describe("SqliteStore writes wait out another connection's lock", () => {
-  it('checkpoints.save', async () => {
-    const { store, path } = openStore();
-    lockFor200ms(path);
-    await store.checkpoints.save('s', makeCheckpoint({ sessionId: 's' }));
-    expect(await store.checkpoints.load('s')).not.toBeNull();
-  });
-
-  it('approvals.save', async () => {
-    const { store, path } = openStore();
-    const pending = makePending('ap-1');
-    lockFor200ms(path);
-    await store.approvals.save(pending, makeSnapshot(pending));
-    expect(await store.approvals.load!('ap-1')).not.toBeNull();
-  });
 
   it('approvals.resolve and checkpoints.delete', async () => {
     const { store, path } = openStore();

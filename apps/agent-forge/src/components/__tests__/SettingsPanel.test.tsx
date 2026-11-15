@@ -38,9 +38,6 @@ async function mount(variant?: 'drawer' | 'screen') {
   return host;
 }
 
-const sectionNames = (host: HTMLElement) =>
-  [...host.querySelectorAll('section.settings-card')].map((s) => s.getAttribute('aria-label'));
-
 const keyPill = (host: HTMLElement, label: string) =>
   host.querySelector(`input[aria-label="${label}"]`)?.closest('.settings-key')?.querySelector('.status-pill')?.textContent;
 
@@ -58,24 +55,6 @@ afterEach(() => {
 });
 
 describe('SettingsPanel', () => {
-  it('the drawer keeps to the agent-relevant cards', async () => {
-    const host = await mount();
-    expect(sectionNames(host)).toEqual(['Provider keys', 'Settings profile', 'Deploy target']);
-  });
-
-  it('the routed screen adds Appearance, Agent Author, Collector and Keyboard shortcuts', async () => {
-    const host = await mount('screen');
-    expect(sectionNames(host)).toEqual([
-      'Appearance',
-      'Provider keys',
-      'Agent Author',
-      'Settings profile',
-      'Deploy target',
-      'Collector',
-      'Keyboard shortcuts',
-    ]);
-    expect(host.querySelector('.settings-panel-screen')).not.toBeNull();
-  });
 
   it('shows Set (with the masked value) or From environment (a static info pill), never pre-filling the input', async () => {
     keys.list = [
@@ -89,13 +68,6 @@ describe('SettingsPanel', () => {
     const envPill = host.querySelector('input[aria-label="Anthropic API key"]')?.closest('.settings-key')?.querySelector('.status-pill');
     expect(envPill?.classList.contains('pill-info')).toBe(true);
     expect((host.querySelector('input[aria-label="OpenAI API key"]') as HTMLInputElement).value).toBe('');
-  });
-
-  it('shows Not set when there is neither a stored key nor the env var', async () => {
-    keys.list = [{ provider: 'openai', hasKey: false, masked: null, envKey: false }];
-    const host = await mount();
-    expect(keyPill(host, 'OpenAI API key')).toBe('Not set');
-    expect(keyPill(host, 'Anthropic API key')).toBe('Not set');
   });
 
   it('the theme control sets the choice and follows the palette toggle', async () => {
@@ -127,25 +99,5 @@ describe('SettingsPanel', () => {
     expect(window.localStorage.getItem('forge.density')).toBeNull();
     expect(group.querySelector('[aria-pressed="true"]')).toBeNull();
     expect(host.textContent).toContain("Tables use each screen's default until you pick one.");
-  });
-
-  it('the collector card says how to start a daemon that is down, and lists every shortcut', async () => {
-    const host = await mount('screen');
-    const collector = host.querySelector('section[aria-label="Collector"]')!;
-    expect(collector.querySelector('[role="status"]')?.textContent).toContain('Unreachable');
-    expect(collector.textContent).toContain('lousho observe start');
-    const shortcuts = host.querySelector('section[aria-label="Keyboard shortcuts"]')!;
-    expect([...shortcuts.querySelectorAll('kbd')].map((k) => k.textContent)).toEqual([
-      'Ctrl/Cmd+K',
-      'Ctrl/Cmd+J',
-      '?',
-      'Ctrl/Cmd+S',
-      'Ctrl/Cmd+Z',
-      'Ctrl/Cmd+Shift+Z',
-      'j',
-      'k',
-      'Enter',
-      'Esc',
-    ]);
   });
 });

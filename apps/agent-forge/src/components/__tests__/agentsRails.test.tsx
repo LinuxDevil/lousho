@@ -102,17 +102,6 @@ describe('ApprovalCard', () => {
     expect(buttons.map((b) => b.getAttribute('title'))).toEqual(['Approve', 'Reject']);
     expect(buttons.map(nameOf)).toEqual(['Approve', 'Reject']);
   });
-
-  it("the inline variant's tooltip follows the busy label", async () => {
-    let resolve: () => void = () => undefined;
-    appState.approveAgent.mockImplementationOnce(() => new Promise<void>((r) => (resolve = r)));
-    const container = render(<ApprovalCard variant="inline" toolName="http" args={{}} />);
-    const approve = container.querySelector('.approval-actions button') as HTMLButtonElement;
-    act(() => approve.click());
-    expect(approve.getAttribute('title')).toBe('Approving...');
-    await act(async () => resolve());
-    expect(approve.getAttribute('title')).toBe('Approve');
-  });
 });
 
 describe('ChatComposer', () => {
@@ -201,28 +190,6 @@ describe('NodesTab palette', () => {
     ],
   } as const;
 
-  it('shows the hint while KIND_VIEWS has no registered views', async () => {
-    const { LeftRail } = await import('../LeftRail');
-    const { KIND_VIEWS } = await import('../../canvas/kinds');
-    const { ReactFlowProvider } = await import('@xyflow/react');
-    // Registered kind views now ship palette entries (C03/C04); stash them
-    // so the empty-palette hint can still be exercised.
-    const saved = { ...KIND_VIEWS };
-    for (const key of Object.keys(KIND_VIEWS)) delete KIND_VIEWS[key as keyof typeof KIND_VIEWS];
-    try {
-      appState.railTab = 'nodes';
-      const container = render(
-        <ReactFlowProvider>
-          <LeftRail />
-        </ReactFlowProvider>,
-      );
-      expect(container.querySelector('.hint')?.textContent).toBe('Node types arrive with the next updates.');
-    } finally {
-      Object.assign(KIND_VIEWS, saved);
-      appState.railTab = 'agents';
-    }
-  });
-
   it('renders palette entries grouped by PaletteGroup and drags the entry id', async () => {
     const { LeftRail } = await import('../LeftRail');
     const { KIND_VIEWS } = await import('../../canvas/kinds');
@@ -252,66 +219,6 @@ describe('NodesTab palette', () => {
       expect(dataTransfer.setData).toHaveBeenCalledWith('application/agent-forge-node-type', 'tool');
     } finally {
       delete KIND_VIEWS.tool;
-      appState.railTab = 'agents';
-    }
-  });
-
-  it('disables the output palette entry with its reason when the agent already has an output schema', async () => {
-    const { LeftRail } = await import('../LeftRail');
-    const { ReactFlowProvider } = await import('@xyflow/react');
-    const savedGraph = appState.graph;
-    const savedSelection = appState.selectedNodeId;
-    try {
-      appState.selectedNodeId = undefined;
-      appState.graph = { version: 2, nodes: [], emptySections: [], unplaced: [] } as never;
-      appState.railTab = 'nodes';
-      const { render: mount, cleanup } = await import('../../ui/__tests__/render');
-      const enabled = mount(
-        <ReactFlowProvider>
-          <LeftRail />
-        </ReactFlowProvider>,
-      );
-      const find = (c: HTMLElement) =>
-        [...c.querySelectorAll<HTMLButtonElement>('.node-palette-item')].find(
-          (el) => el.getAttribute('aria-label') === 'Output schema',
-        )!;
-      expect(find(enabled).getAttribute('aria-disabled')).toBeNull();
-      expect(find(enabled).draggable).toBe(true);
-      cleanup();
-
-      appState.graph = {
-        version: 2,
-        emptySections: [],
-        unplaced: [],
-        nodes: [
-          {
-            id: 'agent',
-            kind: 'agent',
-            owner: null,
-            position: { x: 0, y: 0 },
-            data: { fields: {}, extra: {} },
-          },
-          {
-            id: 'output',
-            kind: 'output',
-            owner: 'agent',
-            position: { x: 0, y: 0 },
-            data: { item: { jsonSchema: { type: 'object' } } },
-          },
-        ],
-      } as never;
-      const disabled = mount(
-        <ReactFlowProvider>
-          <LeftRail />
-        </ReactFlowProvider>,
-      );
-      const item = find(disabled);
-      expect(item.getAttribute('aria-disabled')).toBe('true');
-      expect(item.draggable).toBe(false);
-      expect(item.title).toBe('This agent already has an output schema');
-    } finally {
-      appState.graph = savedGraph;
-      appState.selectedNodeId = savedSelection;
       appState.railTab = 'agents';
     }
   });

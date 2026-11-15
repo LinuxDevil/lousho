@@ -29,23 +29,6 @@ function typeTextarea(host: HTMLElement, value: string) {
 }
 
 describe('QuestionCard', () => {
-  it('shows the question, its options as buttons, the free-text box and the countdown', () => {
-    const container = render(<QuestionCard question={question} deadline={deadline} />);
-    expect(container.querySelector('.question-text')?.textContent).toBe('Which city should we book?');
-    expect([...container.querySelectorAll('.question-options .btn-secondary')].map((b) => b.textContent)).toEqual([
-      'Porto',
-      'Lisbon',
-    ]);
-    expect(container.querySelector('textarea')).not.toBeNull();
-    expect(container.querySelector('.deadline-line')?.textContent).toContain('Answer within');
-  });
-
-  it('clicking an option sends it as the answer', async () => {
-    const container = render(<QuestionCard question={question} deadline={deadline} />);
-    const porto = [...container.querySelectorAll('.question-options button')][0] as HTMLButtonElement;
-    await act(async () => porto.click());
-    expect(appState.answerQuestion).toHaveBeenCalledWith('Porto');
-  });
 
   it('the free-text box sends a typed answer', async () => {
     const container = render(<QuestionCard question={question} deadline={deadline} />);

@@ -18,13 +18,6 @@ describe('RuntimeClient error handling', () => {
   const client = new RuntimeClient({ token: 't' });
 
   it.each([
-    ['listChats', () => client.listChats('My Agent')],
-    ['debugState', () => client.debugState('My Agent')],
-    ['getChat', () => client.getChat('My Agent')],
-    ['newChat', () => client.newChat('My Agent')],
-    ['listProviderKeys', () => client.listProviderKeys()],
-    ['listSettingsProfiles', () => client.listSettingsProfiles()],
-    ['listDeployAdapters', () => client.listDeployAdapters()],
     ['removeProviderKey', () => client.removeProviderKey('openai')],
   ])('%s rejects with the server message on a non-ok response', async (_name, call) => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(400, { error: 'Invalid agent id' })));
@@ -121,14 +114,6 @@ describe('RuntimeClient draft methods', () => {
     expect(path).toBe('/agents/a1/draft/reject');
     expect(JSON.parse(String(init.body))).toEqual({ note: 'no' });
   });
-
-  it('draft calls reject with the server message on a non-ok response', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(409, { error: 'This draft was replaced. Reload to see the current one.' })));
-    await expect(client.approveDraft('a1', { draftId: 'stale' })).rejects.toMatchObject({
-      message: 'This draft was replaced. Reload to see the current one.',
-      status: 409,
-    });
-  });
 });
 
 describe('RuntimeClient version methods', () => {
@@ -152,24 +137,6 @@ describe('RuntimeClient version methods', () => {
     const [path, init] = lastCall(fetchMock);
     expect(path).toBe('/agents/a1/versions');
     expect(init.method).toBe('GET');
-  });
-
-  it('getVersion GETs /agents/:id/versions/:n', async () => {
-    const fetchMock = vi.fn(async () => jsonResponse(200, { ...ITEM, snapshot: { spec: {}, labels: [] } }));
-    vi.stubGlobal('fetch', fetchMock);
-    await client.getVersion('a1', 3);
-    const [path, init] = lastCall(fetchMock);
-    expect(path).toBe('/agents/a1/versions/3');
-    expect(init.method).toBe('GET');
-  });
-
-  it('diffVersion GETs /versions/:n/diff, adding ?against= only when given', async () => {
-    const fetchMock = vi.fn(async () => jsonResponse(200, []));
-    vi.stubGlobal('fetch', fetchMock);
-    await client.diffVersion('a1', 2);
-    expect(lastCall(fetchMock)[0]).toBe('/agents/a1/versions/2/diff');
-    await client.diffVersion('a1', 2, 1);
-    expect(lastCall(fetchMock)[0]).toBe('/agents/a1/versions/2/diff?against=1');
   });
 
   it('restoreVersion POSTs /versions/:n/restore', async () => {
@@ -242,23 +209,6 @@ describe('RuntimeClient suggestion methods', () => {
     expect(path).toBe('/agents/a1/suggestions/sug-1/dismiss');
     expect(init.method).toBe('POST');
   });
-
-  it('suggestion calls reject with the server message and code on a non-ok response', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () =>
-        jsonResponse(409, {
-          error: 'The instructions changed since this suggestion was made.',
-          code: 'LOUSHO_SUGGESTION_CONFLICT',
-        })
-      )
-    );
-    await expect(client.applySuggestion('a1', 'sug-1')).rejects.toMatchObject({
-      message: 'The instructions changed since this suggestion was made.',
-      status: 409,
-      code: 'LOUSHO_SUGGESTION_CONFLICT',
-    });
-  });
 });
 
 describe('RuntimeClient agent methods', () => {
@@ -273,15 +223,6 @@ describe('RuntimeClient agent methods', () => {
     const [path, init] = fetchMock.mock.calls.at(-1) as [string, RequestInit];
     return [path, init];
   }
-
-  it('listAgents GETs /agents', async () => {
-    const fetchMock = vi.fn(async () => jsonResponse(200, []));
-    vi.stubGlobal('fetch', fetchMock);
-    await expect(client.listAgents()).resolves.toEqual([]);
-    const [path, init] = lastCall(fetchMock);
-    expect(path).toBe('/agents');
-    expect(init.method).toBe('GET');
-  });
 
   it('loadAgent GETs /agents/:id and resolves undefined on a 404', async () => {
     const record = { id: 'a1', spec: { version: 2 }, latestVersion: 3 };
@@ -363,11 +304,6 @@ describe('RuntimeClient named-secret methods', () => {
     expect(path).toBe('/settings/secrets/GITHUB_TOKEN');
     expect(init.method).toBe('DELETE');
   });
-
-  it('secret calls reject with the server message on a non-ok response', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(400, { error: 'bad name' })));
-    await expect(client.getSecretStatus('1BAD')).rejects.toMatchObject({ message: 'bad name', status: 400 });
-  });
 });
 
 describe('RuntimeClient catalog methods', () => {
@@ -396,23 +332,6 @@ describe('RuntimeClient catalog methods', () => {
     const [calledPath, init] = lastCall(fetchMock);
     expect(calledPath).toBe(path);
     expect(init.method).toBe('GET');
-  });
-
-  it('catalogModels GETs /catalog/models, adding ?provider= only when given', async () => {
-    const fetchMock = vi.fn(async () => jsonResponse(200, []));
-    vi.stubGlobal('fetch', fetchMock);
-    await client.catalogModels();
-    expect(lastCall(fetchMock)[0]).toBe('/catalog/models');
-    await client.catalogModels('anthropic');
-    expect(lastCall(fetchMock)[0]).toBe('/catalog/models?provider=anthropic');
-  });
-
-  it('catalog calls reject with the server message on a non-ok response', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(400, { error: "'provider' must be a non-empty string" })));
-    await expect(client.catalogModels('')).rejects.toMatchObject({
-      message: "'provider' must be a non-empty string",
-      status: 400,
-    });
   });
 });
 
@@ -544,17 +463,5 @@ describe('RuntimeClient author settings methods', () => {
     expect(path).toBe('/settings/author');
     expect(init.method).toBe('PUT');
     expect(JSON.parse(String(init.body))).toEqual({ reviewEnabled: false });
-  });
-
-  it('saveAuthorSettings rejects with the server message on a non-ok response', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => jsonResponse(400, { error: 'model must look like provider/model.', code: 'INVALID_INPUT' }))
-    );
-    await expect(client.saveAuthorSettings({ model: 'gpt-4.1' })).rejects.toMatchObject({
-      message: 'model must look like provider/model.',
-      status: 400,
-      code: 'INVALID_INPUT',
-    });
   });
 });

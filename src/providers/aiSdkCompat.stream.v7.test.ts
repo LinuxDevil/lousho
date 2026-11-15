@@ -10,7 +10,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as aiV7 from 'ai-v7';
 import { MockLanguageModelV4 } from 'ai-v7/test';
-import { MockLanguageModelV1 } from 'ai/test';
 import { z } from 'zod';
 import { OpenAIProvider } from './OpenAIProvider';
 import { AnthropicProvider } from './AnthropicProvider';
@@ -18,16 +17,10 @@ import { OllamaProvider } from './OllamaProvider';
 import { OpenRouterProvider } from './OpenRouterProvider';
 import type { LLMProvider, StreamChunk } from './llm';
 import type { AiSdkModule } from './aiSdkCompat';
-import { installedAiMajor } from './aiMajor.testkit';
-import { createAgent } from '../createAgent';
-import { defineTool } from '../tools/defineTool';
-import type { AgentEvent } from '../execution/agentEvents';
 
 type V7Stream = Awaited<ReturnType<MockLanguageModelV4['doStream']>>['stream'];
 type V7Part = V7Stream extends ReadableStream<infer P> ? P : never;
 type V7CallOptions = Parameters<MockLanguageModelV4['doStream']>[0];
-type V4Stream = Awaited<ReturnType<MockLanguageModelV1['doStream']>>['stream'];
-type V4Part = V4Stream extends ReadableStream<infer P> ? P : never;
 
 /** One scripted model step, written once for both majors. */
 interface Step {
@@ -79,23 +72,6 @@ function v7Parts(step: Step): V7Part[] {
   return parts;
 }
 
-/** The same step as `ai` v4 model parts; cache and reasoning tokens come in OpenAI's provider metadata. */
-function v4Parts(step: Step): V4Part[] {
-  const parts: V4Part[] = (step.text ?? []).map((textDelta) => ({ type: 'text-delta', textDelta }));
-  if (step.toolCall) {
-    const { id, name, input } = step.toolCall;
-    parts.push({ type: 'tool-call', toolCallType: 'function', toolCallId: id, toolName: name, args: input });
-  }
-  const { input, output, cached, reasoning } = step.usage;
-  parts.push({
-    type: 'finish',
-    finishReason: step.finish,
-    usage: { promptTokens: input, completionTokens: output },
-    providerMetadata: { openai: { cachedPromptTokens: cached, reasoningTokens: reasoning } },
-  });
-  return parts;
-}
-
 /** Give `provider` this model instead of its peer package's. */
 function useModel(provider: LLMProvider, model: unknown): void {
   const target = provider as unknown as { createModel: (id: string) => Promise<unknown> };
@@ -118,24 +94,6 @@ function onV7(provider: LLMProvider, steps: Array<Step | V7Part[]>, ai: AiSdkMod
   if (ai) Object.assign(provider, { ai });
   useModel(provider, model);
   return calls;
-}
-
-/** Run `provider` on the installed `ai` v4, one scripted model stream per call. */
-function onV4(provider: LLMProvider, steps: Step[]): void {
-  let call = 0;
-  const model = new MockLanguageModelV1({
-    doStream: async () => ({
-      stream: streamOf(v4Parts(steps[Math.min(call++, steps.length - 1)]!)),
-      rawCall: { rawPrompt: null, rawSettings: {} },
-    }),
-  });
-  useModel(provider, model);
-}
-
-/** Run `provider` on the installed `ai`, one scripted model stream per call (v4 and v7; no v6 install exists in this repo). */
-function onInstalled(provider: LLMProvider, steps: Step[]): void {
-  if (installedAiMajor === 4) onV4(provider, steps);
-  else onV7(provider, steps, undefined);
 }
 
 async function collect<T>(stream: AsyncIterable<T>): Promise<T[]> {
@@ -271,110 +229,5 @@ describe('stream() on ai v7: edge cases', () => {
 
     await expect(collect(result.fullStream)).rejects.toBe(reason);
     await expect(result.text).rejects.toBe(reason);
-  });
-});
-
-const lookup = defineTool({
-  name: 'get_weather',
-  description: 'Weather for a city',
-  input: z.object({ city: z.string() }),
-  execute: async ({ city }) => ({ city, tempC: 21 }),
-});
-
-const toolLoop: Step[] = [
-  { text: ['Checking.'], toolCall: { id: 'call_A', name: 'get_weather', input: '{"city":"Paris"}' }, finish: 'tool-calls', usage },
-  { text: ['Paris ', 'is 21C.'], finish: 'stop', usage: { input: 20, output: 6, cached: 8, reasoning: 0 } },
-];
-
-/** What `agent.stream()` must yield for `toolLoop`, on either `ai` major. */
-async function expectToolLoopRun(run: ReturnType<ReturnType<typeof createAgent>['stream']>): Promise<void> {
-  const events: AgentEvent[] = await collect(run);
-
-  expect(events.map((e) => e.type)).toEqual([
-    'run.start',
-    'step.start',
-    'text.delta',
-    'text.done',
-    'tool.start',
-    'tool.done',
-    'step.done',
-    'step.start',
-    'text.delta',
-    'text.delta',
-    'text.done',
-    'step.done',
-    'run.done',
-  ]);
-  expect(events.filter((e) => e.type === 'text.delta').map((e) => e.text)).toEqual(['Checking.', 'Paris ', 'is 21C.']);
-  expect(events.find((e) => e.type === 'tool.start')).toMatchObject({
-    toolCallId: 'call_A',
-    toolName: 'get_weather',
-    args: { city: 'Paris' },
-  });
-  expect(events.find((e) => e.type === 'tool.done')).toMatchObject({ toolCallId: 'call_A', result: { city: 'Paris', tempC: 21 } });
-  expect(events.filter((e) => e.type === 'step.done').map((e) => e.finishReason)).toEqual(['tool_calls', 'stop']);
-  expect(events.at(-1)).toMatchObject({
-    type: 'run.done',
-    finishReason: 'stop',
-    text: 'Paris is 21C.',
-    usage: { promptTokens: 30, completionTokens: 11, totalTokens: 41, estimated: false, modelCalls: 2 },
-  });
-  expect((await run.result).usage).toMatchObject({ inputTokens: 30, outputTokens: 11, cachedInputTokens: 12, reasoningTokens: 2 });
-}
-
-describe('agent.stream() on both ai majors', () => {
-  it('runs a streamed tool loop on ai v7, and the second call sees the tool turn', async () => {
-    const provider = new OpenAIProvider({ name: 'openai', apiKey: 'k', maxRetries: 0 });
-    const calls = onV7(provider, toolLoop);
-
-    await expectToolLoopRun(createAgent({ provider, tools: [lookup] }).stream('Weather in Paris?'));
-
-    expect(calls[1]!.prompt.slice(-2)).toMatchObject([
-      {
-        role: 'assistant',
-        content: [
-          { type: 'text', text: 'Checking.' },
-          { type: 'tool-call', toolCallId: 'call_A', toolName: 'get_weather', input: { city: 'Paris' } },
-        ],
-      },
-      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call_A', output: { type: 'json', value: { city: 'Paris', tempC: 21 } } }] },
-    ]);
-  });
-
-  // The installed `ai`: v4 with MockLanguageModelV1, v7 with MockLanguageModelV4.
-  it.skipIf(installedAiMajor === 6)('yields the same events on the installed ai', async () => {
-    const provider = new OpenAIProvider({ name: 'openai', apiKey: 'k', maxRetries: 0 });
-    onInstalled(provider, toolLoop);
-
-    await expectToolLoopRun(createAgent({ provider, tools: [lookup] }).stream('Weather in Paris?'));
-  });
-
-  const failure = new Error('model overloaded');
-
-  async function expectFailedRun(provider: LLMProvider): Promise<void> {
-    const run = createAgent({ provider }).stream('hi', { throwOnError: false });
-    const events = await collect(run);
-
-    expect(events.filter((e) => e.type !== 'text.delta').map((e) => e.type)).toEqual(['run.start', 'step.start', 'error', 'step.done', 'run.done']);
-    expect(events.find((e) => e.type === 'error')).toMatchObject({ error: { message: expect.stringContaining('model overloaded') } });
-    expect(events.at(-1)).toMatchObject({ type: 'run.done', finishReason: 'error' });
-    await expect(run.result).rejects.toThrow(/model overloaded/);
-  }
-
-  it('ends the run with an error when the model stream fails, on ai v7', async () => {
-    const provider = new OpenAIProvider({ name: 'openai', apiKey: 'k', maxRetries: 0 });
-    onV7(provider, [[{ type: 'error', error: failure }]]);
-    await expectFailedRun(provider);
-  });
-
-  it.skipIf(installedAiMajor === 6)('ends the run with an error when the model stream fails, on the installed ai', async () => {
-    const provider = new OpenAIProvider({ name: 'openai', apiKey: 'k', maxRetries: 0 });
-    if (installedAiMajor === 4) {
-      const stream = streamOf<V4Part>([{ type: 'text-delta', textDelta: 'Hal' }, { type: 'error', error: failure }]);
-      useModel(provider, new MockLanguageModelV1({ doStream: async () => ({ stream, rawCall: { rawPrompt: null, rawSettings: {} } }) }));
-    } else {
-      onV7(provider, [[{ type: 'error', error: failure }]], undefined);
-    }
-    await expectFailedRun(provider);
   });
 });

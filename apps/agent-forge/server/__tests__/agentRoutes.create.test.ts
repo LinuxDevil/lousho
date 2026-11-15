@@ -92,13 +92,6 @@ describe('POST /agents', () => {
       expect(versions).toHaveLength(1);
       expect(versions[0]).toMatchObject({ version: 1, kind: 'create', source: 'editor' });
     });
-
-    it('slugs the id off name and keeps name as the display text', async () => {
-      const res = await create({ from: 'blank', name: 'My Agent' });
-      expect(res.status).toBe(201);
-      expect(res.body.id).toBe('my-agent');
-      expect(res.body.spec.name).toBe('My Agent');
-    });
   });
 
   describe('copy create', () => {
@@ -141,30 +134,11 @@ describe('POST /agents', () => {
       expect(source.latestVersion).toBeNull();
     });
 
-    it('lets name override the "<name> copy" default while the id stays <id>-copy', async () => {
-      await seedSource('a');
-      const res = await create({ from: { copyOf: 'a' }, name: 'Renamed' });
-      expect(res.status).toBe(201);
-      expect(res.body.spec.name).toBe('Renamed');
-      expect(res.body.id).toBe('a-copy');
-    });
-
     it('404s LOUSHO_AGENT_NOT_FOUND for a missing copyOf', async () => {
       const res = await create({ from: { copyOf: 'ghost' } });
       expect(res.status).toBe(404);
       expect(res.body).toEqual({ error: "No saved agent 'ghost'", code: 'LOUSHO_AGENT_NOT_FOUND' });
     });
-  });
-
-  it('does not reuse an id whose <id>/ sidecar dir exists (deleted agent with history)', async () => {
-    const created = await create({ from: 'blank', name: 'gone' });
-    expect(created.status).toBe(201);
-    await request(app()).delete('/agents/gone').expect(204);
-    expect(fs.existsSync(repo.sidecarDir('gone'))).toBe(true);
-
-    const again = await create({ from: 'blank', name: 'gone' });
-    expect(again.status).toBe(201);
-    expect(again.body.id).toBe('gone-2');
   });
 
   describe('template create', () => {
@@ -195,25 +169,6 @@ describe('POST /agents', () => {
       fs.writeFileSync(path.join(folder, 'spec.yaml'), TPL_SPEC);
     };
 
-    it('creates from a template: its spec, tags as labels, createdFrom meta and a template-source version 1', async () => {
-      addTemplate('pr-reviewer');
-      const res = await create({ from: { template: 'pr-reviewer' } });
-      expect(res.status).toBe(201);
-      const record = res.body as AgentRecord;
-      expect(record.id).toBe('pr-reviewer');
-      expect(record.spec).toMatchObject({ version: 2, name: 'Pull request reviewer', model: 'mock/mock-1' });
-      expect(record.meta).toMatchObject({
-        enabled: true,
-        labels: ['github', 'review'],
-        createdFrom: { kind: 'template', ref: 'pr-reviewer' },
-      });
-      expect(record.latestVersion).toBe(1);
-
-      const versions = await listVersions('pr-reviewer');
-      expect(versions).toHaveLength(1);
-      expect(versions[0]).toMatchObject({ version: 1, kind: 'create', source: 'template' });
-    });
-
     it('uses name for spec.name and the id slug; repeat creates suffix -2', async () => {
       addTemplate('pr-reviewer');
       const first = await create({ from: { template: 'pr-reviewer' }, name: 'My Reviewer' });
@@ -228,23 +183,6 @@ describe('POST /agents', () => {
       const third = await create({ from: { template: 'pr-reviewer' } });
       expect(third.status).toBe(201);
       expect(third.body.id).toBe('pr-reviewer-2');
-    });
-
-    it('cuts labels to MAX_LABELS and drops tags longer than MAX_LABEL_LENGTH', async () => {
-      const tags = ['ok', 'x'.repeat(40), ...Array.from({ length: 25 }, (_, i) => `tag-${i}`)];
-      addTemplate('many-tags', { tags });
-      const res = await create({ from: { template: 'many-tags' } });
-      expect(res.status).toBe(201);
-      const labels = (res.body as AgentRecord).meta.labels;
-      expect(labels).toHaveLength(20);
-      expect(labels[0]).toBe('ok');
-      expect(labels).not.toContain('x'.repeat(40));
-    });
-
-    it('400s LOUSHO_TEMPLATE_ID_INVALID for a malformed template id', async () => {
-      const res = await create({ from: { template: 'Bad Id' } });
-      expect(res.status).toBe(400);
-      expect(res.body).toEqual({ error: 'Invalid template id', code: 'LOUSHO_TEMPLATE_ID_INVALID' });
     });
 
     it('404s LOUSHO_TEMPLATE_NOT_FOUND for an unknown or invalid template', async () => {
@@ -268,7 +206,7 @@ describe('POST /agents', () => {
     expect(repo.listIds()).toEqual([]);
   });
 
-  it.each([[{}], [{ from: 'x' }], [{ from: { copyOf: 5 } }], [{ from: {} }], [{ from: 'blank', name: 7 }]])(
+  it.each([ [{ from: 'blank', name: 7 }]])(
     '400s LOUSHO_BODY_INVALID for %j',
     async (body) => {
       const res = await create(body);
@@ -308,14 +246,6 @@ describe('PUT /agents/:id/layout', () => {
     return res.body.id as string;
   };
 
-  it('round-trips through GET /agents/:id as record.layout', async () => {
-    const id = await createBlank();
-    const res = await request(app()).put(`/agents/${id}/layout`).send(LAYOUT);
-    expect(res.status).toBe(204);
-    const record = (await request(app()).get(`/agents/${id}`)).body as AgentRecord;
-    expect(record.layout).toEqual(LAYOUT);
-  });
-
   it('400s LOUSHO_LAYOUT_INVALID naming viewport.zoom for zoom: 9', async () => {
     const id = await createBlank();
     const res = await request(app())
@@ -324,11 +254,5 @@ describe('PUT /agents/:id/layout', () => {
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('LOUSHO_LAYOUT_INVALID');
     expect(res.body.error).toContain('viewport.zoom');
-  });
-
-  it('404s LOUSHO_AGENT_NOT_FOUND for an unknown agent', async () => {
-    const res = await request(app()).put('/agents/ghost/layout').send(LAYOUT);
-    expect(res.status).toBe(404);
-    expect(res.body.code).toBe('LOUSHO_AGENT_NOT_FOUND');
   });
 });

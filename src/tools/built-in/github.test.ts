@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from 'node:crypto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Tool, ToolExecutionOptions } from 'ai';
 import { GitHubTools, createGitHubTools } from './github';
@@ -347,5 +348,84 @@ describe('GitHubTools github_update_issue real implementation', () => {
     fetchSpy.mockResolvedValue({ ok: false, statusText: 'Forbidden', text: async () => 'nope' });
 
     await expect(run({ issueNumber: 5, title: 'x' })).rejects.toThrow('Failed to update issue: Forbidden - nope');
+  });
+});
+
+describe('github_submit_review', () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+  const run = (input: unknown) =>
+    createGitHubTools({ token: 't', owner: 'o', repo: 'r' }).get('github_submit_review')!.tool.execute!(input as never, {} as ToolExecutionOptions);
+
+  beforeEach(() => {
+    fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('posts one review with the verdict and right-side inline comments', async () => {
+    fetchSpy.mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: 9, html_url: 'u', state: 'CHANGES_REQUESTED' }) });
+    const result = await run({
+      prNumber: 7,
+      event: 'REQUEST_CHANGES',
+      body: 'Summary',
+      comments: [
+        { path: 'a.ts', line: 12, body: '🔴 Correctness: x' },
+        { path: 'b.ts', line: 30, startLine: 28, body: '🟡 Tests: y' },
+      ],
+    });
+    const [url, init] = fetchSpy.mock.calls[0] as [string, { method: string; body: string }];
+    expect(url).toBe('https://api.github.com/repos/o/r/pulls/7/reviews');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual({
+      event: 'REQUEST_CHANGES',
+      body: 'Summary',
+      comments: [
+        { path: 'a.ts', line: 12, side: 'RIGHT', body: '🔴 Correctness: x' },
+        { path: 'b.ts', line: 30, side: 'RIGHT', start_line: 28, start_side: 'RIGHT', body: '🟡 Tests: y' },
+      ],
+    });
+    expect(JSON.parse(result as string)).toEqual({ id: 9, url: 'u', state: 'CHANGES_REQUESTED', comments: 2 });
+  });
+
+  it('explains the two common 422 rejections so the model can retry', async () => {
+    fetchSpy.mockResolvedValue({ ok: false, status: 422, statusText: 'Unprocessable', text: async () => 'Can not approve your own pull request' });
+    await expect(run({ prNumber: 1, event: 'APPROVE', body: 'ok' })).rejects.toThrow(/separate bot identity or use event COMMENT/);
+    fetchSpy.mockResolvedValue({ ok: false, status: 422, statusText: 'Unprocessable', text: async () => 'Pull request review thread line must be part of the diff' });
+    await expect(run({ prNumber: 1, event: 'COMMENT', body: 'x', comments: [{ path: 'a', line: 999, body: 'b' }] })).rejects.toThrow(/inside a diff hunk/);
+  });
+});
+
+describe('GitHub App authentication', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('looks up the installation once, exchanges an installation token and reuses it across calls', async () => {
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const pem = privateKey.export({ type: 'pkcs1', format: 'pem' }).toString();
+    const calls: string[] = [];
+    const fetchSpy = vi.fn(async (url: string, init?: { headers?: Record<string, string> }) => {
+      calls.push(`${url} ${init?.headers?.Authorization?.slice(0, 14) ?? ''}`);
+      if (url.endsWith('/installation')) return new Response(JSON.stringify({ id: 42 }), { status: 200 });
+      if (url.endsWith('/access_tokens')) return new Response(JSON.stringify({ token: 'ghs_install', expires_at: new Date(Date.now() + 3600_000).toISOString() }), { status: 201 });
+      return new Response(JSON.stringify({ number: 5, title: 't', body: '', state: 'open', html_url: 'u', head: { ref: 'f' }, base: { ref: 'main' } }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const github = createGitHubTools({ owner: 'o', repo: 'r', app: { appId: '123', privateKey: pem } });
+    const get = github.get('github_get_pull_request')!.tool.execute!;
+    await get({ prNumber: 5 }, {} as ToolExecutionOptions);
+    await get({ prNumber: 5 }, {} as ToolExecutionOptions);
+
+    expect(calls.filter((c) => c.includes('/installation '))).toHaveLength(1);
+    expect(calls.filter((c) => c.includes('/access_tokens'))).toHaveLength(1);
+    expect(calls.filter((c) => c.includes('/pulls/5')).every((c) => c.endsWith('Bearer ghs_ins'))).toBe(true);
+  });
+
+  it('refuses to build without a token or app credentials', () => {
+    expect(() => createGitHubTools({ owner: 'o', repo: 'r' })).toThrow(/pass a token or app credentials/);
   });
 });

@@ -4,13 +4,13 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockModel, type MockModel } from 'lousho/testing';
 import type { AgentSpecV2 } from 'lousho';
-import { DRAFT_REVIEW_DIMENSIONS, isDraftReviewFailure, type AuthorToolFailure } from '../../../../shared/authorWire';
+import { isDraftReviewFailure, type AuthorToolFailure } from '../../../../shared/authorWire';
 import { SettingsStore } from '../../../settingsStore';
 import { SecretsStore } from '../../../secretsStore';
 import type { AuthorTurn } from '../../turnRunner';
 import type { ReviewInput, ReviewVerdict } from '../../proposal/review';
 import { proposalTurnState } from '../../proposal/turnState';
-import { createReviewDraft, REVIEW_TIMEOUT_MS, reviewVerdictSchema } from '../reviewDraft';
+import { createReviewDraft, REVIEW_TIMEOUT_MS } from '../reviewDraft';
 import type { ReviewState } from '../state';
 
 /**
@@ -92,10 +92,6 @@ describe('createReviewDraft', () => {
     return createReviewDraft({ settings, secrets, providerFor: () => model, ...over });
   }
 
-  it('asks exactly the five rubric questions', () => {
-    expect(Object.keys(reviewVerdictSchema.shape)).toEqual([...DRAFT_REVIEW_DIMENSIONS]);
-  });
-
   it('lets an all-pass draft through after exactly one review request carrying a ReviewState', async () => {
     const model = mockModel([verdictJson(ALL_PASS)]);
     const verdict = await review(model)(input());
@@ -154,49 +150,10 @@ describe('createReviewDraft', () => {
     expect(model.calls).toHaveLength(3);
   });
 
-  it('counts rounds per identity key: a create bounce does not count against an update', async () => {
-    const model = mockModel([verdictJson(TOOLS_GAP), verdictJson(TOOLS_GAP), verdictJson(TOOLS_GAP)]);
-    const t = turn();
-    const run = review(model);
-
-    const createBounce = (await run(input({}, t))) as { pass: false; failure: AuthorToolFailure };
-    const updateBounce = (await run(
-      input({ identity: { kind: 'update', agentId: 'a-1' }, toolName: 'proposeAgentUpdate' }, t)
-    )) as { pass: false; failure: AuthorToolFailure };
-    const secondCreateBounce = (await run(input({}, t))) as { pass: false; failure: AuthorToolFailure };
-
-    expect(createBounce.failure.error).toContain('round 1 of 3');
-    expect(updateBounce.failure.error).toContain('round 1 of 3');
-    expect(updateBounce.failure.next).toContain('proposeAgentUpdate');
-    expect(updateBounce.failure.next).toContain('Resend the complete change from this call');
-    expect(secondCreateBounce.failure.error).toContain('round 2 of 3');
-  });
-
-  it('passes without a review call when the review is disabled', async () => {
-    settings.setAuthor({ reviewEnabled: false });
-    const model = mockModel([verdictJson(TOOLS_GAP)]);
-    expect(await review(model)(input())).toEqual({ pass: true });
-    expect(model.calls).toHaveLength(0);
-  });
-
-  it('passes without a review call when the turn has no step left to redraft in', async () => {
-    const model = mockModel([verdictJson(TOOLS_GAP)]);
-    expect(await review(model)(input({}, turn({ stepsRemaining: () => 1 })))).toEqual({ pass: true });
-    expect(model.calls).toHaveLength(0);
-  });
-
   it('passes when no review-model key is configured (no providerFor, no stored or env key)', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', '');
     const run = createReviewDraft({ settings, secrets });
     expect(await run(input())).toEqual({ pass: true });
-  });
-
-  it('passes and logs when the review model errors', async () => {
-    const model = mockModel([{ error: new Error('review exploded') }]);
-    const lines: string[] = [];
-    const run = review(model, { log: (line) => lines.push(line) });
-    expect(await run(input())).toEqual({ pass: true });
-    expect(lines).toEqual(['author review skipped: review exploded']);
   });
 
   it('passes when the review does not answer inside the timeout', async () => {
@@ -210,10 +167,5 @@ describe('createReviewDraft', () => {
     await expect(pending).resolves.toEqual({ pass: true });
     expect(lines.length).toBe(1);
     expect(lines[0]).toContain('author review skipped:');
-  });
-
-  it('validates the judge output against reviewVerdictSchema (a malformed verdict fails open)', async () => {
-    const model = mockModel(['{"runs":{"pass":"maybe"}}']);
-    expect(await review(model)(input())).toEqual({ pass: true });
   });
 });

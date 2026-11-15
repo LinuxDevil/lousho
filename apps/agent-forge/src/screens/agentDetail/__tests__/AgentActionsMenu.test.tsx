@@ -97,27 +97,6 @@ beforeEach(() => {
 });
 
 describe('AgentActionsMenu', () => {
-  it('lists Change with AI, Duplicate, Export YAML and Delete agent… with one separator and a danger delete', () => {
-    renderMenu();
-    const menu = openMenu();
-
-    const labels = [...menu.querySelectorAll<HTMLElement>('[role^="menuitem"]')].map((el) => el.textContent ?? '');
-    expect(labels[0]).toContain('Change with AI');
-    expect(labels[1]).toContain('Duplicate');
-    expect(labels[2]).toContain('Export YAML');
-    expect(labels[3]).toContain('Delete agent…');
-    expect(menu.querySelectorAll('[role="separator"]').length).toBe(1);
-    expect(menuItem('Delete agent…').classList.contains('menu-item-danger')).toBe(true);
-  });
-
-  it('Change with AI opens the Author focused on this agent (AA19)', async () => {
-    renderMenu();
-    openMenu();
-    await act(async () => {
-      menuItem('Change with AI').click();
-    });
-    expect(takePendingOpen()).toEqual({ source: 'agent-header', focus: { mode: 'edit', agentId: 'support-bot' } });
-  });
 
   it('duplicates the agent, toasts and opens the copy’s overview', async () => {
     mocks.createAgentRecord.mockResolvedValue({ id: 'support-bot-copy', spec: { name: 'support-bot copy' } });

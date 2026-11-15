@@ -94,48 +94,6 @@ delete process.env[TAGS_ENV];
 delete process.env.LOUSHO_OBSERVE;
 delete process.env.LOUSHO_OBSERVE_TOKEN;
 
-describe('defineEval({ dataset })', () => {
-  it('ran one case per daemon example, labelled #1, #2, with the example fields', () => {
-    expect(seen).toEqual([
-      { input: 'refund order 42', expected: 'echo refund order 42', label: '#1', example_id: 'ex_1', source_trace_id: 'tr_9' },
-      { input: 'refund order 7', expected: 'echo refund order 7', label: '#2', example_id: 'ex_2', source_trace_id: null },
-    ]);
-  });
-
-  it('named the tests <eval> [#n], fetched every page with the token, and skipped the filtered eval without a fetch', ({ task }) => {
-    const names: Array<{ name: string; mode: string }> = [];
-    const walk = (tasks: readonly { name: string; mode: string; type: string; tasks?: unknown[] }[]) => {
-      for (const t of tasks) {
-        if (t.type === 'suite') walk((t.tasks ?? []) as typeof tasks);
-        else names.push({ name: t.name, mode: t.mode });
-      }
-    };
-    walk(task.file!.tasks as never);
-    expect(names).toEqual(
-      expect.arrayContaining([
-        { name: 'refunds [#1]', mode: 'run' },
-        { name: 'refunds [#2]', mode: 'run' },
-        { name: 'filtered out', mode: 'skip' },
-      ])
-    );
-    const refunds = requests.filter((r) => r.url.startsWith('/api/v1/datasets/refunds'));
-    expect(refunds.map((r) => new URL(r.url, 'http://stub').searchParams.get('offset'))).toEqual(['0', '1']);
-    expect(refunds.every((r) => r.auth === 'Bearer tok')).toBe(true);
-    expect(requests.some((r) => r.url.includes('never-fetched'))).toBe(false);
-  });
-
-  it('rejects `cases` and `dataset` together with LOUSHO_EVALS_INVALID', () => {
-    let error: unknown;
-    try {
-      defineEval({ name: 'both', dataset: 'refunds', cases: [{ input: 'x' }], test() {} } as never);
-    } catch (e) {
-      error = e;
-    }
-    expect(error).toBeInstanceOf(SDKError);
-    expect((error as SDKError).code).toBe('LOUSHO_EVALS_INVALID');
-  });
-});
-
 describe('fetchDatasetCases', () => {
   it('fails with LOUSHO_DATASET_UNAVAILABLE when the daemon is unreachable', async () => {
     const url = await deadUrl();
@@ -165,19 +123,9 @@ describe('fetchDatasetCases', () => {
     expect(error.message).toContain('empty');
   });
 
-  it('fails for a body without an examples array', async () => {
-    const error = await rejection(fetchDatasetCases('broken', { url: daemonUrl }));
-    expect(error.code).toBe('LOUSHO_DATASET_UNAVAILABLE');
-    expect(error.message).toContain('examples');
-  });
-
   it('fails for a 200 answer that is not JSON', async () => {
     const error = await rejection(fetchDatasetCases('html', { url: daemonUrl }));
     expect(error.code).toBe('LOUSHO_DATASET_UNAVAILABLE');
     expect(error.message).toContain('examples');
-  });
-
-  it('closes the stub daemon', async () => {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 });

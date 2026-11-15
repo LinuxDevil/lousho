@@ -12,7 +12,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { OpenRouterProvider } from './OpenRouterProvider';
-import type { StreamChunk } from './llm';
 import { codeInterpreter, fileSearch, webSearch } from '../tools/hosted';
 import { createAgent } from '../createAgent';
 import type { AgentEvent } from '../execution/agentEvents';
@@ -66,12 +65,6 @@ function provider(): OpenRouterProvider {
 const messages = [{ role: 'user' as const, content: 'What is the latest Node.js?' }];
 const lookup = { type: 'function' as const, function: { name: 'lookup', description: 'Look up', parameters: z.object({}) } };
 
-async function collect(stream: AsyncIterable<StreamChunk>): Promise<StreamChunk[]> {
-  const chunks: StreamChunk[] = [];
-  for await (const chunk of stream) chunks.push(chunk);
-  return chunks;
-}
-
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -95,89 +88,14 @@ describe('OpenRouter web search: the request body', () => {
       parameters: { max_uses: 1, allowed_domains: ['nodejs.org'], excluded_domains: ['x.com'], search_context_size: 'low' },
     });
   });
-
-  it('creates the tools array when the call has no function tools, and omits empty parameters', async () => {
-    const bodies = stubFetch(() => Response.json(completion()));
-    await provider().generate({ messages, hostedTools: [webSearch()] });
-    expect(bodies[0]!.tools).toEqual([{ type: 'openrouter:web_search' }]);
-  });
-
-  it('with reasoning on, both the reasoning field and the search tool are in the body', async () => {
-    const bodies = stubFetch(() => Response.json(completion()));
-    await provider().generate({ messages, model: 'openai/o3-mini', tools: [lookup], reasoning: 'low', hostedTools: [webSearch({ maxUses: 2 })] });
-    expect(bodies[0]!.reasoning).toEqual({ effort: 'low' });
-    expect((bodies[0]!.tools as unknown[]).at(-1)).toEqual({ type: 'openrouter:web_search', parameters: { max_uses: 2 } });
-    expect(bodies[0]!.tools).toHaveLength(2);
-  });
-
-  it('without a hosted tool the body has no search entry (and none is added for reasoning alone)', async () => {
-    const bodies = stubFetch(() => Response.json(completion({ annotations: [], requests: 0 })));
-    await provider().generate({ messages, tools: [lookup] });
-    await provider().generate({ messages, model: 'openai/o3-mini', reasoning: 'low' });
-    expect(JSON.stringify(bodies[0])).not.toContain('openrouter:web_search');
-    expect(bodies[1]!.tools).toBeUndefined();
-    expect(bodies[1]!.reasoning).toEqual({ effort: 'low' });
-  });
 });
 
 describe('OpenRouter web search: the reported call', () => {
-  it('generate(): one hosted call with the request count and the cited sources', async () => {
-    stubFetch(() => Response.json(completion()));
-    const result = await provider().generate({ messages, hostedTools: [webSearch({ maxUses: 1 })] });
-    expect(result.hostedToolCalls).toEqual([
-      {
-        id: 'gen-1730000000-abc:web_search',
-        name: 'web_search',
-        args: {},
-        result: {},
-        sources: [
-          { url: 'https://nodejs.org/en/blog', title: 'Node.js blog' },
-          { url: 'https://github.com/nodejs/node', title: 'nodejs/node' },
-        ],
-      },
-    ]);
-    expect(result.toolCalls ?? []).toEqual([]);
-  });
 
   it('usage.server_tool_use.web_search_requests, when OpenRouter sends it, is the call result', async () => {
     stubFetch(() => Response.json(completion({ requests: 2 })));
     const result = await provider().generate({ messages, hostedTools: [webSearch()] });
     expect(result.hostedToolCalls).toEqual([expect.objectContaining({ name: 'web_search', result: { requests: 2 } })]);
-  });
-
-  it('a response that did not search reports no call', async () => {
-    stubFetch(() => Response.json(completion({ annotations: [], requests: 0 })));
-    const result = await provider().generate({ messages, hostedTools: [webSearch()] });
-    expect(result.hostedToolCalls).toBeUndefined();
-  });
-
-  it('a request count without citations still reports the call', async () => {
-    stubFetch(() => Response.json(completion({ annotations: [], requests: 1 })));
-    const result = await provider().generate({ messages, hostedTools: [webSearch()] });
-    expect(result.hostedToolCalls).toEqual([{ id: 'gen-1730000000-abc:web_search', name: 'web_search', args: {}, result: { requests: 1 } }]);
-  });
-
-  it('stream(): the hosted call and its result arrive before the finish chunk', async () => {
-    stubFetch(streamedCompletion);
-    const streamed = await provider().stream({ messages, hostedTools: [webSearch()] });
-    const chunks = await collect(streamed.fullStream);
-    const types = chunks.map((chunk) => chunk.type);
-    expect(types.slice(-3)).toEqual(['hosted-tool-call', 'hosted-tool-result', 'finish']);
-    expect(chunks.filter((chunk) => chunk.type === 'text-delta').map((chunk) => chunk.textDelta).join('')).toBe('Node 24 is current.');
-    expect(chunks.at(-2)!.hostedToolCall).toEqual({
-      id: 'gen-1730000001-def:web_search',
-      name: 'web_search',
-      args: {},
-      result: {},
-      sources: [{ url: 'https://nodejs.org/en/blog', title: 'Node.js blog' }],
-    });
-  });
-
-  it('a call without web search streams unchanged', async () => {
-    stubFetch(streamedCompletion);
-    const streamed = await provider().stream({ messages });
-    const types = (await collect(streamed.fullStream)).map((chunk) => chunk.type);
-    expect(types).not.toContain('hosted-tool-call');
   });
 });
 

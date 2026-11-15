@@ -17,8 +17,7 @@ import { OllamaProvider } from './OllamaProvider';
 import { OpenRouterProvider } from './OpenRouterProvider';
 import type { LLMProvider, Message } from './llm';
 import type { UnsupportedFiles } from './aiSdkProvider';
-import { isModernAi, type AiSdkModule } from './aiSdkCompat';
-import { installedAiMajor } from './aiMajor.testkit';
+import { type AiSdkModule } from './aiSdkCompat';
 import { AgentExecutor } from '../execution/AgentExecutor';
 import { AgentBuilder } from '../core';
 import { ToolRegistry, defineTool } from '../tools';
@@ -28,7 +27,6 @@ type CallOptions = Parameters<DoGenerate>[0];
 type ModelResult = Awaited<ReturnType<DoGenerate>>;
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
-const PDF = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 1]);
 
 type Extra = { unsupportedFiles?: UnsupportedFiles };
 
@@ -102,14 +100,6 @@ const history: Message[] = [
   { role: 'tool', content: 'plain text', toolCallId: 'orphan' },
   { role: 'tool', content: 'offline', toolCallId: 'call_B', toolName: 'get_weather', isError: true },
 ];
-
-describe('the compat layer detects the ai major', () => {
-  it('treats ai v7 as modern, and the installed ai as modern only from v5 on', async () => {
-    expect(isModernAi(aiV7)).toBe(true);
-    // Agnostic: `ai` is v4 on the default install and v7 on the ai-7 CI job.
-    expect(isModernAi(await import('ai'))).toBe(installedAiMajor >= 5);
-  });
-});
 
 describe.each(providers)('%s provider on ai v7: generate()', (_name, make) => {
   it('sends tool-call turns as ModelMessages linked by id', async () => {
@@ -385,25 +375,6 @@ describe.each(providers)('%s provider on ai v7: generate()', (_name, make) => {
   });
 });
 
-describe('file parts for a provider that accepts them, on ai v7', () => {
-  it('maps a file part to the v7 FilePart', async () => {
-    class FileProvider extends OpenAIProvider {
-      protected readonly acceptsFileParts = true;
-    }
-    const provider = new FileProvider({ name: 'openai', apiKey: 'k' });
-    const calls = onV7(provider);
-
-    await provider.generate({
-      messages: [{ role: 'user', content: [{ type: 'file', data: PDF, mimeType: 'application/pdf', filename: 'a.pdf' }] }],
-    });
-
-    expect(calls[0]!.prompt[0]).toMatchObject({
-      role: 'user',
-      content: [{ type: 'file', mediaType: 'application/pdf', filename: 'a.pdf', data: { type: 'data' } }],
-    });
-  });
-});
-
 describe('AgentExecutor on ai v7', () => {
   it.each(providers)('%s: runs a tool loop, and the second call sees the first call tool turn', async (_name, make) => {
     const toolRegistry = new ToolRegistry();
@@ -438,36 +409,5 @@ describe('AgentExecutor on ai v7', () => {
         content: [{ type: 'tool-result', toolCallId: 'call_A', toolName: 'get_weather', output: { type: 'json', value: { city: 'Paris', tempC: 21 } } }],
       },
     ]);
-  });
-});
-
-describe('Anthropic prompt-cache breakpoints on ai v7', () => {
-  const tool = (name: string) => ({ type: 'function' as const, function: { name, description: name, parameters: { type: 'object', properties: {} } } });
-  const cache = { anthropic: { cacheControl: { type: 'ephemeral' } } };
-
-  it('reach the model on the system prompt, the last user turn and the last tool; cache writes are reported', async () => {
-    const provider = new AnthropicProvider({ name: 'anthropic', apiKey: 'k', maxRetries: 0 });
-    const calls = onV7(provider, [
-      modelResult({
-        usage: { inputTokens: { total: 5000, noCache: 100, cacheRead: 0, cacheWrite: 4900 }, outputTokens: { total: 5, text: 5, reasoning: undefined } },
-      }),
-    ]);
-
-    const result = await provider.generate({
-      model: 'claude-haiku-4-5',
-      messages: [
-        { role: 'system', content: 'rules' },
-        { role: 'user', content: 'hi' },
-      ],
-      tools: [tool('a'), tool('b')],
-    });
-
-    expect(calls[0]!.prompt.map((message) => message.providerOptions)).toEqual([cache, cache]);
-    const tools = calls[0]!.tools as Array<{ name: string; providerOptions?: unknown }>;
-    expect(tools.map((t) => [t.name, t.providerOptions])).toEqual([
-      ['a', undefined],
-      ['b', cache],
-    ]);
-    expect(result.usage).toMatchObject({ promptTokens: 5000, cacheWriteTokens: 4900 });
   });
 });

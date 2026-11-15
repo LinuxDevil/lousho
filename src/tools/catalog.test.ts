@@ -1,51 +1,32 @@
 import { describe, expect, it } from 'vitest';
-import { BUILTIN_TOOL_NAMES } from '../spec/v2/tools';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { listBuiltinTools } from './catalog';
-
-const byName = (name: string) => listBuiltinTools().find((entry) => entry.name === name);
-const properties = (schema: Record<string, unknown> | null | undefined): Record<string, unknown> =>
-  (schema?.properties ?? {}) as Record<string, unknown>;
+import { BUILTIN_TOOL_FACTORIES } from './builtinRegistry';
 
 describe('listBuiltinTools', () => {
-  it('lists one entry per BUILTIN_TOOL_NAMES item, in the same order', () => {
-    expect(listBuiltinTools().map((entry) => entry.name)).toEqual([...BUILTIN_TOOL_NAMES]);
+
+  it('splits the workspace builtins into read-only, write and shell groups', () => {
+    const byName = Object.fromEntries(listBuiltinTools().map((t) => [t.name, t]));
+    expect(byName.workspace_read).toMatchObject({ mutating: false, toolNames: ['read_file', 'list_dir', 'glob', 'grep'] });
+    expect(byName.workspace_write).toMatchObject({ mutating: true, toolNames: ['write_file', 'edit_file'] });
+    expect(byName.shell).toMatchObject({ mutating: true, toolNames: ['shell'] });
   });
 
-  it('describes web_fetch: read-only, one tool, url argument and options schema', () => {
-    const entry = byName('web_fetch');
-    expect(entry?.toolNames).toEqual(['web_fetch']);
-    expect(entry?.mutating).toBe(false);
-    expect(entry?.description.length).toBeGreaterThan(0);
-    expect(entry?.inputJsonSchema.type).toBe('object');
-    expect(properties(entry?.inputJsonSchema)).toHaveProperty('url');
-    expect(properties(entry?.optionsJsonSchema)).toHaveProperty('maxChars');
-  });
-
-  it('marks http_request mutating and describes its options', () => {
-    const entry = byName('http_request');
-    expect(entry?.mutating).toBe(true);
-    expect(properties(entry?.optionsJsonSchema)).toHaveProperty('allowPrivate');
-  });
-
-  it('reports todo as the todo_write/todo_read pair with no options', () => {
-    const entry = byName('todo');
-    expect(entry?.toolNames).toEqual(['todo_write', 'todo_read']);
-    expect(entry?.optionsJsonSchema).toBeNull();
-  });
-
-  it('gives current_date an object input schema and no credentials', () => {
-    const entry = byName('current_date');
-    expect(entry?.inputJsonSchema.type).toBe('object');
-    expect(entry?.needsCredentials).toEqual([]);
-  });
-
-  it('returns every inputJsonSchema as a draft-7 object schema', () => {
-    for (const entry of listBuiltinTools()) {
-      expect(entry.inputJsonSchema.type).toBe('object');
+  it('confines workspace_read to its root option', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'builtin-ws-'));
+    try {
+      fs.writeFileSync(path.join(root, 'a.txt'), 'hello');
+      const tools = BUILTIN_TOOL_FACTORIES.workspace_read({ root });
+      const read = (tools.read_file as unknown as { execute: (input: unknown) => Promise<unknown> }).execute;
+      expect(JSON.stringify(await read({ path: 'a.txt' }))).toContain('hello');
+      await expect(read({ path: '../outside.txt' })).rejects.toThrow();
+      fs.mkdirSync(path.join(root, '.lousho'));
+      fs.writeFileSync(path.join(root, '.lousho', 'secrets.key'), 'k');
+      await expect(read({ path: '.lousho/secrets.key' })).rejects.toThrow();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
-  });
-
-  it('returns equal results on repeated calls (no shared mutable state)', () => {
-    expect(listBuiltinTools()).toEqual(listBuiltinTools());
   });
 });

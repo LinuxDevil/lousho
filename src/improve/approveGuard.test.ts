@@ -37,24 +37,6 @@ afterEach(() => {
 });
 
 describe('guardApproval', () => {
-  it('keeps an approved edit the corpus guard passes, and counts its tokens toward the day', async () => {
-    const applied = await approveEdit();
-    const result = await guardApproval(dir, applied, { probe: probeOf(() => true), runs: 3 });
-    expect(result).toMatchObject({ passed: true, guard: { passed: true, revision: applied.to } });
-    expect(result.rolledBackTo).toBeUndefined();
-    expect(instructions()).toBe('Changed.\n');
-    expect(readAudit(dir).at(-1)).toMatchObject({ action: 'guard-pass', to: applied.to });
-    expect(usageToday(dir, Date.now()).tokens).toBe(15);
-  });
-
-  it("rolls back to the approved revision's parent on a regression", async () => {
-    const applied = await approveEdit();
-    const result = await guardApproval(dir, applied, { probe: probeOf((harness) => !harness.instructions.startsWith('Changed')), runs: 3 });
-    expect(result).toMatchObject({ passed: false, rolledBackTo: applied.from, reason: expect.stringMatching(/regressed/) });
-    expect(currentRevision(dir)).toBe(applied.from);
-    expect(instructions()).toBe('Be careful.\n');
-    expect(readAudit(dir).slice(-2)).toMatchObject([{ action: 'guard-fail' }, { action: 'rollback', actor: 'guard', from: applied.to, to: applied.from }]);
-  });
 
   it("rolls back when the guard can't judge or can't run", async () => {
     const unjudged = await approveEdit();

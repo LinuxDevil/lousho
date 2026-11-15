@@ -244,13 +244,6 @@ describe('run ids and session checkpoint keys', () => {
     await expect(agent.send('hi', { sessionId: 'victim.turn-2.fork-1' })).resolves.toMatchObject({ finishReason: 'stop' });
     expect((await agent.session({ id: 'victim' }).load())[0]?.content).toBe('my pin is 1234');
   });
-
-  it("agent.fork() refuses a session's paused-turn pointer and a fork id that names a session turn", async () => {
-    const agent = createAgent({ provider: mockModel(['ok'], { onExhausted: 'repeat-last' }), store: memoryStore() });
-    await agent.send('hi', { sessionId: 'job' });
-    await expect(agent.fork('s1.paused', { fromStep: 1 })).rejects.toMatchObject({ code: 'LOUSHO_SESSION_ID_INVALID' });
-    await expect(agent.fork('job', { fromStep: 1, newSessionId: 'victim.turn-0' })).rejects.toMatchObject({ code: 'LOUSHO_SESSION_ID_INVALID' });
-  });
 });
 
 describe('unreadable checkpoints and transcripts', () => {

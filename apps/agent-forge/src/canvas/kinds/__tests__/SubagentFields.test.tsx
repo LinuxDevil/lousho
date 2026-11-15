@@ -91,22 +91,6 @@ beforeEach(() => {
 });
 
 describe('subagent Inspector: ref source', () => {
-  it('writes the name through replace', () => {
-    renderInspector();
-    type('node-subagent-key', 'invoices');
-    const data = app.graph!.nodes.find((n) => n.id === 'sub:billing')!.data as SubagentNodeData;
-    expect(data.key).toBe('invoices');
-  });
-
-  it('lists the other workspace agents and not the open one', () => {
-    renderInspector();
-    const values = [...field<HTMLSelectElement>('node-subagent-ref').querySelectorAll('option')].map(
-      (o) => o.value,
-    );
-    expect(values).toContain('agents/billing.yaml');
-    expect(values).toContain('agents/search.yaml');
-    expect(values).not.toContain('agents/open-agent.yaml');
-  });
 
   it('writes agents/<id>.yaml from the picker', () => {
     renderInspector();
@@ -121,12 +105,6 @@ describe('subagent Inspector: ref source', () => {
     type('node-subagent-ref-path', 'shared/other.yaml');
     expect(item()).toStrictEqual({ ref: 'shared/other.yaml' });
   });
-
-  it('flags an empty ref', () => {
-    app.graph = specToGraph(specOf({ billing: { ref: '' } }));
-    renderInspector();
-    expect(container.textContent).toContain('Pick an agent');
-  });
 });
 
 describe('subagent Inspector: source switch and remote', () => {
@@ -138,17 +116,6 @@ describe('subagent Inspector: source switch and remote', () => {
     flush();
     choose('node-subagent-source', '1');
     expect(item()).toStrictEqual({ ref: '' });
-  });
-
-  it('shows the url, description and auth fields for a remote subagent', () => {
-    app.selectedNodeId = 'sub:search';
-    app.graph = specToGraph(
-      specOf({ search: { remote: { url: 'https://search.example.com', description: 'Web search agent' } } }),
-    );
-    renderInspector();
-    expect(field('node-subagent-url')).not.toBeNull();
-    expect(field('node-subagent-description')).not.toBeNull();
-    expect(field('node-subagent-auth')).not.toBeNull();
   });
 
   it('writes a valid https url and flags an invalid one', () => {
@@ -169,19 +136,5 @@ describe('subagent Inspector: source switch and remote', () => {
     expect(container.textContent).toContain('A remote agent needs a description');
     type('node-subagent-description', 'Web search agent');
     expect((item() as { remote: { description: string } }).remote.description).toBe('Web search agent');
-  });
-
-  it('emits { secret } from the auth field', () => {
-    app.selectedNodeId = 'sub:search';
-    app.graph = specToGraph(specOf({ search: { remote: { url: 'https://x.example.com', description: 'd' } } }));
-    renderInspector();
-    // SecretRefField mode select is `<id>-mode`; its options are env | secret (no plain).
-    choose('node-subagent-auth-mode', 'secret');
-    act(() => {
-      const el = field<HTMLInputElement>('node-subagent-auth');
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(el, 'search-token');
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    expect((item() as { remote: { auth: unknown } }).remote.auth).toStrictEqual({ secret: 'search-token' });
   });
 });

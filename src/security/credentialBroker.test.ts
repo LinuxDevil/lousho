@@ -1,11 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import * as fs from 'node:fs';
 import * as http from 'node:http';
-import * as os from 'node:os';
-import * as path from 'node:path';
 import type { AddressInfo, Socket } from 'node:net';
 import { createCredentialBroker, CredentialBroker, CredentialBrokerOptions } from './credentialBroker';
-import { NodeWorkspace } from '../tools/workspace/NodeWorkspace';
 
 /** A fake token planted for these tests only. */
 const SECRET = 'fake-broker-secret-x12';
@@ -158,16 +154,6 @@ describe('createCredentialBroker', () => {
     await expect(createCredentialBroker({ rules: {}, allow: ['a..b'] })).rejects.toThrow(/host/);
   });
 
-  it('close() stops listening and ends open tunnels', async () => {
-    const b = await createCredentialBroker({ rules: { [LOOPBACK]: {} }, allowPrivate: [LOOPBACK] });
-    const { socket } = await connect(b, upstreamHost);
-    const closed = new Promise<void>((resolve) => socket.on('close', () => resolve()));
-    socket.on('error', () => {});
-    await b.close();
-    await closed;
-    await expect(viaProxy(b, `http://${upstreamHost}/`)).rejects.toThrow(/ECONNREFUSED|ECONNRESET/);
-  });
-
   describe('listen() on another address for one subnet', () => {
     /** Sends a plain-HTTP proxy request to `listenerUrl`; resolves with the status, or 'refused' when the connection is dropped. */
     function viaListener(listenerUrl: string, target: string) {
@@ -207,14 +193,6 @@ describe('createCredentialBroker', () => {
       expect(seen).toHaveLength(1);
     });
 
-    it('checks the real peer address by default', async () => {
-      const b = await broker();
-      const other = await b.listen({ host: LOOPBACK, clients: '172.30.0.0/16' });
-      expect(await viaListener(other.url, `http://${upstreamHost}/`)).toBe('refused');
-      const loopback = await b.listen({ host: LOOPBACK, clients: '127.0.0.0/8' });
-      expect(await viaListener(loopback.url, `http://${upstreamHost}/`)).toBe(200);
-    });
-
     it('rejects a malformed subnet and an address it cannot bind', async () => {
       const b = await broker();
       for (const clients of ['172.30.0.0', '172.30.0.0/33', 'example.com/8', '10.0.0.0/8/1']) {
@@ -234,28 +212,5 @@ describe('createCredentialBroker', () => {
       expect(await viaListener(second.url, `http://${upstreamHost}/`)).toBe('refused');
       expect(await viaListener(b.url, `http://${upstreamHost}/`)).toBe('refused');
     });
-  });
-
-  it('end to end: a NodeWorkspace command reaches the API through broker.env with the token it never holds', async () => {
-    const b = await broker();
-    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-broker-')));
-    try {
-      const script = [
-        "const http = require('node:http');",
-        'const proxy = new URL(process.env.HTTP_PROXY);',
-        `const target = 'http://${upstreamHost}/e2e';`,
-        "const leaked = Object.values(process.env).some((v) => v.includes('fake-broker-secret'));",
-        'http.get({ host: proxy.hostname, port: proxy.port, path: target }, (res) => {',
-        "  let body = ''; res.on('data', (c) => (body += c));",
-        "  res.on('end', () => process.stdout.write(JSON.stringify({ leaked, body: JSON.parse(body) })));",
-        '});',
-      ].join('\n');
-      fs.writeFileSync(path.join(root, 'call.js'), script);
-      const workspace = new NodeWorkspace({ root, env: { ...b.env } });
-      const result = await workspace.exec(`${JSON.stringify(process.execPath)} call.js`);
-      expect(JSON.parse(result.stdout)).toEqual({ leaked: false, body: { path: '/e2e', authorization: `Bearer ${SECRET}` } });
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
   });
 });

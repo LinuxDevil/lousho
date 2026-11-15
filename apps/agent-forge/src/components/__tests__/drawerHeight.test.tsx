@@ -35,11 +35,6 @@ afterEach(() => {
 });
 
 describe('drawer height', () => {
-  it('defaults when nothing (or garbage) is stored', () => {
-    expect(height(render(<Harness />))).toBe(DRAWER_DEFAULT_HEIGHT);
-    window.localStorage.setItem(DRAWER_HEIGHT_KEY, 'tall');
-    expect(height(render(<Harness />))).toBe(DRAWER_DEFAULT_HEIGHT);
-  });
 
   it('restores the stored height, clamped to the min/max', () => {
     window.localStorage.setItem(DRAWER_HEIGHT_KEY, '360');

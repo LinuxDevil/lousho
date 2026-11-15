@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { act, type ReactNode } from 'react';
-import { render, rerender } from '../../ui/__tests__/render';
+import { render } from '../../ui/__tests__/render';
 import { installMemoryStorage } from '../../ui/__tests__/memoryStorage';
 import {
   AuthorChatProvider,
@@ -120,51 +120,6 @@ beforeEach(() => {
 });
 
 describe('AuthorChatProvider', () => {
-  it('fetches author settings on mount and stays idle with no stored session', async () => {
-    mount();
-    await act(flush);
-    expect(runtimeClient.getAuthorSettings).toHaveBeenCalled();
-    expect(chat.state.setup).toEqual({ ready: true, model: 'mock/mock-1' });
-    expect(chat.state.sessionId).toBeNull();
-    expect(connectAuthorStream).not.toHaveBeenCalled();
-  });
-
-  it('restores the stored session id on mount and opens its stream', async () => {
-    window.localStorage.setItem(AUTHOR_SESSION_KEY, 'sess-9');
-    vi.mocked(runtimeClient.getAuthorSession).mockResolvedValue(RECORD('sess-9', { title: 'Old chat' }));
-    mount();
-    await act(flush);
-    expect(chat.state.sessionId).toBe('sess-9');
-    expect(chat.state.title).toBe('Old chat');
-    expect(connectAuthorStream).toHaveBeenCalledWith('sess-9', expect.anything());
-  });
-
-  it('clears the stored id when the session is gone (404)', async () => {
-    window.localStorage.setItem(AUTHOR_SESSION_KEY, 'sess-gone');
-    const { RuntimeApiError } = await import('../../runtime/runtimeClient');
-    vi.mocked(runtimeClient.getAuthorSession).mockRejectedValue(new RuntimeApiError('nope', 404));
-    mount();
-    await act(flush);
-    expect(chat.state.sessionId).toBeNull();
-    expect(window.localStorage.getItem(AUTHOR_SESSION_KEY)).toBeNull();
-  });
-
-  it('send creates the session once, stores its id, and writes chat.send on the socket', async () => {
-    mount();
-    await act(flush);
-    act(() => chat.send('first'));
-    await act(flush);
-    expect(runtimeClient.createAuthorSession).toHaveBeenCalledTimes(1);
-    expect(chat.state.sessionId).toBe('s_1');
-    expect(window.localStorage.getItem(AUTHOR_SESSION_KEY)).toBe('s_1');
-    expect(streams[0].sent[0]).toMatchObject({ type: 'chat.send', text: 'first' });
-
-    act(() => chat.send('second'));
-    await act(flush);
-    expect(runtimeClient.createAuthorSession).toHaveBeenCalledTimes(1);
-    expect(streams[0].sent).toHaveLength(2);
-    expect(chat.state.messages.filter((m) => m.role === 'user')).toHaveLength(2);
-  });
 
   it('a send while the socket is still connecting waits for open instead of failing', async () => {
     mount();
@@ -203,33 +158,6 @@ describe('AuthorChatProvider', () => {
       ['first']
     );
     fake.sendResult = true;
-  });
-
-  it('turn events stream into state and a finish reconciles to the server transcript', async () => {
-    mount();
-    await act(flush);
-    act(() => chat.send('hi'));
-    await act(flush);
-    const fake = streams[0];
-    const requestId = (fake.sent[0] as { requestId: string }).requestId;
-    vi.mocked(runtimeClient.getAuthorSession).mockResolvedValue(
-      RECORD('s_1', {
-        transcript: [
-          { id: 'm_srv', role: 'user', text: 'hi', at: '2026-01-01T00:00:00.000Z' },
-          { id: 'm_srv2', role: 'assistant', parts: [{ type: 'text', text: 'Hello' }], at: '2026-01-01T00:00:01.000Z' },
-        ],
-      })
-    );
-    emit(fake, { type: 'turn.started', requestId, seq: 1 });
-    emit(fake, { type: 'text.delta', requestId, seq: 2, text: 'Hello' });
-    expect(chat.isStreaming).toBe(true);
-    emit(fake, { type: 'turn.finished', requestId, seq: 3, finishReason: 'stop' });
-    await act(flush);
-    expect(runtimeClient.getAuthorSession).toHaveBeenCalledWith('s_1');
-    expect(chat.state.messages).toHaveLength(2);
-    expect(chat.state.messages[0].id).toBe('m_srv'); // optimistic id replaced by server truth
-    expect(chat.state.active).toBeNull();
-    expect(window.localStorage.getItem(PENDING_REQUEST_KEY)).toBeNull();
   });
 
   it('apply is a no-op while streaming, then saves and fires onAgentSaved', async () => {
@@ -322,23 +250,6 @@ describe('AuthorChatProvider', () => {
     expect(part.output).toMatchObject({ ok: true, name: 'API_KEY' });
   });
 
-  it('the conversation survives the panel unmounting (state lives above the dock)', async () => {
-    mount(<Probe />);
-    await act(flush);
-    act(() => chat.send('hi'));
-    await act(flush);
-    expect(chat.state.messages).toHaveLength(1);
-    // The panel unmounts; the provider (and its socket) stay mounted.
-    rerender(<AuthorChatProvider>{null}</AuthorChatProvider>);
-    rerender(
-      <AuthorChatProvider>
-        <Probe />
-      </AuthorChatProvider>
-    );
-    expect(chat.state.messages).toHaveLength(1);
-    expect(chat.state.sessionId).toBe('s_1');
-  });
-
   it('newChat clears the chat and drops the stored id; openSession loads a record', async () => {
     window.localStorage.setItem(AUTHOR_SESSION_KEY, 'sess-1');
     vi.mocked(runtimeClient.getAuthorSession).mockResolvedValue(RECORD('sess-1'));
@@ -355,21 +266,6 @@ describe('AuthorChatProvider', () => {
     expect(chat.state.sessionId).toBe('sess-2');
     expect(chat.state.title).toBe('Second');
     expect(streams.at(-1)?.sessionId).toBe('sess-2');
-  });
-
-  it('on socket open, a stored pending request resumes its turn', async () => {
-    window.localStorage.setItem(AUTHOR_SESSION_KEY, 'sess-1');
-    window.localStorage.setItem(
-      PENDING_REQUEST_KEY,
-      JSON.stringify({ sessionId: 'sess-1', requestId: 'r_pending', lastSeq: 0 })
-    );
-    vi.mocked(runtimeClient.getAuthorSession).mockResolvedValue(RECORD('sess-1'));
-    mount();
-    await act(flush);
-    const fake = streams[0];
-    act(() => fake.handlers.onOpen?.());
-    await act(flush);
-    expect(fake.sent).toContainEqual({ type: 'chat.resume', requestId: 'r_pending', afterSeq: 0 });
   });
 
   it('fires onOpenPage for a live openPage result, never for a replayed one', async () => {

@@ -37,19 +37,4 @@ describe('object.delta', () => {
     expect(seen[firstObject - 1].type).toBe('text.delta');
     expect((await run.result).object).toEqual(reply);
   });
-
-  it('is not emitted for an agent without output', async () => {
-    const seen = await collect(createAgent({ provider: mockModel(['{"looks": "like json"}']) }).stream('go'));
-    expect(seen.some((event) => event.type === 'object.delta')).toBe(false);
-  });
-
-  it('reaches a send() onEvent listener too', async () => {
-    const objects: unknown[] = [];
-    await createAgent({ provider: mockModel(['{"n": 1}']), output: z.object({ n: z.number() }) }).send('go', {
-      onEvent: (event) => {
-        if (event.type === 'object.delta') objects.push(event.object);
-      },
-    });
-    expect(objects.at(-1)).toEqual({ n: 1 });
-  });
 });

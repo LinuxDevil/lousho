@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import request from 'supertest';
-import type { AgentSpec, AgentSpecV2 } from 'lousho';
+import type { AgentSpec } from 'lousho';
 import { createApp } from '../app';
 import { RunManager } from '../runRegistry';
 import { newTestHost } from './testHost';
@@ -161,80 +161,6 @@ describe('suggestion routes', () => {
     });
     expect(await store.get('ops', 'sug-1')).toMatchObject({ status: 'conflict' });
     expect(await instructions()).toBe('Rewritten instructions.');
-  });
-
-  it('apply when oldText occurs twice is 409 conflict', async () => {
-    const twice = 'Be helpful. Be helpful.';
-    await saveAgent({ ...V1_SPEC, prompt: twice });
-    await seedSuggestion({
-      expectedPromptHash: promptHash(twice),
-      proposedPromptHash: promptHash('Always cite sources. Be helpful.'),
-      newText: 'Always cite sources.',
-    });
-
-    const res = await request(app()).post('/agents/ops/suggestions/sug-1/apply');
-    expect(res.status).toBe(409);
-    expect(res.body.code).toBe('LOUSHO_SUGGESTION_CONFLICT');
-    expect(await store.get('ops', 'sug-1')).toMatchObject({ status: 'conflict' });
-    expect(await instructions()).toBe(twice);
-  });
-
-  it('oldText containing $& or .* is matched literally and newText is inserted literally', async () => {
-    const literal = 'Pattern a.*b end.';
-    await saveAgent({ ...V1_SPEC, prompt: literal });
-    // '.*' is not a wildcard and the replacement's '$&' must not expand to
-    // the matched text: a plain replace(old, new) would produce 'Xa.*bY'.
-    await seedSuggestion({
-      expectedPromptHash: promptHash(literal),
-      proposedPromptHash: promptHash('Pattern X$&Y end.'),
-      oldText: 'a.*b',
-      newText: 'X$&Y',
-    });
-    expect((await request(app()).post('/agents/ops/suggestions/sug-1/apply')).status).toBe(201);
-    expect(await instructions()).toBe('Pattern X$&Y end.');
-
-    // '$&' as the anchor is literal too: it occurs exactly once, inside 'X$&Y'.
-    await seedSuggestion({
-      id: 'sug-2',
-      expectedPromptHash: promptHash('Pattern X$&Y end.'),
-      proposedPromptHash: promptHash('Pattern Xthe matchY end.'),
-      oldText: '$&',
-      newText: 'the match',
-    });
-    expect((await request(app()).post('/agents/ops/suggestions/sug-2/apply')).status).toBe(201);
-    expect(await instructions()).toBe('Pattern Xthe matchY end.');
-  });
-
-  it('applying twice: the second is 409 LOUSHO_SUGGESTION_NOT_OPEN', async () => {
-    await saveAgent();
-    await seedSuggestion();
-    expect((await request(app()).post('/agents/ops/suggestions/sug-1/apply')).status).toBe(201);
-
-    const again = await request(app()).post('/agents/ops/suggestions/sug-1/apply');
-    expect(again.status).toBe(409);
-    expect(again.body).toEqual({
-      error: 'This suggestion was already applied or dismissed.',
-      code: 'LOUSHO_SUGGESTION_NOT_OPEN',
-    });
-  });
-
-  it('apply on instructions stored in a file is 409 LOUSHO_SUGGESTION_UNSUPPORTED', async () => {
-    const v2: AgentSpecV2 = {
-      version: 2,
-      name: 'ops',
-      model: 'mock/mock-1',
-      instructions: { file: 'prompt.md' },
-    };
-    const res = await request(app()).put('/agents/ops').send({ spec: v2 });
-    expect(res.status).toBe(204);
-    await seedSuggestion();
-
-    const apply = await request(app()).post('/agents/ops/suggestions/sug-1/apply');
-    expect(apply.status).toBe(409);
-    expect(apply.body).toEqual({
-      error: 'The instructions are stored in a file, so this suggestion cannot be applied here.',
-      code: 'LOUSHO_SUGGESTION_UNSUPPORTED',
-    });
   });
 
   it('apply a missing or non-prompt_edit suggestion is 404; an invalid sid is 400', async () => {

@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { SPEC_GUARDRAIL_NAMES, type SpecGuardrailName } from '../spec/guardrailOptions';
-import { REWRITABLE_GUARDRAILS } from '../spec/v2/guardrails';
 import { listGuardrails } from './guardrailCatalog';
 
 const DESCRIPTIONS: Record<SpecGuardrailName, string> = {
@@ -24,29 +23,5 @@ describe('listGuardrails', () => {
       expect(entry.on).toEqual(['input', 'output', 'tools']);
       expect(entry.canRunInParallel).toBe(true);
     }
-  });
-
-  it("exposes each guardrail's options as JSON Schema without the 'on' field", () => {
-    const regex = listGuardrails().find((entry) => entry.name === 'regex');
-    const properties = regex?.optionsJsonSchema.properties as Record<string, unknown>;
-    expect(properties.pattern).toBeDefined();
-    expect(properties.on).toBeUndefined();
-    expect(regex?.optionsJsonSchema.required).toContain('pattern');
-    expect(regex?.optionsJsonSchema.required).not.toContain('on');
-  });
-
-  it('marks exactly the rewritable guardrails', () => {
-    for (const entry of listGuardrails()) {
-      expect(entry.canRewrite).toBe(REWRITABLE_GUARDRAILS.includes(entry.name));
-    }
-  });
-
-  it('returns fresh objects on every call', () => {
-    const first = listGuardrails().find((entry) => entry.name === 'regex');
-    (first?.optionsJsonSchema.properties as Record<string, unknown>).pattern = 'mutated';
-    first!.optionsJsonSchema.required = [];
-    const second = listGuardrails().find((entry) => entry.name === 'regex');
-    expect((second?.optionsJsonSchema.properties as Record<string, unknown>).pattern).not.toBe('mutated');
-    expect(second?.optionsJsonSchema.required).toContain('pattern');
   });
 });

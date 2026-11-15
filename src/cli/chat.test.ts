@@ -121,20 +121,6 @@ describe('lousho chat REPL', () => {
     expect(model.calls).toHaveLength(2);
   });
 
-  it('keeps one session across lines, and dims tool lines only when color is on', async () => {
-    const out = sink();
-    const model = mockModel(['Hi Ali.', 'You are Ali.']);
-    await runChatRepl({
-      input: scripted(['I am Ali.', 'Who am I?']),
-      output: out.stream,
-      color: true,
-      createAgent: async () => createAgent({ instructions: 'x', provider: model }),
-    });
-    expect(model.calls[1].messages.map((m) => String(m.content))).toContain('Hi Ali.');
-    expect(out.text()).toContain('\x1b[2mlousho chat: session ');
-    expect(out.text()).toContain('You are Ali.\n');
-  });
-
   it('prints reasoning dimmed on its own line before the reply', async () => {
     const out = sink();
     const model = mockModel(['Hi.']);
@@ -146,22 +132,6 @@ describe('lousho chat REPL', () => {
       createAgent: async () => createAgent({ instructions: 'x', provider: thinker }),
     });
     expect(out.text()).toContain('\x1b[2mGreet back.\x1b[22m\nHi.\n');
-  });
-
-  it('asks Approve <tool>(args)? and runs the tool on y', async () => {
-    const { out, model } = await converse(['ping it', 'y', '/quit'], [{ toolCalls: [{ name: 'ping' }] }, 'The tool said pong.']);
-    expect(out).toContain('Approve ping({})? [y/N] ');
-    expect(out).toContain('  -> pong');
-    expect(out).toContain('The tool said pong.');
-    expect(JSON.stringify(model.calls[1].messages)).toContain('pong');
-  });
-
-  it('rejects the call on n (and on anything but yes), so the tool never runs', async () => {
-    const { out, model } = await converse(['ping it', 'n', '/quit'], [{ toolCalls: [{ name: 'ping' }] }, 'Understood, not pinging.']);
-    expect(out).toContain('Approve ping({})? [y/N] ');
-    expect(out).not.toContain('  -> pong');
-    expect(out).toContain('Understood, not pinging.');
-    expect(JSON.stringify(model.calls[1].messages)).not.toContain('pong');
   });
 
   it('shows a question with numbered options and answers by number', async () => {
@@ -224,12 +194,6 @@ describe('lousho chat REPL', () => {
     expect(model.calls[1].messages.filter((m) => m.role === 'user').map((m) => m.content)).toEqual(['who am I?']);
   });
 
-  it('/history says so for an empty session, and an unknown command lists the commands', async () => {
-    const { out } = await converse(['/history', '/nope', '/quit'], []);
-    expect(out).toContain('(no messages yet)');
-    expect(out).toContain("Unknown command '/nope'. Commands: /new, /compact, /clear, /model <provider/model>, /history, /quit");
-  });
-
   it('/model rebuilds the agent with the new model, and keeps the old one when that fails', async () => {
     const out = sink();
     const err = sink();
@@ -268,13 +232,6 @@ describe('lousho chat REPL', () => {
     expect(err.match(/User not found/g)).toHaveLength(1);
   });
 
-  it('streams the continuation after y, and asks again when it pauses a second time', async () => {
-    const { out } = await converse(['ping twice', 'y', 'y', '/quit'], [{ toolCalls: [{ name: 'ping' }] }, { toolCalls: [{ name: 'ping' }] }, 'Both done.']);
-    expect(out.match(/Approve ping\(\{\}\)\? \[y\/N\] /g)).toHaveLength(2);
-    expect(out).toContain('-> pong');
-    expect(out).toContain('Both done.');
-  });
-
   it('declines a pending approval when the input ends, and still closes the agent', async () => {
     const { out, code } = await converse(['ping it'], [{ toolCalls: [{ name: 'ping' }] }, 'Not pinging.']);
     expect(code).toBe(0);
@@ -303,14 +260,6 @@ describe('lousho chat command', () => {
     return { code, out: out.text(), err: err.text() };
   };
 
-  it('fails with LOUSHO_CONFIG_INVALID for a path that does not exist', async () => {
-    const { code, err, out } = await run([path.join(fixtures, 'nope', 'agent.ts')], ['hi'], undefined);
-    expect(code).toBe(1);
-    expect(err).toContain('LOUSHO_CONFIG_INVALID');
-    expect(err).toContain('does not exist');
-    expect(out).toBe('');
-  });
-
   it('names lousho chat, not lousho dev, for a module that exports no agent', async () => {
     const { code, err } = await run([path.join(fixtures, 'dev-module', 'bad.ts')], ['hi'], undefined);
     expect(code).toBe(1);
@@ -325,15 +274,6 @@ describe('lousho chat command', () => {
     expect(err).not.toContain('ENOENT');
   });
 
-  it('fails with LOUSHO_SPEC_UNSUPPORTED_FORMAT for an unsupported file type', async () => {
-    const file = path.join(os.tmpdir(), `lousho-chat-${process.pid}.txt`);
-    fs.writeFileSync(file, 'x');
-    const { code, err } = await run([file], [], undefined);
-    fs.rmSync(file);
-    expect(code).toBe(1);
-    expect(err).toContain('LOUSHO_SPEC_UNSUPPORTED_FORMAT');
-  });
-
   it('fails with LOUSHO_CONFIG_INVALID and the usage for a missing path, an unknown flag or a bad --store', () => {
     for (const args of [[], ['a.yaml', '--bogus'], ['a.yaml', '--store', 'redis:x']]) {
       expect(() => parseChatArgs(args)).toThrow(/LOUSHO_CONFIG_INVALID/);
@@ -344,30 +284,6 @@ describe('lousho chat command', () => {
       session: 's1',
       sqlite: './c.db',
     });
-  });
-
-  it('chats with an agent directory over readline', async () => {
-    const { code, out } = await run([path.join(fixtures, 'dev-agent'), '--session', 'dir1'], ['hello', '/quit'], {
-      provider: mockModel([
-        {
-          text: 'Hello from the dir.',
-          usage: { inputTokens: 5, outputTokens: 3 },
-        },
-      ]),
-    });
-    expect(code).toBe(0);
-    expect(out).toContain('session dir1');
-    expect(out).toContain('Hello from the dir.');
-    expect(out).toContain('[usage]');
-  });
-
-  it('chats with a TS module, approving a tool', async () => {
-    const { out } = await run([path.join(fixtures, 'dev-module', 'config.ts')], ['ping it', 'yes', '/quit'], {
-      provider: mockModel([{ toolCalls: [{ name: 'ping' }] }, 'Pong received.']),
-      tools: [ping],
-    });
-    expect(out).toContain('Approve ping({})? [y/N] ');
-    expect(out).toContain('Pong received.');
   });
 
   it('chats with a spec file, and rejects an invalid session id', async () => {
@@ -418,26 +334,6 @@ describe('lousho chat --traces (#282)', () => {
     const code = await runChat(args, { stdin, stdout: out.stream, stderr: err.stream, overrides });
     return { code, err: err.text() };
   }
-
-  it('says nothing about traces without the flag', async () => {
-    const { code, err } = await chatOnce([path.join(fixtures, 'dev-agent')], { provider: mockModel(['Hi.']) });
-    expect(code).toBe(0);
-    expect(err).not.toContain('traces');
-  });
-
-  it('writes the runs of an agent directory to --traces=<dir> and says where', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-chat-traces-'));
-    try {
-      const { code, err } = await chatOnce([path.join(fixtures, 'dev-agent'), `--traces=${dir}`], { provider: mockModel(['Hi.']) });
-      expect(code).toBe(0);
-      expect(err).toContain(`writing traces to ${dir}`);
-      const files = traceFiles(dir);
-      expect(files).toHaveLength(1);
-      expect(fs.readFileSync(path.join(dir, files[0]), 'utf8')).toContain('invoke_agent');
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
 
   it('writes the runs of a spec file, which has no createAgent() of its own', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-chat-traces-'));

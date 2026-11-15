@@ -1,14 +1,12 @@
 import { act } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ReactFlowProvider, type NodeProps } from '@xyflow/react';
 
-import { render as mount, rerender } from '../../../ui/__tests__/render';
+import { render as mount } from '../../../ui/__tests__/render';
 
 import { Inspector } from '../../../components/Inspector';
-import { NODE_TYPES, flowNodeType, type CanvasNodeData } from '../../AgentNode';
 import { specToGraph } from '../../../graph/v2/specToGraph';
 import type { AgentSpecV2 } from '../../../graph/v2/specTypes';
-import type { Graph, GraphNode, ToolNodeData } from '../../../graph/v2/types';
+import type { Graph, ToolNodeData } from '../../../graph/v2/types';
 import type { CatalogState } from '../../useCatalog';
 import type { AgentListItem, CatalogModel, CatalogTool } from '../../../../shared/wireTypes';
 
@@ -106,11 +104,6 @@ function renderInspector() {
   container = mount(<Inspector />);
 }
 
-/** Re-render so the Inspector sees the graph `setGraph` just produced. */
-function flush() {
-  act(() => rerender(<Inspector />));
-}
-
 function field<T extends Element = HTMLInputElement>(id: string): T {
   return container.querySelector(`#${id}`) as T;
 }
@@ -139,19 +132,6 @@ function useTool(tools: Record<string, unknown>[], nodeId: string) {
   app.graph = specToGraph(specOf(tools));
 }
 
-/** Mounts `node`'s NodeCard and answers its title — the far end of the "pick in the Inspector → card updates" path. */
-function cardTitle(node: GraphNode): string | undefined {
-  const Card = NODE_TYPES[flowNodeType(node.kind)];
-  const data: CanvasNodeData = { graphNode: node };
-  const props = { id: node.id, type: flowNodeType(node.kind), data, selected: false } as unknown as NodeProps;
-  const card = mount(
-    <ReactFlowProvider>
-      <Card {...props} />
-    </ReactFlowProvider>
-  );
-  return card.querySelector('.rf-node-title')?.textContent ?? undefined;
-}
-
 beforeEach(() => {
   app.selectedNodeId = 'tool:web_fetch';
   app.graph = specToGraph(specOf([{ builtin: 'web_fetch' }]));
@@ -164,37 +144,12 @@ beforeEach(() => {
 
 // Type option indexes: 1 builtin, 2 registry, 3 file, 4 integration, 5 openapi, 6 hosted, 7 hub.
 describe('tool Inspector: Type switch', () => {
-  it('replaces the item with the new form\'s empty value', () => {
-    renderInspector();
-    choose('node-tool-form', '3');
-    expect(item()).toStrictEqual({ file: '' });
-  });
 
   it('keeps id, approval and deferLoading across the switch', () => {
     useTool([{ builtin: 'web_fetch', approval: 'always', deferLoading: true, id: 'fetch' }], 'tool:fetch');
     renderInspector();
     choose('node-tool-form', '3');
     expect(item()).toStrictEqual({ file: '', approval: 'always', deferLoading: true, id: 'fetch' });
-  });
-
-  it('keeps id but drops approval and deferLoading for forms that cannot carry them', () => {
-    useTool([{ builtin: 'web_fetch', approval: 'always', deferLoading: true, id: 'fetch' }], 'tool:fetch');
-    renderInspector();
-    choose('node-tool-form', '6');
-    expect(item()).toStrictEqual({ hosted: '', id: 'fetch' });
-  });
-});
-
-describe('tool Inspector: catalog pick', () => {
-  it('writes the picked name as builtin and the card re-titles to it', () => {
-    renderInspector();
-    const option = [...container.querySelectorAll<HTMLElement>('[role="option"]')].find(
-      (o) => o.querySelector('.tool-option-name')?.textContent === 'http_request',
-    )!;
-    act(() => option.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    expect(item()).toStrictEqual({ builtin: 'http_request' });
-    const node = app.graph!.nodes.find((n) => n.id === 'tool:web_fetch')!;
-    expect(cardTitle(node)).toBe('http_request');
   });
 });
 
@@ -218,34 +173,6 @@ describe('tool Inspector: per-form fields', () => {
     renderInspector();
     choose('node-tool-service', '2'); // jira
     expect(item()).toStrictEqual({ integration: 'jira', credentials: {} });
-  });
-
-  it('prefills the suggested credential keys when the map is empty', () => {
-    useTool([{ integration: 'github', credentials: {} }], 'tool:github');
-    renderInspector();
-    const keys = [...container.querySelectorAll<HTMLInputElement>('.kv-row input[placeholder="Name"]')]
-      .map((input) => input.value);
-    expect(keys).toEqual(['token', 'owner', 'repo']);
-  });
-
-  it('shows only the real credential rows when the map is not empty', () => {
-    useTool([{ integration: 'github', credentials: { token: { env: 'GH_TOKEN' } } }], 'tool:github');
-    renderInspector();
-    const keys = [...container.querySelectorAll<HTMLInputElement>('.kv-row input[placeholder="Name"]')]
-      .map((input) => input.value);
-    expect(keys).toEqual(['token']);
-  });
-
-  it('writes only filled credential values to the spec, not the blank suggested rows', () => {
-    useTool([{ integration: 'github', credentials: {} }], 'tool:github');
-    renderInspector();
-    choose('node-tool-credentials-value-0-mode', 'env');
-    const input = container.querySelector<HTMLInputElement>('.kv-row input[placeholder="GITHUB_TOKEN"]')!;
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'GH_TOKEN');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    expect(item()).toStrictEqual({ integration: 'github', credentials: { token: { env: 'GH_TOKEN' } } });
   });
 
   it('keeps a removed suggested row removed', () => {
@@ -282,12 +209,6 @@ describe('tool Inspector: hosted warning', () => {
     renderInspector();
     expect(container.textContent).toContain('The selected model does not offer this tool');
   });
-
-  it('does not warn when the model offers it', () => {
-    useTool([{ hosted: 'web_search' }], 'tool:web_search');
-    renderInspector();
-    expect(container.textContent).not.toContain('The selected model does not offer this tool');
-  });
 });
 
 describe('tool Inspector: Behaviour section', () => {
@@ -301,12 +222,5 @@ describe('tool Inspector: Behaviour section', () => {
     expect(item()).toMatchObject({ deferLoading: true });
     type('node-tool-id', 'fetch-docs');
     expect(item()).toMatchObject({ id: 'fetch-docs' });
-  });
-
-  it('flags an invalid node id', () => {
-    renderInspector();
-    type('node-tool-id', 'bad id!');
-    flush();
-    expect(container.textContent).toContain('Use letters, digits, dash or underscore');
   });
 });

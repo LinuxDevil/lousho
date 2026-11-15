@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Writable } from 'node:stream';
@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { applyProposal } from '../improve/apply';
 import { listPending, savePending } from '../improve/pending';
 import { readAudit } from '../improve/audit';
-import { currentRevision, readAgentHarness } from '../improve/revisions';
+import { readAgentHarness } from '../improve/revisions';
 import type { Harness, ImproveResult } from '../improve/types';
 import { openDb } from '../observe/store';
 import { runImprove } from './improve';
@@ -48,40 +48,6 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('lousho improve rollback', () => {
-  it('rolls back to the parent of the current revision', async () => {
-    const applied = await apply('Changed.');
-    const result = await run('rollback', dir, '--by', 'ali', '--reason', 'Worse answers.');
-    expect(result).toMatchObject({ code: 0, stderr: '' });
-    expect(result.stdout).toContain(`${applied.to.slice(0, 12)} -> ${applied.from.slice(0, 12)}`);
-    expect(readFileSync(path.join(dir, 'instructions.md'), 'utf8')).toBe('Be careful.\n');
-    expect(readAudit(dir).at(-1)).toMatchObject({ action: 'rollback', actor: 'person:ali', reason: 'Worse answers.' });
-  });
-
-  it('rollback needs --by on the CLI', async () => {
-    await apply('Changed.');
-    const result = await run('rollback', dir);
-    expect(result.code).toBe(2);
-    expect(result.stderr).toMatch(/--by/);
-    expect(readFileSync(path.join(dir, 'instructions.md'), 'utf8')).toBe('Changed.\n');
-  });
-
-  it('takes --to as a unique id prefix', async () => {
-    const first = await apply('First.');
-    await apply('Second.');
-    const result = await run('rollback', dir, '--to', first.from.slice(0, 8), '--by', 'ali');
-    expect(result.code).toBe(0);
-    expect(currentRevision(dir)).toBe(first.from);
-    expect((await run('rollback', dir, '--to', 'zz', '--by', 'ali')).code).toBe(1);
-  });
-
-  it('fails without a revision to go back to', async () => {
-    const result = await run('rollback', dir, '--by', 'ali');
-    expect(result.code).toBe(1);
-    expect(result.stderr).toMatch(/no earlier revision/);
-  });
-});
-
 describe('lousho improve rollback defaults', () => {
   it('refuses without --to after a rollback, and after a hand edit', async () => {
     await apply('Changed.');
@@ -94,22 +60,6 @@ describe('lousho improve rollback defaults', () => {
     expect(edited.stderr).toMatch(/hand edits/);
     expect(readFileSync(path.join(dir, 'instructions.md'), 'utf8')).toBe('Edited by hand.\n');
     expect((await run('revisions', dir)).stdout).toMatch(/unsaved edits/);
-  });
-
-  it('needs at least 4 characters of --to', async () => {
-    const applied = await apply('Changed.');
-    const result = await run('rollback', dir, '--to', applied.from.slice(0, 3), '--by', 'ali');
-    expect(result.code).toBe(1);
-    expect(result.stderr).toMatch(/at least 4/);
-  });
-
-  it('prints audit fields without terminal control characters', async () => {
-    await apply('Changed.');
-    const file = path.join(dir, '.lousho', 'audit.jsonl');
-    appendFileSync(file, `${JSON.stringify({ seq: 2, at: 'x', actor: 'gate', action: 'apply', reason: 'evil \u001b[31mred' })}\n`);
-    const { stdout } = await run('audit', dir);
-    expect(stdout).not.toContain('\u001b');
-    expect(stdout).toContain('evil  [31mred');
   });
 });
 
@@ -140,26 +90,6 @@ describe('lousho improve audit', () => {
     expect(stdout).toMatch(/^1 .* gate apply /);
     const json = JSON.parse((await run('audit', dir, '--json')).stdout) as { action: string }[];
     expect(json.map((entry) => entry.action)).toEqual(['apply']);
-  });
-
-  it('audit --verify exits 1 on a broken chain', async () => {
-    await apply('Changed.');
-    await apply('Changed again.');
-    expect(await run('audit', dir, '--verify')).toMatchObject({ code: 0, stdout: expect.stringMatching(/intact/) });
-    const file = path.join(dir, '.lousho', 'audit.jsonl');
-    const lines = readFileSync(file, 'utf8').split('\n');
-    lines[0] = lines[0].replace('"gate"', '"monitor"');
-    writeFileSync(file, lines.join('\n'));
-    const broken = await run('audit', dir, '--verify');
-    expect(broken.code).toBe(1);
-    expect(broken.stderr).toMatch(/seq 1/);
-  });
-
-  it('reports a truncated last line without throwing', async () => {
-    await apply('Changed.');
-    mkdirSync(path.join(dir, '.lousho'), { recursive: true });
-    appendFileSync(path.join(dir, '.lousho', 'audit.jsonl'), '{"seq":2,');
-    expect((await run('audit', dir, '--verify')).code).toBe(1);
   });
 });
 

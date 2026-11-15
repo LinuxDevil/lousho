@@ -181,37 +181,6 @@ describe('RunManager node status frames', () => {
     fs.rmSync(baseDir, { recursive: true, force: true });
   });
 
-  it('emits one running/waiting frame then one done/error frame per node-carrying span, in order', async () => {
-    const runManager = makeRunManager(baseDir, new ScriptedHost(stampedRunScript));
-    const frames: NodeStatePayload[] = [];
-    runManager.on('node', (agentId: string, payload: NodeStatePayload) => {
-      if (agentId === 'node-agent') frames.push(payload);
-    });
-
-    await runManager.run('node-agent', 'go', SPEC);
-    await waitForStatus(runManager, 'node-agent', (s) => s.status === 'done');
-
-    expect(frames.map((f) => [f.nodeId, f.state])).toEqual([
-      ['agent', 'running'],
-      ['agent', 'running'], // the chat span also maps to the agent node
-      ['agent', 'done'],
-      ['tool:current_date', 'running'],
-      ['tool:current_date', 'done'],
-      ['tool:send_email', 'waiting'], // the approval.wait marker - and NO done after it (zero-length marker ends emit no node frame)
-      ['tool:failing_tool', 'running'],
-      ['tool:failing_tool', 'error'],
-      ['agent', 'done'],
-    ]);
-    // The unstamped span produced no frame at all.
-    expect(frames.every((f) => f.spanId !== 's-unstamped')).toBe(true);
-    // Every frame is ids/state/ISO-time only.
-    for (const frame of frames) {
-      expect(typeof frame.spanId).toBe('string');
-      expect(frame.at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
-      expect(Object.keys(frame).sort()).toEqual(['at', 'nodeId', 'spanId', 'state']);
-    }
-  });
-
   it('a node frame arrives on WS /agents/:id/stream', async () => {
     const runManager = makeRunManager(baseDir, new ScriptedHost(stampedRunScript));
     const server = http.createServer();

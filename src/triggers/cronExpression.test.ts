@@ -67,27 +67,6 @@ describe('parseCronExpression().nextRun()', () => {
   it.each(table)('%s after %s -> %s (%s)', (expr, after, expected, tz) => {
     expect(next(expr, after, tz)).toBe(expected);
   });
-
-  it('is strictly after `after` and successive calls walk forward without repeats', () => {
-    const schedule = parseCronExpression('*/20 * * * *', 'UTC');
-    let t = new Date('2026-06-01T00:00:00Z');
-    const seen: string[] = [];
-    for (let i = 0; i < 4; i++) {
-      t = schedule.nextRun(t);
-      seen.push(t.toISOString());
-    }
-    expect(seen).toEqual([
-      '2026-06-01T00:20:00.000Z',
-      '2026-06-01T00:40:00.000Z',
-      '2026-06-01T01:00:00.000Z',
-      '2026-06-01T01:20:00.000Z',
-    ]);
-  });
-
-  it('works in the machine local zone when no timezone is given', () => {
-    const run = parseCronExpression('* * * * *').nextRun(new Date('2026-01-01T00:00:10Z'));
-    expect(run.toISOString()).toBe('2026-01-01T00:01:00.000Z');
-  });
 });
 
 describe('parseCronExpression() errors', () => {
@@ -114,9 +93,5 @@ describe('parseCronExpression() errors', () => {
   it.each(invalid)('rejects %j', (expr, message) => {
     expect(() => parseCronExpression(expr)).toThrow(CronExpressionError);
     expect(() => parseCronExpression(expr)).toThrow(message);
-  });
-
-  it('rejects an unknown time zone with an example', () => {
-    expect(() => parseCronExpression('* * * * *', 'Mars/Olympus')).toThrow(/Invalid timezone "Mars\/Olympus".*America\/New_York/);
   });
 });

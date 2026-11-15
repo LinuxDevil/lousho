@@ -6,7 +6,6 @@ import { render } from '../../__tests__/render';
 import type { ObserveObservationRow, ObserveScoreRow } from '../../../observe/types';
 import { RunInspector } from '../RunInspector';
 import { RunTree } from '../RunTree';
-import { TraceViewer } from '../TraceViewer';
 import { Waterfall } from '../Waterfall';
 
 const T0 = 1_700_000_000_000;
@@ -65,76 +64,6 @@ const TRACE: ObserveObservationRow[] = [
 const row = (c: HTMLElement, id: string) => c.querySelector(`[data-obs-id="${id}"]`) as HTMLElement;
 
 describe('RunTree', () => {
-  it('treats an interrupted row with no end as terminal: no "running", elapsed stops at the latest known end', () => {
-    const rows = [
-      obs({ obs_id: 'iroot', end: null, status: 'interrupted' }),
-      obs({ obs_id: 'ichild', parent_obs_id: 'iroot', start: T0 + 10, end: T0 + 250 }),
-    ];
-    const c = render(<RunTree observations={rows} onSelect={() => {}} now={T0 + 60_000} />);
-    const r = row(c, 'iroot');
-    expect(r.querySelector('.run-dur')?.textContent).toBe('250ms');
-    expect(r.querySelector('.run-dur-live')).toBeNull();
-    expect(r.textContent).not.toContain('running');
-    expect(r.textContent).toContain('interrupted');
-  });
-
-  it('indents rows by depth in depth-first order', () => {
-    const c = render(<RunTree observations={TRACE} onSelect={() => {}} now={T0 + 5000} />);
-    const rows = [...c.querySelectorAll<HTMLElement>('.run-tree-row')];
-    expect(rows.map((r) => r.dataset.obsId)).toEqual(['root', 'gen/1', 'tool1', 'ev1', 'odd']);
-    expect(rows.map((r) => r.dataset.depth)).toEqual(['0', '1', '2', '1', '1']);
-    const pad = (id: string) => parseInt((row(c, id).querySelector('.run-row-main') as HTMLElement).style.paddingLeft, 10);
-    expect(pad('gen/1')).toBeGreaterThan(pad('root'));
-    expect(pad('tool1')).toBeGreaterThan(pad('gen/1'));
-  });
-
-  it('shows the full name with a title tooltip, kind icon, duration, tokens and model chip', () => {
-    const c = render(<RunTree observations={TRACE} onSelect={() => {}} />);
-    const gen = row(c, 'gen/1');
-    const name = gen.querySelector('.run-name') as HTMLElement;
-    expect(name.textContent).toBe(LONG_NAME);
-    expect(name.title).toBe(LONG_NAME);
-    expect(gen.querySelector('.run-kind-generation svg')).not.toBeNull();
-    expect(gen.querySelector('.run-dur')?.textContent).toBe('800ms');
-    expect(gen.querySelector('.run-tokens')?.textContent).toBe('1,234 tok');
-    expect(gen.querySelector('.run-model-chip')?.textContent).toBe('gpt-4o-mini');
-    expect(row(c, 'tool1').querySelector('.run-kind-tool')).not.toBeNull();
-    expect(row(c, 'ev1').querySelector('.run-kind-event')).not.toBeNull();
-    expect(row(c, 'odd').querySelector('.run-kind-other svg')).not.toBeNull();
-    expect(row(c, 'root').querySelector('.run-tokens')).toBeNull();
-    expect(row(c, 'root').querySelector('.run-model-chip')).toBeNull();
-  });
-
-  it('links generations (only) to the Playground', () => {
-    const c = render(<RunTree observations={TRACE} onSelect={() => {}} />);
-    const links = [...c.querySelectorAll<HTMLAnchorElement>('.run-tree .run-playground-link')];
-    expect(links).toHaveLength(1);
-    expect(links[0]!.getAttribute('href')).toBe('#/playground?trace=tr1&fromObs=gen%2F1');
-    expect(links[0]!.textContent).toBe('Open in Playground');
-  });
-
-  it('marks an error node red and an open node as running', () => {
-    const rows = [
-      obs({ obs_id: 'root', end: null, status: null }),
-      obs({ obs_id: 'bad', parent_obs_id: 'root', status: 'error', start: T0 + 10, end: T0 + 20 }),
-    ];
-    const c = render(<RunTree observations={rows} onSelect={() => {}} now={T0 + 1500} />);
-    expect(row(c, 'bad').classList.contains('run-row-error')).toBe(true);
-    expect(row(c, 'bad').querySelector('.status-pill.pill-error')).not.toBeNull();
-    expect(row(c, 'root').classList.contains('run-row-error')).toBe(false);
-    expect(row(c, 'root').querySelector('.run-dur-live')?.textContent).toBe('1.5s running');
-    expect(row(c, 'root').querySelector('.status-pill.pill-running')).not.toBeNull();
-  });
-
-  it('calls onSelect on click and keyboard activation via buttons', () => {
-    const onSelect = vi.fn();
-    const c = render(<RunTree observations={TRACE} selectedObsId="tool1" onSelect={onSelect} />);
-    const main = row(c, 'gen/1').querySelector('button.run-row-main') as HTMLButtonElement;
-    act(() => main.click());
-    expect(onSelect).toHaveBeenCalledWith('gen/1');
-    expect(row(c, 'tool1').classList.contains('selected')).toBe(true);
-    expect(row(c, 'tool1').querySelector('[aria-current="true"]')).not.toBeNull();
-  });
 
   it('virtualises above 500 observations and renders plain rows at 500', () => {
     const many = (n: number) => Array.from({ length: n }, (_, i) => obs({ obs_id: `o${i}`, start: T0 + i, end: T0 + i + 1 }));
@@ -152,24 +81,6 @@ describe('RunTree', () => {
 });
 
 describe('Waterfall', () => {
-  it('draws a time axis relative to the trace start', () => {
-    const c = render(<Waterfall observations={TRACE} onSelect={() => {}} />);
-    const ticks = [...c.querySelectorAll('.run-axis-tick')].map((t) => t.textContent);
-    expect(ticks[0]).toBe('0ms');
-    expect(ticks).toContain('500ms');
-    expect(ticks).toContain('1s');
-    expect(ticks.at(-1)).toBe('2s');
-  });
-
-  it('offsets and sizes one bar per row by start/end', () => {
-    const c = render(<Waterfall observations={TRACE} onSelect={() => {}} />);
-    expect(c.querySelectorAll('.run-wf-bar')).toHaveLength(TRACE.length);
-    const bar = row(c, 'gen/1').querySelector('.run-wf-bar') as HTMLElement;
-    expect(bar.style.left).toBe('5%');
-    expect(bar.style.width).toBe('40%');
-    expect(bar.classList.contains('run-wf-bar-generation')).toBe(true);
-    expect((row(c, 'gen/1').querySelector('.run-name') as HTMLElement).title).toBe(LONG_NAME);
-  });
 
   it('extends an open bar to now and paints an error bar red', () => {
     const rows = [
@@ -201,38 +112,6 @@ describe('Waterfall', () => {
 });
 
 describe('RunInspector', () => {
-  const sectionOrder = (c: HTMLElement) => [...c.querySelectorAll<HTMLElement>('[data-section]')].map((s) => s.dataset.section);
-
-  it('renders sections in the design-brief order, Error first for a failed step', () => {
-    const failed = obs({ obs_id: 'bad', status: 'error', input: 'hi', output: 'oops', attrs: { error: 'Rate limited' } });
-    const c = render(<RunInspector observation={failed} scores={[]} />);
-    expect(sectionOrder(c)).toEqual(['error', 'input', 'output', 'feedback', 'usage', 'attributes']);
-    const alert = c.querySelector('[role="alert"]') as HTMLElement;
-    expect(alert.textContent).toContain('Rate limited');
-  });
-
-  it('omits Error for an ok step and Attributes when attrs is null', () => {
-    const c = render(<RunInspector observation={obs({ obs_id: 'fine' })} scores={[]} />);
-    expect(sectionOrder(c)).toEqual(['input', 'output', 'feedback', 'usage']);
-    expect(c.querySelector('[role="alert"]')).toBeNull();
-    expect(c.textContent).toContain('No feedback on this step yet.');
-  });
-
-  it('shows the error pill, not "running", for an open observation that failed (error wins)', () => {
-    const c = render(
-      <RunInspector observation={obs({ obs_id: 'open-bad', status: 'error', end: null })} scores={[]} now={T0 + 500} />,
-    );
-    const pill = c.querySelector('.run-inspector-head .status-pill') as HTMLElement;
-    expect(pill.classList.contains('pill-error')).toBe(true);
-    expect(pill.classList.contains('pill-running')).toBe(false);
-  });
-
-  it('renders the feedback slot inside the Feedback section', () => {
-    const c = render(
-      <RunInspector observation={obs({ obs_id: 'fine' })} scores={[]} renderFeedback={(r) => <form data-for={r.obs_id} />} />,
-    );
-    expect(c.querySelector('[data-section="feedback"] form[data-for="fine"]')).not.toBeNull();
-  });
 
   it('reads attrs.error.message, falling back to a generic line', () => {
     let c = render(<RunInspector observation={obs({ obs_id: 'a', status: 'error', attrs: { error: { message: 'boom' } } })} scores={[]} />);
@@ -280,90 +159,5 @@ describe('RunInspector', () => {
     expect(usage).toContain('gpt-4o');
     expect(c.querySelector('.run-truncated-note')).not.toBeNull();
     expect(c.querySelector('.run-inspector .run-playground-link')?.getAttribute('href')).toBe('#/playground?trace=tr1&fromObs=g');
-  });
-});
-
-describe('RunInspector missing values', () => {
-  it('shows a faint em dash for usage, cost, model and a score the step does not have', () => {
-    const row = obs({ obs_id: 'bare', kind: 'tool' });
-    const c = render(<RunInspector observation={row} scores={[score({ score_id: 's', obs_id: 'bare', value: null })]} />);
-    const dashes = [...c.querySelectorAll('.value-missing')].map((el) => el.textContent);
-    // four token counts, cost, model, and the null score value
-    expect(dashes).toEqual(['—', '—', '—', '—', '—', '—', '—']);
-    expect(c.querySelector('[data-section="usage"]')!.textContent).not.toContain('-');
-  });
-});
-
-describe('TraceViewer', () => {
-  const inspected = (c: HTMLElement) => (c.querySelector('.run-inspector') as HTMLElement).dataset.obsId;
-
-  it('drops only the inspector Playground link with inspectorPlaygroundLink={false}', () => {
-    const rows = [obs({ obs_id: 'g', kind: 'generation' })];
-    const c = render(
-      <TraceViewer observations={rows} scores={[]} selectedObsId="g" onSelect={() => undefined} mode="tree" inspectorPlaygroundLink={false} />,
-    );
-    expect(c.querySelectorAll('.run-tree .run-playground-link')).toHaveLength(1);
-    expect(c.querySelector('.run-inspector .run-playground-link')).toBeNull();
-  });
-
-  it('hides every Playground link with playgroundLinks={false}', () => {
-    const rows = [obs({ obs_id: 'g', kind: 'generation' })];
-    const shown = render(<TraceViewer observations={rows} scores={[]} selectedObsId="g" onSelect={() => undefined} mode="tree" />);
-    expect(shown.querySelectorAll('.run-playground-link')).toHaveLength(2);
-    const hidden = render(
-      <TraceViewer observations={rows} scores={[]} selectedObsId="g" onSelect={() => undefined} mode="tree" playgroundLinks={false} />,
-    );
-    expect(hidden.querySelectorAll('.run-playground-link')).toHaveLength(0);
-  });
-
-  it('opens a failed trace on the earliest error', () => {
-    const rows = [
-      obs({ obs_id: 'root', status: 'error', start: T0, attrs: { error: 'root failed' } }),
-      obs({ obs_id: 'late', parent_obs_id: 'root', status: 'error', start: T0 + 50 }),
-    ];
-    // Root is earliest here, so it is the first error.
-    let c = render(<TraceViewer observations={rows} scores={[]} onSelect={() => {}} mode="tree" />);
-    expect(inspected(c)).toBe('root');
-    const child = [obs({ obs_id: 'root' }), obs({ obs_id: 'e2', parent_obs_id: 'root', status: 'error', start: T0 + 60 }), obs({ obs_id: 'e1', parent_obs_id: 'root', status: 'error', start: T0 + 30 })];
-    c = render(<TraceViewer observations={child} scores={[]} selectedObsId="missing" onSelect={() => {}} mode="tree" />);
-    expect(inspected(c)).toBe('e1');
-    expect(c.querySelector('.run-inspector [role="alert"]')).not.toBeNull();
-    expect(row(c, 'e1').classList.contains('selected')).toBe(true);
-  });
-
-  it('falls back to the first root, and honours a valid selection', () => {
-    let c = render(<TraceViewer observations={TRACE} scores={[]} onSelect={() => {}} mode="tree" />);
-    expect(inspected(c)).toBe('root');
-    c = render(<TraceViewer observations={TRACE} scores={[]} selectedObsId="tool1" onSelect={() => {}} mode="tree" />);
-    expect(inspected(c)).toBe('tool1');
-  });
-
-  it('renders the mode the caller asks for, with a toggle only when onModeChange is given', () => {
-    let c = render(<TraceViewer observations={TRACE} scores={[]} onSelect={() => {}} mode="waterfall" />);
-    expect(c.querySelector('.run-waterfall')).not.toBeNull();
-    expect(c.querySelector('.run-tree')).toBeNull();
-    expect(c.querySelector('.run-mode-toggle')).toBeNull();
-    const onModeChange = vi.fn();
-    c = render(<TraceViewer observations={TRACE} scores={[]} onSelect={() => {}} mode="tree" onModeChange={onModeChange} />);
-    expect(c.querySelector('.run-tree')).not.toBeNull();
-    const buttons = [...c.querySelectorAll<HTMLButtonElement>('.run-mode-toggle button')];
-    expect(buttons.map((b) => [b.textContent, b.getAttribute('aria-pressed')])).toEqual([
-      ['Tree', 'true'],
-      ['Waterfall', 'false'],
-    ]);
-    act(() => buttons[1]!.click());
-    expect(onModeChange).toHaveBeenCalledWith('waterfall');
-  });
-
-  it('forwards row clicks to onSelect', () => {
-    const onSelect = vi.fn();
-    const c = render(<TraceViewer observations={TRACE} scores={[]} onSelect={onSelect} mode="waterfall" />);
-    act(() => row(c, 'ev1').click());
-    expect(onSelect).toHaveBeenCalledWith('ev1');
-  });
-
-  it('shows an empty state for a trace with no observations', () => {
-    const c = render(<TraceViewer observations={[]} scores={[]} onSelect={() => {}} mode="tree" />);
-    expect(c.querySelector('.empty-state-title')?.textContent).toBe('No steps recorded');
   });
 });

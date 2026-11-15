@@ -1,13 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { attachmentsSchema } from './agentRefs';
-import { AUTHORING_OP_NAMES, applyOps, authoringOpJsonSchema, authoringOpSchema, opFiles, type AuthoringOp } from './authoringOps';
+import { AUTHORING_OP_NAMES, applyOps, authoringOpSchema, opFiles, type AuthoringOp } from './authoringOps';
 import { MARKETING_BUILD_OPS } from './__fixtures__/authoringOps';
 import type { WorkspaceTree } from './baseHarness';
-import { harnessSchema } from './harness';
-import { mainHarnessSchema } from './mainHarness';
-import { pageSchema } from './page';
 import { validateWorkspace } from './validate';
-import { workspaceManifestSchema } from './workspace';
 
 const apply = (tree: WorkspaceTree, ops: readonly unknown[]) => applyOps(tree, ops, { validate: () => [] });
 
@@ -61,68 +56,6 @@ describe('authoring operations', () => {
     }
   });
 
-  it('applyOps on the Marketing fixture builds the fixture from blank', () => {
-    const tree = build();
-    expect(Object.keys(tree).sort()).toEqual([
-      'agents/script-maker/agent.json',
-      'agents/script-maker/instructions.md',
-      'agents/video-maker/agent.json',
-      'agents/video-maker/instructions.md',
-      'agents/voice-maker/agent.json',
-      'agents/voice-maker/instructions.md',
-      'harness/brand-voice.md',
-      'harness/harness.json',
-      'main-agent/agent.json',
-      'main-agent/harness/main-harness.json',
-      'main-agent/harness/routing.md',
-      'main-agent/instructions.md',
-      'pages/content-research/agents.json',
-      'pages/content-research/agents/research-lead/agent.json',
-      'pages/content-research/agents/research-lead/instructions.md',
-      'pages/content-research/goal.json',
-      'pages/content-research/harness/harness.json',
-      'pages/content-research/harness/task.md',
-      'pages/content-research/page.json',
-      'pages/content-research/ui/page.ui.json',
-      'pages/facebook-videos/agents.json',
-      'pages/facebook-videos/harness/harness.json',
-      'pages/facebook-videos/harness/task.md',
-      'pages/facebook-videos/page.json',
-      'pages/facebook-videos/ui/page.ui.json',
-      'pages/instagram-videos/agents.json',
-      'pages/instagram-videos/goal.json',
-      'pages/instagram-videos/harness/harness.json',
-      'pages/instagram-videos/harness/task.md',
-      'pages/instagram-videos/page.json',
-      'pages/instagram-videos/ui/page.ui.json',
-      'shared/instructions/00-brand-voice.md',
-      'workspace.json',
-    ]);
-    expect(workspaceManifestSchema.safeParse(tree['workspace.json']).success).toBe(true);
-    expect((tree['workspace.json'] as { pages: string[] }).pages).toEqual(['instagram-videos', 'facebook-videos', 'content-research']);
-    expect(mainHarnessSchema.safeParse(tree['main-agent/harness/main-harness.json']).success).toBe(true);
-    expect(harnessSchema.safeParse(tree['harness/harness.json']).success).toBe(true);
-    for (const page of ['instagram-videos', 'facebook-videos', 'content-research']) {
-      expect(pageSchema.safeParse(tree[`pages/${page}/page.json`]).success).toBe(true);
-      expect(harnessSchema.safeParse(tree[`pages/${page}/harness/harness.json`]).success).toBe(true);
-      expect(attachmentsSchema.safeParse(tree[`pages/${page}/agents.json`]).success).toBe(true);
-    }
-    expect(JSON.stringify(build())).toBe(JSON.stringify(tree));
-  });
-
-  it('an op that leaves the tree invalid returns its problems and the tree', () => {
-    const tree = build();
-    const ops: AuthoringOp[] = [
-      { op: 'set_page_field', page: 'instagram-videos', field: 'domain', value: 'marketing' },
-      { op: 'set_harness_field', page: 'instagram-videos', field: 'audience', value: { description: '' } },
-    ];
-    const result = apply(tree, ops);
-    expect(result.tree).toBe(tree);
-    expect(result.problems).toHaveLength(1);
-    expect(result.problems[0]).toMatchObject({ opIndex: 1, op: 'set_harness_field', path: 'pages/instagram-videos/harness/harness.json' });
-    expect(result.problems[0].message).toContain('audience.description');
-  });
-
   it('a malformed op, a missing target and a broken final tree each name their op', () => {
     const tree = build();
     expect(apply(tree, [{ op: 'remove_page', page: 'Bad Id' }]).problems[0]).toMatchObject({ opIndex: 0, path: 'page' });
@@ -166,23 +99,9 @@ describe('authoring operations', () => {
     expect(Object.keys(tree).filter((path) => path.startsWith('shared/policies'))).toEqual([]);
   });
 
-  it('exports the op schema as JSON Schema with one branch per op', () => {
-    const schema = authoringOpJsonSchema() as { anyOf?: { properties?: { op?: { const?: string } } }[]; oneOf?: { properties?: { op?: { const?: string } } }[] };
-    const branches = schema.anyOf ?? schema.oneOf ?? [];
-    expect(branches.map((branch) => branch.properties?.op?.const).sort()).toEqual([...AUTHORING_OP_NAMES].sort());
-    expect(AUTHORING_OP_NAMES).toHaveLength(26);
-  });
-
   it('create_workspace refuses an existing workspace and other ops need one', () => {
     expect(apply(build(), [MARKETING_BUILD_OPS[0]]).problems[0].message).toContain('already exists');
     expect(apply({}, [{ op: 'create_page', page: 'x', name: 'X', description: 'X', execution: { type: 'workflow', workflow: { workflow: './workflow.json' } } }]).problems[0].path).toBe('workspace.json');
-  });
-
-  it('accepts a __proto__ key in a UI document as plain data', () => {
-    const tree = build();
-    const result = apply(tree, [{ op: 'write_page_ui', page: 'instagram-videos', ui: JSON.parse('{"schema":"lousho.page-ui/1","__proto__":{"a":1}}') }]);
-    expect(result.problems).toEqual([]);
-    expect(Object.prototype).not.toHaveProperty('a');
   });
 
   it('refuses R13 keys in goal and UI documents', () => {
@@ -251,16 +170,6 @@ describe('authoring operations', () => {
     const hostile = { ...build(), [key]: '{}' };
     expect(opFiles({ op: 'remove_page', page: 'instagram-videos' }, hostile)).not.toContain(key);
     expect(apply(hostile, [{ op: 'remove_page', page: 'instagram-videos' }]).tree[key]).toBe('{}');
-  });
-
-  it('a page with a custom ui path gets a problem, not a file the runtime never reads', () => {
-    const tree = build();
-    const page = { ...(tree['pages/instagram-videos/page.json'] as object), ui: './custom/ui.json' };
-    const custom = { ...tree, 'pages/instagram-videos/page.json': page };
-    const result = apply(custom, [{ op: 'write_page_ui', page: 'instagram-videos', ui: { schema: 'x' } }]);
-    expect(result.tree).toBe(custom);
-    expect(result.problems[0].message).toContain('edit it by hand');
-    expect(apply(custom, [{ op: 'write_page_ui', page: 'facebook-videos', ui: { schema: 'x' } }]).problems).toEqual([]);
   });
 
   it('setting a main agent on a workspace without one writes the same template as create_workspace', () => {

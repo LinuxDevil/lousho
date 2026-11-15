@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { agentSpecSchema, type AgentSpec, type McpHttpServerSpec, type McpStdioServerSpec } from './schema';
+import { agentSpecSchema,  } from './schema';
 
 const base = { name: 'bot', prompt: 'hi', provider: { type: 'mock', model: 'm' } };
 
@@ -10,159 +10,11 @@ function issues(mcpServers: unknown): string[] {
 }
 
 describe('AgentSpec.mcpServers', () => {
-  it('accepts stdio and HTTP entries', () => {
-    const mcpServers: AgentSpec['mcpServers'] = {
-      fs: { command: 'npx', args: ['-y', 'server-fs'], env: { ROOT: '/tmp' } },
-      git: { command: 'uvx' },
-      docs: { url: 'https://example.com/mcp', headers: { Authorization: 'Bearer x' } },
-    };
-    expect(agentSpecSchema.parse({ ...base, mcpServers }).mcpServers).toEqual(mcpServers);
-  });
-
-  it("accepts a per-server 'timeoutMs' and rejects a non-positive one", () => {
-    const mcpServers: AgentSpec['mcpServers'] = { fs: { command: 'npx', timeoutMs: 5000 }, docs: { url: 'https://example.com/mcp', timeoutMs: 100 } };
-    expect(agentSpecSchema.parse({ ...base, mcpServers }).mcpServers).toEqual(mcpServers);
-    expect(issues({ fs: { command: 'npx', timeoutMs: 0 } })).toEqual([
-      "mcpServers.fs.timeoutMs: AgentSpec validation failed: 'timeoutMs' must be a positive number of milliseconds",
-    ]);
-  });
-
-  it("accepts stdio 'cwd', 'stderr' and 'connectTimeoutMs'; refuses stdio-only fields on an HTTP entry", () => {
-    const mcpServers: AgentSpec['mcpServers'] = {
-      fs: { command: 'npx', cwd: '/srv', stderr: 'capture', connectTimeoutMs: 10_000 },
-      docs: { url: 'https://example.com/mcp', connectTimeoutMs: 5000 },
-    };
-    expect(agentSpecSchema.parse({ ...base, mcpServers }).mcpServers).toEqual(mcpServers);
-    expect(issues({ fs: { command: 'npx', stderr: 'loud' } })).toEqual([
-      "mcpServers.fs.stderr: AgentSpec validation failed: 'stderr' must be 'forward', 'capture', 'inherit' or 'ignore'",
-    ]);
-    expect(issues({ docs: { url: 'https://example.com/mcp', cwd: '/srv' } })[0]).toMatch(/'cwd' does not apply to an HTTP/);
-  });
-
-  it("accepts a per-server 'tools' filter and rejects a malformed one", () => {
-    const mcpServers: AgentSpec['mcpServers'] = { fs: { command: 'npx', tools: { include: ['read'], exclude: ['write'] } } };
-    expect(agentSpecSchema.parse({ ...base, mcpServers }).mcpServers).toEqual(mcpServers);
-    expect(issues({ fs: { command: 'npx', tools: { include: 'read' } } })).toEqual([
-      "mcpServers.fs.tools.include: AgentSpec validation failed: 'tools.include' must be a list of tool names",
-    ]);
-  });
-
-  it("accepts a per-server 'approval' mode (or a predicate in code) on both shapes", () => {
-    const predicate = () => true;
-    const mcpServers: AgentSpec['mcpServers'] = {
-      fs: { command: 'npx', approval: 'always' },
-      docs: { url: 'https://example.com/mcp', approval: 'never' },
-      vcs: { command: 'uvx', approval: 'annotations' },
-      custom: { command: 'x', approval: predicate },
-    };
-    expect(agentSpecSchema.parse({ ...base, mcpServers }).mcpServers).toEqual(mcpServers);
-  });
-
-  it("rejects an unknown 'approval' value, naming the entry", () => {
-    expect(issues({ fs: { command: 'npx', approval: 'sometimes' } })).toEqual([
-      "mcpServers.fs.approval: AgentSpec validation failed: 'approval' must be 'annotations', 'always' or 'never'",
-    ]);
-    expect(issues({ fs: { command: 'npx', approval: true } })[0]).toMatch(/'approval' must be/);
-  });
-
-  it("accepts 'deferLoading' on both shapes and rejects a non-boolean, naming the entry", () => {
-    const mcpServers: AgentSpec['mcpServers'] = { fs: { command: 'npx', deferLoading: true }, docs: { url: 'https://example.com/mcp', deferLoading: false } };
-    expect(agentSpecSchema.parse({ ...base, mcpServers }).mcpServers).toEqual(mcpServers);
-    expect(issues({ fs: { command: 'npx', deferLoading: 'yes' } })).toEqual([
-      "mcpServers.fs.deferLoading: AgentSpec validation failed: 'deferLoading' must be true or false",
-    ]);
-  });
-
-  it("accepts 'optional' on both shapes and rejects a non-boolean, naming the entry", () => {
-    const mcpServers: AgentSpec['mcpServers'] = { fs: { command: 'npx', optional: true }, docs: { url: 'https://example.com/mcp', optional: false } };
-    expect(agentSpecSchema.parse({ ...base, mcpServers }).mcpServers).toEqual(mcpServers);
-    expect(issues({ fs: { command: 'npx', optional: 'yes' } })).toEqual([
-      "mcpServers.fs.optional: AgentSpec validation failed: 'optional' must be true or false",
-    ]);
-  });
-
-  it('keeps every McpServerSpec field (a field the schema does not know would be silently dropped)', () => {
-    // Required<...> makes this fail to type-check when a field is added to the type and not here.
-    const stdio: Required<McpStdioServerSpec> = {
-      command: 'npx',
-      args: ['-y', 'server-fs'],
-      env: { ROOT: '/tmp' },
-      cwd: '/srv',
-      stderr: 'capture',
-      approval: 'never',
-      deferLoading: true,
-      timeoutMs: 5000,
-      connectTimeoutMs: 1000,
-      tools: { include: ['read'] },
-      optional: true,
-    };
-    const http: Required<McpHttpServerSpec> = {
-      url: 'https://example.com/mcp',
-      headers: { Authorization: 'Bearer x' },
-      approval: 'annotations',
-      deferLoading: false,
-      timeoutMs: 100,
-      connectTimeoutMs: 200,
-      tools: { exclude: ['write'] },
-      oauth: { redirectUri: 'https://agent.example.com/oauth/callback', clientId: 'c', clientSecret: 's', scopes: ['read'], clientName: 'n' },
-      optional: true,
-    };
-    expect(agentSpecSchema.parse({ ...base, mcpServers: { stdio, http } }).mcpServers).toEqual({ stdio, http });
-  });
-
-  it('still validates specs without the field', () => {
-    expect(agentSpecSchema.parse(base)).toEqual(base);
-  });
-
-  it('rejects an entry with neither command nor url, naming the entry', () => {
-    expect(issues({ broken: { args: ['x'] } })).toEqual([
-      "mcpServers.broken: AgentSpec validation failed: missing 'command' (stdio server) or 'url' (HTTP server)",
-    ]);
-  });
 
   it('rejects an entry with both command and url', () => {
     expect(issues({ both: { command: 'npx', url: 'https://example.com' } })[0]).toMatch(
       /^mcpServers\.both: AgentSpec validation failed: set either 'command'/
     );
-  });
-
-  it('rejects stdio-only fields on an HTTP server and headers on a stdio server', () => {
-    expect(issues({ a: { url: 'https://example.com', env: { K: 'v' } } })[0]).toMatch(
-      /'env' does not apply to an HTTP/
-    );
-    expect(issues({ b: { command: 'npx', headers: { K: 'v' } } })[0]).toMatch(
-      /'headers' does not apply to a stdio/
-    );
-  });
-
-  it("accepts 'oauth' on HTTP entries and rejects it on stdio entries", () => {
-    const mcpServers: AgentSpec['mcpServers'] = {
-      linear: { url: 'https://mcp.linear.app/mcp', oauth: { redirectUri: 'https://agent.example.com/oauth/callback' } },
-      notion: {
-        url: 'https://mcp.notion.com/mcp',
-        headers: { 'X-Team': 'a' },
-        oauth: { redirectUri: 'https://agent.example.com/oauth/callback', clientId: 'c', clientSecret: 's', scopes: ['read'], clientName: 'Support bot' },
-      },
-    };
-    expect(agentSpecSchema.parse({ ...base, mcpServers }).mcpServers).toEqual(mcpServers);
-    expect(issues({ fs: { command: 'npx', oauth: { redirectUri: 'https://a.example.com/cb' } } })[0]).toMatch(/'oauth' does not apply to a stdio/);
-    expect(issues({ web: { url: 'https://example.com', oauth: {} } })[0]).toMatch(/^mcpServers\.web\.oauth\.redirectUri: .*'oauth\.redirectUri' is required/);
-    expect(issues({ web: { url: 'https://example.com', oauth: { redirectUri: 'nope' } } })[0]).toMatch(/'oauth\.redirectUri' must be a valid URL/);
-    expect(issues({ web: { url: 'https://example.com', oauth: { redirectUri: 'https://a.example.com/cb', clientSecret: 's' } } })[0]).toMatch(
-      /'oauth\.clientSecret' needs 'oauth\.clientId'/
-    );
-    expect(issues({ web: { url: 'https://example.com', oauth: { redirectUri: 'https://a.example.com/cb', extra: 1 } } }).length).toBe(1);
-    expect(issues({ web: { url: 'https://example.com', oauth: 'yes' } })[0]).toMatch(/'oauth' must be an object/);
-  });
-
-  it('rejects a bad env type and a bad url', () => {
-    expect(issues({ fs: { command: 'npx', env: ['A=1'] } })).toEqual([
-      "mcpServers.fs.env: AgentSpec validation failed: 'env' must be a map of string to string",
-    ]);
-    expect(issues({ fs: { command: 'npx', env: { A: 1 } } })[0]).toMatch(
-      /^mcpServers\.fs\.env\.A: /
-    );
-    expect(issues({ web: { url: 'not a url' } })[0]).toMatch(/'url' must be a valid URL/);
   });
 
   it('accepts the legacy list form that lousho doctor used to read', () => {

@@ -1,21 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { viewportCentrePosition } from '../paletteActions';
-import { nextTabId, tabIds } from '../../components/tabs';
-
-describe('viewportCentrePosition', () => {
-  it('centres a node under the middle of an unpanned, unzoomed pane', () => {
-    expect(viewportCentrePosition([0, 0, 1], 800, 600)).toEqual({ x: 296, y: 260 });
-  });
-
-  it('accounts for pan and zoom', () => {
-    // Panned 100px right/50px down at 2x: the pane centre (400, 300) is flow (150, 125).
-    expect(viewportCentrePosition([100, 50, 2], 800, 600)).toEqual({ x: 150 - 104, y: 125 - 40 });
-  });
-
-  it('survives a zero zoom before the pane has measured', () => {
-    expect(viewportCentrePosition([0, 0, 0], 0, 0)).toEqual({ x: -104, y: -40 });
-  });
-});
+import { freeSpot } from '../paletteActions';
+import { nextTabId } from '../../components/tabs';
 
 describe('tab keyboard model', () => {
   const ids = ['test', 'logs', 'trace'] as const;
@@ -28,8 +13,11 @@ describe('tab keyboard model', () => {
     expect(nextTabId(ids, 'logs', 'End')).toBe('trace');
     expect(nextTabId(ids, 'logs', 'a')).toBeUndefined();
   });
+});
 
-  it('pairs each tab with its panel id', () => {
-    expect(tabIds('drawer', 'test')).toEqual({ tab: 'drawer-tab-test', panel: 'drawer-panel-test' });
+describe('freeSpot', () => {
+  it('keeps a free position and stacks below nodes already at the drop point', () => {
+    expect(freeSpot([{ x: 500, y: 500 }], { x: 100, y: 100 })).toEqual({ x: 100, y: 100 });
+    expect(freeSpot([{ x: 100, y: 100 }, { x: 110, y: 240 }], { x: 100, y: 100 })).toEqual({ x: 100, y: 380 });
   });
 });

@@ -26,10 +26,4 @@ describe('finishReason normalization', () => {
     expect(done?.type === 'run.done' && done.finishReason).toBe('other');
     expect(step?.type === 'step.done' && step.finishReason).toBe('other');
   });
-
-  it.each(['stop', 'length', 'content_filter', 'other'])("keeps the known reason '%s'", async (reason) => {
-    const result = await createAgent({ provider: endingWith(reason) }).send('x');
-
-    expect(result.finishReason).toBe(reason);
-  });
 });

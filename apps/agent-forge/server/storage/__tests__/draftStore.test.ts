@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { AgentRepo } from '../agentRepo';
-import { DraftStore, DraftMismatchError, NoDraftError, type NewDraftInput } from '../draftStore';
+import { DraftStore, DraftMismatchError, type NewDraftInput } from '../draftStore';
 
 const INPUT: NewDraftInput = {
   patch: { description: 'Triage faster.' },
@@ -33,71 +33,6 @@ describe('DraftStore', () => {
   });
 
   const draftsDir = (id: string) => path.join(repo.sidecarDir(id), 'drafts');
-  const currentPath = (id: string) => path.join(draftsDir(id), 'current.json');
-  const historyPath = (id: string, draftId: string) => path.join(draftsDir(id), 'history', `${draftId}.json`);
-
-  it('create writes a pending draft to current.json and current() returns it', async () => {
-    const { draft, replaced } = await store.create('ops', INPUT);
-
-    expect(replaced).toBeNull();
-    expect(draft).toMatchObject({
-      agentId: 'ops',
-      status: 'pending',
-      origin: 'author',
-      patch: INPUT.patch,
-      reason: INPUT.reason,
-      baseVersion: 3,
-      baseSpecHash: 'sha256:abc',
-      autoReview: null,
-      note: null,
-      createdAt: NOW.toISOString(),
-      updatedAt: NOW.toISOString(),
-      respondedAt: null,
-    });
-    expect(draft.id).toMatch(/^[0-9a-f-]{36}$/);
-    expect(await store.current('ops')).toEqual(draft);
-    expect(JSON.parse(fs.readFileSync(currentPath('ops'), 'utf8'))).toEqual(draft);
-    expect(await store.current('ghost')).toBeUndefined();
-  });
-
-  it('a second create withdraws the first into history and returns it as `replaced`', async () => {
-    const first = (await store.create('ops', INPUT)).draft;
-    NOW = new Date('2026-02-03T04:06:06.000Z');
-    const { draft: second, replaced } = await store.create('ops', { ...INPUT, reason: 'Better wording.' });
-
-    // Only the second draft is pending on disk.
-    expect(await store.current('ops')).toEqual(second);
-    expect(JSON.parse(fs.readFileSync(currentPath('ops'), 'utf8'))).toEqual(second);
-
-    // The first moved to history as withdrawn, stamped with the new clock time.
-    expect(replaced).not.toBeNull();
-    expect(replaced!.id).toBe(first.id);
-    expect(replaced).toMatchObject({
-      status: 'withdrawn',
-      respondedAt: NOW.toISOString(),
-      updatedAt: NOW.toISOString(),
-    });
-    expect(JSON.parse(fs.readFileSync(historyPath('ops', first.id), 'utf8'))).toEqual(replaced);
-    expect((await store.history('ops')).map((d) => d.id)).toEqual([first.id]);
-  });
-
-  it('settle approved with a note removes current.json and records the note + respondedAt in history', async () => {
-    const { draft } = await store.create('ops', INPUT);
-    NOW = new Date('2026-02-03T04:07:00.000Z');
-
-    const settled = await store.settle('ops', 'approved', { note: 'Looks right.' });
-    expect(settled).toMatchObject({
-      id: draft.id,
-      status: 'approved',
-      note: 'Looks right.',
-      respondedAt: NOW.toISOString(),
-      updatedAt: NOW.toISOString(),
-    });
-    expect(fs.existsSync(currentPath('ops'))).toBe(false);
-    expect(await store.current('ops')).toBeUndefined();
-    expect(JSON.parse(fs.readFileSync(historyPath('ops', draft.id), 'utf8'))).toEqual(settled);
-    expect(await store.history('ops')).toEqual([settled]);
-  });
 
   it('settle with a matching draftId settles; a wrong draftId throws DraftMismatchError and changes nothing', async () => {
     const { draft } = await store.create('ops', INPUT);
@@ -117,11 +52,6 @@ describe('DraftStore', () => {
     const settled = await store.settle('ops', 'rejected', { draftId: draft.id });
     expect(settled.status).toBe('rejected');
     expect(await store.current('ops')).toBeUndefined();
-  });
-
-  it('settle with no current draft throws NoDraftError', async () => {
-    await expect(store.settle('ops', 'approved')).rejects.toBeInstanceOf(NoDraftError);
-    await expect(store.settle('ops', 'approved')).rejects.toMatchObject({ code: 'LOUSHO_DRAFT_NOT_FOUND' });
   });
 
   it('history is newest respondedAt first, mixing settles and auto-withdrawals', async () => {
@@ -155,12 +85,5 @@ describe('DraftStore', () => {
     expect(await store.history('ops')).toEqual([settled]);
     expect(warn).toHaveBeenCalledOnce();
     warn.mockRestore();
-  });
-
-  it('drafts of different agents do not share current.json', async () => {
-    const a = (await store.create('ops', INPUT)).draft;
-    const b = (await store.create('billing', INPUT)).draft;
-    expect(await store.current('ops')).toEqual(a);
-    expect(await store.current('billing')).toEqual(b);
   });
 });

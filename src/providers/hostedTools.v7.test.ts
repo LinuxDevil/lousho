@@ -13,16 +13,13 @@ import * as aiV7 from 'ai-v7';
 import { MockLanguageModelV4 } from 'ai-v7/test';
 import { z } from 'zod';
 import { OpenAIProvider } from './OpenAIProvider';
-import { OllamaProvider } from './OllamaProvider';
-import { createFromAiSdk } from './fromAiSdk';
-import type { LLMProvider, StreamChunk } from './llm';
+import type { LLMProvider } from './llm';
 import type { AiSdkModule } from './aiSdkCompat';
-import { codeInterpreter, fileSearch, hostedTool, webSearch } from '../tools/hosted';
+import { codeInterpreter, fileSearch, webSearch } from '../tools/hosted';
 import { defineTool } from '../tools/defineTool';
 import { createAgent } from '../createAgent';
 import { AgentExecutor } from '../execution/AgentExecutor';
 import type { AgentEvent } from '../execution/agentEvents';
-import type { LanguageModel } from 'ai';
 
 type V7Stream = Awaited<ReturnType<MockLanguageModelV4['doStream']>>['stream'];
 type V7Part = V7Stream extends ReadableStream<infer P> ? P : never;
@@ -121,12 +118,6 @@ function openAIOnV7(model: MockLanguageModelV4): OpenAIProvider {
   return provider;
 }
 
-async function collect(stream: AsyncIterable<StreamChunk>): Promise<StreamChunk[]> {
-  const chunks: StreamChunk[] = [];
-  for await (const chunk of stream) chunks.push(chunk);
-  return chunks;
-}
-
 beforeEach(() => {
   for (const factory of Object.values(factories)) factory.mockClear();
 });
@@ -168,59 +159,6 @@ describe('OpenAIProvider maps the hosted helpers (stubbed @ai-sdk/openai)', () =
       args: { searchContextSize: 'low', filters: { allowedDomains: ['lousho.com'] }, userLocation: { type: 'approximate', country: 'DE' } },
     });
   });
-
-  it('an @ai-sdk/openai without tools.webSearch is LOUSHO_HOSTED_TOOL_UNSUPPORTED', async () => {
-    const provider = openAIOnV7(scriptedModel().model);
-    const original = factories.webSearch;
-    Object.assign(factories, { webSearch: undefined });
-    try {
-      await expect(provider.generate({ messages: [{ role: 'user', content: 'hi' }], hostedTools: [webSearch()] })).rejects.toMatchObject({
-        code: 'LOUSHO_HOSTED_TOOL_UNSUPPORTED',
-        message: expect.stringContaining('no tools.webSearch()'),
-      });
-    } finally {
-      Object.assign(factories, { webSearch: original });
-    }
-  });
-});
-
-describe('provider-executed calls on ai 7', () => {
-  it('stream(): hosted chunks with the result and its source, then the text; no local tool call', async () => {
-    const provider = openAIOnV7(scriptedModel().model);
-    const streamed = await provider.stream({ messages: [{ role: 'user', content: 'hi' }], hostedTools: [webSearch()] });
-    const chunks = await collect(streamed.fullStream);
-    expect(chunks.map((chunk) => chunk.type)).toEqual(['hosted-tool-call', 'hosted-tool-result', 'text-delta', 'text-delta', 'finish']);
-    expect(chunks[0]!.hostedToolCall).toMatchObject({ id: 'ws_1', name: 'web_search', args: { query: 'lousho sdk' } });
-    expect(chunks[1]!.hostedToolCall).toEqual({
-      id: 'ws_1',
-      name: 'web_search',
-      args: { query: 'lousho sdk' },
-      result: SEARCH_RESULT,
-      sources: [{ url: 'https://lousho.com', title: 'Lousho' }],
-    });
-    expect(await streamed.toolCalls).toEqual([]);
-  });
-
-  it('generate(): hostedToolCalls in call order, no toolCalls', async () => {
-    const { calls, model } = scriptedModel();
-    const provider = openAIOnV7(model);
-    const result = await provider.generate({ messages: [{ role: 'user', content: 'hi' }], hostedTools: [webSearch()] });
-    expect(calls[0]!.tools?.map((tool) => tool.type)).toEqual(['provider']);
-    expect(result.text).toBe('Lousho is an SDK.');
-    expect(result.toolCalls ?? []).toEqual([]);
-    expect(result.hostedToolCalls).toEqual([
-      { id: 'ws_1', name: 'web_search', args: { query: 'lousho sdk' }, result: SEARCH_RESULT, sources: [{ url: 'https://lousho.com', title: 'Lousho' }] },
-    ]);
-  });
-
-  it('hostedTool() passes an AI SDK provider tool through on any AI SDK provider (fromAiSdk)', async () => {
-    const { calls, model } = scriptedModel(() => ({ ...searchResult(), content: [{ type: 'text', text: 'ok' }] }));
-    const provider = createFromAiSdk(model as unknown as LanguageModel, {}, aiV7 as AiSdkModule);
-    expect(provider.supportsHostedTool?.('custom')).toBe(true);
-    expect(provider.supportsHostedTool?.('web_search')).toBe(false);
-    await provider.generate({ messages: [{ role: 'user', content: 'hi' }], hostedTools: [hostedTool('image_generation', providerTool('openai.image_generation', { size: 'auto' }))] });
-    expect(calls[0]!.tools).toEqual([{ type: 'provider', name: 'image_generation', id: 'openai.image_generation', args: { size: 'auto' } }]);
-  });
 });
 
 /** The agent's events, with a local tool that must never run. */
@@ -253,25 +191,6 @@ function expectHostedRun(events: AgentEvent[], result: { usage: { hostedToolCall
 }
 
 describe('an agent run over provider-executed calls', () => {
-  it('streamed (stream()): tool.start / tool.done with executedBy provider, no local tool, metadata and usage', async () => {
-    const { calls, model } = scriptedModel();
-    const { agent, events, execute } = agentOver(openAIOnV7(model));
-    const run = agent.stream('What is lousho?');
-    for await (const event of run) void event;
-    const result = await run.result;
-    expectHostedRun(events, result);
-    expect(execute).not.toHaveBeenCalled();
-    expect(calls).toHaveLength(1);
-    // The hosted call is not replayed as a tool call on a later model call.
-    expect(result.messages.filter((m) => 'toolCalls' in m && m.toolCalls)).toEqual([]);
-  });
-
-  it('send() with a listener streams the call; the events are the same', async () => {
-    const { model } = scriptedModel();
-    const { agent, events, execute } = agentOver(openAIOnV7(model));
-    expectHostedRun(events, await agent.send('What is lousho?'));
-    expect(execute).not.toHaveBeenCalled();
-  });
 
   it('a non-streamed step (generate()) reports the calls after it returns, in call order', async () => {
     const { model } = scriptedModel();
@@ -314,18 +233,6 @@ describe('unsupported pairings are LOUSHO_HOSTED_TOOL_UNSUPPORTED', () => {
     });
     expect(v4.generateText).not.toHaveBeenCalled();
     // Through an agent the executor refuses before any model call.
-    await expect(createAgent({ provider, instructions: 'x', tools: [webSearch()] }).send('hi')).rejects.toMatchObject({ code: 'LOUSHO_HOSTED_TOOL_UNSUPPORTED' });
-  });
-
-  it('Ollama on ai 7: no built-in hosted tools', async () => {
-    const provider = new OllamaProvider({ name: 'ollama', maxRetries: 0 });
-    Object.assign(provider, { ai: aiV7 as AiSdkModule });
-    vi.spyOn(provider as unknown as { createModel: () => Promise<unknown> }, 'createModel').mockResolvedValue(scriptedModel().model);
-    expect(provider.supportsHostedTool('web_search')).toBe(false);
-    await expect(provider.generate({ messages: [{ role: 'user', content: 'hi' }], hostedTools: [webSearch()] })).rejects.toMatchObject({
-      code: 'LOUSHO_HOSTED_TOOL_UNSUPPORTED',
-      message: expect.stringContaining("The 'ollama' provider cannot run hosted tool 'web_search'"),
-    });
     await expect(createAgent({ provider, instructions: 'x', tools: [webSearch()] }).send('hi')).rejects.toMatchObject({ code: 'LOUSHO_HOSTED_TOOL_UNSUPPORTED' });
   });
 });

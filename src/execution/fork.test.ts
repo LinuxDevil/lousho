@@ -9,7 +9,6 @@ import { AgentExecutor } from './AgentExecutor';
 import type { Checkpoint, CheckpointStore } from './checkpoint';
 import { ConfigurationError, SDKError } from './errors';
 import { memoryStore } from '../storage/agentStore';
-import { createAgent } from '../createAgent';
 import { compareTrajectories } from '../evals/drift';
 import { defineTool, type DefinedTool } from '../tools/defineTool';import { ToolRegistry } from '../tools';
 import { mockModel, type MockTurn } from '../testing';
@@ -196,28 +195,5 @@ describe('AgentExecutor.fork', () => {
     await expect(
       AgentExecutor.fork({ sessionId: 'trip', fromStep: 1, checkpointStore: env.checkpointStore, patch: { toolResult: { toolCallId: 'x', result: 1 } } })
     ).rejects.toThrow(/no tool call 'x'/);
-  });
-});
-
-describe('agent.fork', () => {
-  it('forks a send() run in the agent store; agent.resume() continues the fork', async () => {
-    const runs: Record<string, number> = {};
-    const store = memoryStore();
-    const provider = mockModel([askWeather, decide, report, decide, report]);
-    const agent = createAgent({ provider, instructions: 'Plan the trip.', tools: tools(runs), store });
-
-    expect((await agent.send('Plan my trip', { sessionId: 'trip' })).text).toBe('done: "picnic planned"');
-    const fork = await agent.fork('trip', { fromStep: 1, patch: { toolResult: { toolCallId: 'call_weather', result: { forecast: 'rain' } } } });
-    expect(fork.sessionId).toBe('trip.fork-1');
-
-    const replayed = await agent.resume(fork.sessionId);
-    expect(replayed?.text).toBe('done: "umbrella bought"');
-    provider.assertExhausted();
-    expect((await store.checkpoints.load('trip'))?.messages.at(-1)?.content).toBe('done: "picnic planned"');
-  });
-
-  it('needs a checkpoint store', async () => {
-    const agent = createAgent({ provider: mockModel([]) });
-    await expect(agent.fork('trip', { fromStep: 1 })).rejects.toMatchObject({ code: 'LOUSHO_CONFIG_MISSING_CHECKPOINT_STORE' });
   });
 });

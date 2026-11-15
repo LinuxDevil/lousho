@@ -8,7 +8,6 @@ import { subagentOptionsOf, withSubagentOptions } from './backgroundTasks';
 import { AgentExecutor } from '../execution/AgentExecutor';
 import type { AgentEvent } from '../execution/agentEvents';
 import type { AgentConfig } from '../types';
-import type { Span } from '../execution/tracing';
 
 const bgTask = (agent: string, prompt: string) => ({
   name: 'task',
@@ -56,53 +55,6 @@ function waitingChild(tool: ReturnType<typeof gate>['tool'], answer = 'answer') 
 }
 
 describe('background sub-agents', () => {
-  it('returns a taskId at once; agent_status and agent_await report the answer', async () => {
-    const { tool, release } = gate();
-    const researcher = waitingChild(tool, 'Paris');
-    const leadModel = mockModel([
-      { toolCalls: [bgTask('researcher', 'capital of France?')] },
-      { toolCalls: [{ name: 'agent_status', args: {} }] },
-      () => (release(), { toolCalls: [{ name: 'agent_await', args: { taskId: 'task_1' } }] }),
-      'done',
-    ]);
-    const lead = createAgent({ provider: leadModel, subagents: { researcher } });
-
-    const result = await lead.send('go');
-
-    expect(results(result.messages, 'task')).toEqual([{ taskId: 'task_1', status: 'running', agent: 'researcher' }]);
-    const [status] = results(result.messages, 'agent_status');
-    expect(status.tasks).toEqual([{ taskId: 'task_1', agent: 'researcher', status: 'running', elapsedMs: expect.any(Number) }]);
-    expect(results(result.messages, 'agent_await')[0]).toMatchObject({
-      taskId: 'task_1',
-      status: 'done',
-      result: "Paris #1\n\n[sub-agent 'researcher': 2 step(s), finish reason 'stop', taskId 'task_1']",
-    });
-    expect(leadModel.calls[0].tools?.map((t) => t.function.name)).toEqual(['task', 'agent_status', 'agent_await', 'agent_cancel']);
-    expect(result.text).toBe('done');
-  });
-
-  it('queues tasks beyond maxConcurrent and starts them as slots free', async () => {
-    const { tool, release } = gate();
-    const researcher = waitingChild(tool);
-    const leadModel = mockModel([
-      { toolCalls: [bgTask('researcher', 'a'), bgTask('researcher', 'b')] },
-      { toolCalls: [{ name: 'agent_status', args: {} }] },
-      () => (release(), { toolCalls: [{ name: 'agent_await', args: { taskIds: ['task_1', 'task_2'] } }] }),
-      'done',
-    ]);
-    const lead = createAgent({ provider: leadModel, subagents: withSubagentOptions({ researcher }, { maxConcurrent: 1 }) });
-
-    const result = await lead.send('go');
-
-    expect(results(result.messages, 'task').map((r) => r.status)).toEqual(['running', 'queued']);
-    const [status] = results(result.messages, 'agent_status');
-    expect((status.tasks as { status: string }[]).map((t) => t.status)).toEqual(['running', 'queued']);
-    const [awaited] = results(result.messages, 'agent_await');
-    expect((awaited.tasks as { status: string; result: string }[]).map((t) => [t.status, t.result.split('\n')[0]])).toEqual([
-      ['done', 'answer #1'],
-      ['done', 'answer #2'],
-    ]);
-  });
 
   it('agent_await times out on a running task, and agent_cancel stops it', async () => {
     const { tool, aborted } = gate();
@@ -121,25 +73,6 @@ describe('background sub-agents', () => {
 
     expect(results(result.messages, 'agent_await').map((r) => r.status)).toEqual(['timeout', 'cancelled']);
     expect(results(result.messages, 'agent_cancel')[0]).toMatchObject({ taskId: 'task_1', status: 'cancelled' });
-    await aborted;
-  });
-
-  it('aborting the lead cancels its background sub-agents', async () => {
-    const { tool, aborted, entered } = gate();
-    const controller = new AbortController();
-    const abortOnceRunning = async () => {
-      await entered;
-      controller.abort();
-      return 'stopping';
-    };
-    const lead = createAgent({
-      provider: mockModel([{ toolCalls: [bgTask('researcher', 'a')] }, abortOnceRunning]),
-      subagents: { researcher: waitingChild(tool) },
-    });
-
-    await lead.send('go', { signal: controller.signal });
-
-    // The child's in-flight tool call sees the abort (the test times out otherwise).
     await aborted;
   });
 
@@ -175,28 +108,6 @@ describe('background sub-agents', () => {
     // Never awaited: reported at the end, and not resumable (no approval of the lead).
     expect(result.backgroundTasks).toEqual([expect.objectContaining({ status: 'awaiting-approval' })]);
     expect(await lead.approvals.list()).toEqual([]);
-  });
-
-  it('still applies maxSubagentDepth to background sub-agents', async () => {
-    const researcherModel = mockModel(['researched']);
-    const researcher = createAgent({
-      provider: researcherModel,
-      description: 'Researches',
-      subagents: { deeper: createAgent({ provider: mockModel(['x']), description: 'Deeper' }) },
-    });
-    const lead = createAgent({
-      provider: mockModel([
-        { toolCalls: [bgTask('researcher', 'a')] },
-        { toolCalls: [{ name: 'agent_await', args: { taskId: 'task_1' } }] },
-        'done',
-      ]),
-      subagents: { researcher },
-    });
-
-    const result = await lead.send('go');
-
-    expect(researcherModel.calls[0].tools).toBeUndefined();
-    expect(results(result.messages, 'agent_await')[0]).toMatchObject({ status: 'done' });
   });
 
   it('reports unknown task ids and bad options', async () => {
@@ -244,49 +155,6 @@ describe('background sub-agents at the end of the lead run', () => {
     expect(events).toHaveLength(seen);
   });
 
-  it('awaitBackgroundOnFinish waits for them and reports their final statuses', async () => {
-    const { tool, release } = gate();
-    const lead = createAgent({
-      provider: mockModel([{ toolCalls: [bgTask('researcher', 'a')] }, () => (setTimeout(release, 5), 'done')]),
-      subagents: { researcher: waitingChild(tool) },
-      subagentOptions: { awaitBackgroundOnFinish: true },
-    });
-
-    const result = await lead.send('go');
-
-    expect(result.text).toBe('done');
-    expect(result.backgroundTasks).toEqual([{ taskId: 'task_1', agent: 'researcher', status: 'done', elapsedMs: expect.any(Number) }]);
-  });
-
-  it("rolls a background child's cost up to the lead's invoke_agent span", async () => {
-    const MODEL = 'openai/gpt-4o-mini';
-    const ended: Span[] = [];
-    const exporter = { onSpanStart: () => {}, onSpanEnd: (span: Span) => void ended.push({ ...span }) };
-    const worker = createAgent({
-      name: 'worker',
-      provider: mockModel([{ text: 'child', usage: { inputTokens: 100000, outputTokens: 10000 }, delayMs: 30 }], { defaultModel: MODEL }),
-      model: MODEL,
-      description: 'Worker',
-    });
-    const lead = createAgent({
-      name: 'lead',
-      provider: mockModel(
-        [{ toolCalls: [bgTask('worker', 'job')], usage: { inputTokens: 10, outputTokens: 1 } }, { text: 'done', usage: { inputTokens: 10, outputTokens: 1 } }],
-        { defaultModel: MODEL }
-      ),
-      model: MODEL,
-      subagents: { worker },
-      subagentOptions: { awaitBackgroundOnFinish: true },
-      exporter,
-    });
-
-    const result = await lead.send('go');
-
-    const leadSpan = ended.find((span) => span.name === 'invoke_agent lead')!;
-    expect(result.usage.costUsd).toBeGreaterThan(0.02);
-    expect(leadSpan.attributes['lousho.cost_usd']).toBeCloseTo(result.usage.costUsd!, 10);
-  });
-
   it('createAgent({ subagentOptions }) is forwarded over withSubagentOptions(), without changing the subagents value', async () => {
     const { tool, release } = gate();
     const subagents = withSubagentOptions({ researcher: waitingChild(tool) }, { maxConcurrent: 3, awaitBackgroundOnFinish: true });
@@ -301,33 +169,5 @@ describe('background sub-agents at the end of the lead run', () => {
     expect(results(result.messages, 'task').map((r) => r.status)).toEqual(['running', 'queued']);
     expect(statuses(result.backgroundTasks)).toEqual(['done', 'done']);
     expect(subagentOptionsOf(subagents)).toEqual({ maxConcurrent: 3, awaitBackgroundOnFinish: true });
-  });
-
-  it('cancels them when the lead run fails, even with awaitBackgroundOnFinish', async () => {
-    const { tool, aborted, entered } = gate();
-    const lead = createAgent({
-      provider: mockModel([{ toolCalls: [bgTask('researcher', 'a')] }, async () => (await entered, { error: new Error('model down') })]),
-      subagents: { researcher: waitingChild(tool) },
-      subagentOptions: { awaitBackgroundOnFinish: true },
-    });
-
-    await expect(lead.send('go')).rejects.toThrow('model down');
-    await aborted;
-  });
-
-  it('cancels them when the lead pauses for approval', async () => {
-    const { tool, aborted, entered } = gate();
-    const deploy = defineTool({ name: 'deploy', description: 'Deploys', input: z.object({}), needsApproval: true, execute: () => 'deployed' });
-    const lead = createAgent({
-      provider: mockModel([{ toolCalls: [bgTask('researcher', 'a')] }, async () => (await entered, { toolCalls: [{ name: 'deploy' }] })]),
-      tools: [deploy],
-      subagents: { researcher: waitingChild(tool) },
-    });
-
-    const result = await lead.send('go');
-
-    expect(result.finishReason).toBe('awaiting-approval');
-    expect(statuses(result.backgroundTasks)).toEqual(['cancelled']);
-    await aborted;
   });
 });

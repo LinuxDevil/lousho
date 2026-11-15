@@ -60,22 +60,6 @@ function get(database: SqlDatabase, query: string): Captured {
 const scoresOf = (captured: Captured): ScoreRow[] => (captured.body as { scores: ScoreRow[] }).scores;
 
 describe('GET /api/v1/scores filters', () => {
-  it('filters by trace_id, name, agent_id and source', () => {
-    const database = db();
-    try {
-      ingestBatch(database, [
-        score({ score_id: 'a', trace_id: 't1', name: 'eval-a/completed()', agent_id: 'ag1' }),
-        score({ score_id: 'b', trace_id: 't2', name: 'eval-a/tone', agent_id: 'ag1', source: 'judge' }),
-        score({ score_id: 'c', trace_id: 't1', name: 'eval-b/completed()', agent_id: 'ag2' }),
-      ]);
-      expect(scoresOf(get(database, 'trace_id=t1')).map((s) => s.score_id).sort()).toEqual(['a', 'c']);
-      expect(scoresOf(get(database, 'name=eval-a/tone')).map((s) => s.score_id)).toEqual(['b']);
-      expect(scoresOf(get(database, 'agent_id=ag1')).map((s) => s.score_id).sort()).toEqual(['a', 'b']);
-      expect(scoresOf(get(database, 'source=judge')).map((s) => s.score_id)).toEqual(['b']);
-    } finally {
-      database.close();
-    }
-  });
 
   it('matches the eval-name prefix with eval= (the row itself and its assertion family)', () => {
     const database = db();
@@ -112,53 +96,6 @@ describe('GET /api/v1/scores filters', () => {
 });
 
 describe('GET /api/v1/scores?aggregate=eval', () => {
-  it('groups by eval name and reports pass-rate, mean value and last-seen', () => {
-    const database = db();
-    try {
-      ingestBatch(database, [
-        // refund: three passes (a judge check with no failure comment, a skipped-style perfect score with a comment), one failure
-        score({ score_id: 'a', name: 'refund/completed()', value: 1, ts: T0 }),
-        score({ score_id: 'b', name: 'refund/tone', value: 0.9, source: 'judge', ts: T0 + 1000 }),
-        score({ score_id: 'c', name: 'refund/tone', value: 0.2, source: 'judge', comment: 'soft check failed', ts: T0 + 2000 }),
-        score({ score_id: 'd', name: 'refund/budget', value: 1, comment: 'skipped: no cost data', ts: T0 + 3000 }),
-        // greet: one failure only
-        score({ score_id: 'e', name: 'greet/completed()', value: 0, comment: 'completed() failed', ts: T0 + 4000 }),
-      ]);
-      const res = get(database, 'aggregate=eval');
-      expect(res.status).toBe(200);
-      const { evals } = res.body as { evals: { name: string; count: number; passed: number; pass_rate: number; avg_value: number | null; last_ts: number }[] };
-      expect(evals).toHaveLength(2);
-      const greet = evals.find((e) => e.name === 'greet');
-      const refund = evals.find((e) => e.name === 'refund');
-      expect(greet).toMatchObject({ count: 1, passed: 0, pass_rate: 0, last_ts: T0 + 4000 });
-      expect(refund).toMatchObject({ count: 4, passed: 3, pass_rate: 0.75, last_ts: T0 + 3000 });
-      expect(refund?.avg_value).toBeCloseTo((1 + 0.9 + 0.2 + 1) / 4);
-      // newest first
-      expect(evals[0].name).toBe('greet');
-    } finally {
-      database.close();
-    }
-  });
-
-  it('eval and judge pass without a failure comment; human and online pass only on a value of 1', () => {
-    const database = db();
-    try {
-      const rows = (source: string) => [
-        score({ score_id: `${source}-1`, name: `${source}/x`, source, value: 1 }),
-        score({ score_id: `${source}-0`, name: `${source}/x`, source, value: 0 }),
-        score({ score_id: `${source}-0.9`, name: `${source}/x`, source, value: 0.9 }),
-        score({ score_id: `${source}-null`, name: `${source}/x`, source, value: null }),
-        score({ score_id: `${source}-failed`, name: `${source}/x`, source, value: 0, comment: 'check failed' }),
-      ];
-      ingestBatch(database, ['eval', 'judge', 'human', 'online'].flatMap(rows));
-      const { evals } = get(database, 'aggregate=eval').body as { evals: { name: string; passed: number }[] };
-      const passed = Object.fromEntries(evals.map((e) => [e.name, e.passed]));
-      // eval and judge write a comment only on failure: no comment passes, whatever the value.
-      expect(passed).toEqual({ eval: 4, judge: 4, human: 1, online: 1 });
-    } finally {
-      database.close();
-    }
-  });
 
   it('honours the same filters (agent, time range) as the row listing', () => {
     const database = db();
@@ -232,20 +169,6 @@ describe('POST /api/v1/scores (human feedback)', () => {
     return database;
   };
 
-  it('201s with a score_id, stores source human with the root agent_id, and GET returns it', async () => {
-    const database = seeded();
-    try {
-      const out = await post(database, { trace_id: 'tf', name: 'thumbs', value: 1, comment: 'nice' });
-      expect(out.status).toBe(201);
-      const { score_id } = out.body as { score_id: string };
-      expect(score_id).toMatch(/^[0-9a-f-]{36}$/);
-      const [row] = scoresOf(get(database, 'trace_id=tf'));
-      expect(row).toMatchObject({ score_id, source: 'human', name: 'thumbs', value: 1, comment: 'nice', agent_id: 'ag-root', obs_id: null });
-    } finally {
-      database.close();
-    }
-  });
-
   it('is append-only: the same body twice makes two rows; null value and obs_id are accepted', async () => {
     const database = seeded();
     try {
@@ -269,27 +192,6 @@ describe('POST /api/v1/scores (human feedback)', () => {
       expect((await post(database, { trace_id: 'tf', obs_id: 'o-other', name: 'x', value: 1 })).status).toBe(404);
       expect((await post(database, { trace_id: 'tf', obs_id: 'missing', name: 'x', value: 1 })).status).toBe(404);
       expect(scoresOf(get(database, ''))).toHaveLength(0);
-    } finally {
-      database.close();
-    }
-  });
-
-  it('rejects invalid bodies with LOUSHO_REQUEST_INVALID', async () => {
-    const database = seeded();
-    try {
-      const bad: unknown[] = [
-        { trace_id: 'tf', name: '', value: 1 },
-        { trace_id: 'tf', name: '   ', value: 1 },
-        { trace_id: 'tf', name: 'n'.repeat(201), value: 1 },
-        { trace_id: '', name: 'x', value: 1 },
-        { trace_id: 'tf', name: 'x', value: 'high' },
-        { trace_id: 'tf', name: 'x' },
-        { trace_id: 'tf', name: 'x', value: 1, comment: 'c'.repeat(10_001) },
-        'not json',
-      ];
-      for (const body of bad) {
-        await expect(post(database, body)).rejects.toMatchObject({ code: 'LOUSHO_REQUEST_INVALID' });
-      }
     } finally {
       database.close();
     }

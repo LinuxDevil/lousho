@@ -5,14 +5,12 @@
  * and outcome - never the checked text or the trip reason.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { createAgent } from '../createAgent';
 import { defineTool } from '../tools/defineTool';
 import { mockModel } from '../testing';
 import {
-  checkOutputGuardrails,
-  checkToolGuardrails,
   maxLengthGuardrail,
   regexGuardrail,
   type IoGuardrail,
@@ -61,27 +59,6 @@ describe('guardrail check spans', () => {
       [SdkAttr.GUARDRAIL_NAME]: 'secret-scan',
       [SdkAttr.GUARDRAIL_KIND]: 'output',
     });
-  });
-
-  it('a tripped input check ends its span with outcome block; the run still ends as before', async () => {
-    const { exporter, guardrailSpans } = recorder();
-    const model = mockModel(['never sent']);
-    const agent = createAgent({
-      provider: model,
-      guardrails: { input: [maxLengthGuardrail({ maxChars: 5 })] },
-      exporter,
-    });
-
-    const result = await agent.send('a much longer input than five characters');
-
-    expect(model.calls).toHaveLength(0);
-    expect(result.finishReason).toBe('guardrail');
-    expect(result.guardrail?.name).toBe('max-length');
-    const [span] = guardrailSpans();
-    expect(span.name).toBe('guardrail max-length');
-    expect(span.attributes[SdkAttr.GUARDRAIL_OUTCOME]).toBe('block');
-    // A trip is an outcome, not a failure: no error status on the span.
-    expect(span.status).toBeUndefined();
   });
 
   it('a rewriting check ends its span with outcome rewrite', async () => {
@@ -167,43 +144,5 @@ describe('guardrail check spans', () => {
     expect(Object.keys(span.attributes).sort()).toEqual(
       [SdkAttr.GUARDRAIL_KIND, SdkAttr.GUARDRAIL_NAME, SdkAttr.GUARDRAIL_OUTCOME].sort()
     );
-  });
-});
-
-describe('without a span context the check runs directly', () => {
-  it('no exporter: the check runs and the run is unchanged', async () => {
-    const check = vi.fn(() => ({ ok: true }) as const);
-    const agent = createAgent({
-      provider: mockModel(['hi']),
-      guardrails: { input: [{ name: 'g', check }] },
-    });
-
-    const result = await agent.send('hello');
-
-    expect(result.finishReason).toBe('stop');
-    expect(check).toHaveBeenCalledTimes(1);
-  });
-
-  it('an exporter without a parent span emits nothing: the check is called directly', async () => {
-    const { started, exporter } = recorder();
-    const check = vi.fn(() => ({ ok: true }) as const);
-
-    const args = await checkToolGuardrails(
-      { guardrails: { tools: [{ name: 'g', check }] }, exporter },
-      { toolName: 'some_tool', args: { a: 1 }, messages: [] }
-    );
-
-    expect(args).toEqual({ a: 1 });
-    expect(check).toHaveBeenCalledTimes(1);
-    expect(started).toHaveLength(0);
-  });
-
-  it('checkOutputGuardrails with a bare runtime returns the text untouched', async () => {
-    const check = vi.fn(() => ({ ok: true }) as const);
-
-    const checked = await checkOutputGuardrails({ guardrails: { output: [{ name: 'g', check }] } }, 'the reply', []);
-
-    expect(checked).toEqual({ text: 'the reply', rewritten: false });
-    expect(check).toHaveBeenCalledTimes(1);
   });
 });

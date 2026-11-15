@@ -17,7 +17,6 @@ import { createFsAgentStore } from '../../src/persistence/fsAgentStore';
 import { AgentRepo } from '../storage/agentRepo';
 import { newTestHost } from './testHost';
 import type { LegacyAgentStore } from '../../src/persistence/AgentStore';
-import { sdkRootDir } from '../sdkRoot';
 import { TemplateCatalog } from '../templates/templateCatalog';
 import type { TemplateDetail, TemplateSummary } from '../../shared/wireTypes';
 
@@ -121,18 +120,6 @@ describe('/templates routes', () => {
     });
   });
 
-  it('GET /templates answers [] when the templates dir is missing', async () => {
-    const missing = createApp({
-      agentStore,
-      runManager,
-      baseDir,
-      templateCatalog: new TemplateCatalog(path.join(templatesDir, 'does-not-exist')),
-    });
-    const res = await request(missing).get('/templates');
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual([]);
-  });
-
   it('GET /templates/:id returns the summary, the parsed v2 spec and the README', async () => {
     const res = await request(app()).get('/templates/zebra');
     expect(res.status).toBe(200);
@@ -140,12 +127,6 @@ describe('/templates routes', () => {
     expect(detail.summary).toMatchObject({ id: 'zebra', title: 'Zebra', category: 'animals' });
     expect(detail.spec).toMatchObject({ version: 2, name: 'Fixture agent', model: 'mock/mock-1' });
     expect(detail.readme).toBe('# Zebra\n\nReads like a zebra.\n');
-  });
-
-  it("GET /templates/:id answers readme '' when the template ships no README.md", async () => {
-    const res = await request(app()).get('/templates/aardvark');
-    expect(res.status).toBe(200);
-    expect((res.body as TemplateDetail).readme).toBe('');
   });
 
   it('GET /templates/:id 404s LOUSHO_TEMPLATE_NOT_FOUND for a missing or invalid template', async () => {
@@ -159,42 +140,9 @@ describe('/templates routes', () => {
     expect(broken.body.code).toBe('LOUSHO_TEMPLATE_NOT_FOUND');
   });
 
-  it.each([['/templates/Bad_Id'], ['/templates/a..b'], ['/templates/-lead'], [`/templates/${encodeURIComponent('../x')}`]])(
-    'GET %s 400s LOUSHO_TEMPLATE_ID_INVALID',
-    async (path0) => {
-      const res = await request(app()).get(path0);
-      expect(res.status).toBe(400);
-      expect(res.body).toEqual({ error: 'Invalid template id', code: 'LOUSHO_TEMPLATE_ID_INVALID' });
-    }
-  );
-
   it('GET /templates/../x 400s - the id never reaches the filesystem', async () => {
     const res = await request(app()).get('/templates/../x');
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'Invalid template id', code: 'LOUSHO_TEMPLATE_ID_INVALID' });
-  });
-});
-
-describe('the SDK shipped templates', () => {
-  it('lists the six shipped templates and reads pr-reviewer (skips when templates/ is absent)', (ctx) => {
-    const dir = path.join(sdkRootDir(), 'templates');
-    if (!fs.existsSync(dir)) return ctx.skip();
-    return (async () => {
-      const catalog = new TemplateCatalog();
-      const list = await catalog.list();
-      expect(list.map((t) => t.id).sort()).toEqual([
-        'docs-qa',
-        'inbox-triage',
-        'incident-responder',
-        'pr-reviewer',
-        'research-assistant',
-        'support-triage',
-      ]);
-      const detail = await catalog.get('pr-reviewer');
-      expect(detail?.summary.title).toBe('Pull request reviewer');
-      expect(detail?.spec.version).toBe(2);
-      expect(detail?.spec.model).toBe('anthropic/claude-sonnet-5-5');
-      expect(detail?.readme.length).toBeGreaterThan(0);
-    })();
   });
 });

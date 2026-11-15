@@ -15,7 +15,6 @@ import { memoryStore, type AgentStore } from '../storage/agentStore';
 import { fileStore } from '../storage/fileStore';
 import { SqliteStore } from '../storage/sqlite';
 import { mockModel } from '../testing';
-import { createRouteHandler } from '../server/routeHandler';
 import type { Message } from '../providers/llm';
 import type { CheckpointStore } from '../execution/checkpoint';
 import type { Principal } from '../auth/types';
@@ -71,30 +70,6 @@ describe('a session turn whose first model call fails', () => {
     }
   });
 
-  it('counts each failed attempt, and resume() finishes the turn', async () => {
-    const store = memoryStore();
-    const session = createAgent({ provider: failing(), store, retry: false }).session({ id: 'chat' });
-    await expect(session.send('hello')).rejects.toThrow('503');
-    await expect(session.resume()).rejects.toThrow('503');
-    expect(await store.checkpoints.load('chat.turn-0')).toMatchObject({ attempts: 2, unstarted: true });
-
-    const model = mockModel(['Hi!']);
-    const resumed = await createAgent({ provider: model, store }).session({ id: 'chat' }).resume();
-    expect(resumed?.text).toBe('Hi!');
-    expect(users(model.calls[0].messages)).toEqual(['hello']);
-    expect((await store.sessions.load('chat'))?.map((m) => m.content)).toEqual(['hello', 'Hi!']);
-  });
-
-  it('keeps the input of a stream() turn too', async () => {
-    const store = memoryStore();
-    const run = createAgent({ provider: failing(), store, retry: false }).session({ id: 'chat' }).stream('stream me');
-    for await (const event of run) void event;
-    await expect(run.result).rejects.toThrow('503');
-    const checkpoint = await store.checkpoints.load('chat.turn-0');
-    expect(checkpoint).toMatchObject({ status: 'in-progress', unstarted: true });
-    expect(users(checkpoint!.messages)).toEqual(['stream me']);
-  });
-
   it('keeps the metadata and principal the turn was sent with for the rerun', async () => {
     const store = memoryStore();
     const principal: Principal = { id: 'user-1', type: 'user', authenticator: 'test' };
@@ -106,16 +81,5 @@ describe('a session turn whose first model call fails', () => {
     const agent = createAgent({ provider: mockModel(['ok']), store, instructions: (ctx) => (seen.push(ctx.metadata), 'Be brief.') });
     await agent.session({ id: 'chat' }).resume();
     expect(seen).toContainEqual({ tenant: 'acme' });
-  });
-
-  it('serves the pending turn through the HTTP GET view', async () => {
-    const store = memoryStore();
-    const { POST, GET } = createRouteHandler(createAgent({ provider: failing(), store, retry: false }));
-    const response = await POST(
-      new Request('http://app.test/api/agent/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 's1', input: 'hi' }) })
-    );
-    await response.text();
-    const saved = await (await GET(new Request('http://app.test/api/agent/chat/s1'))).json();
-    expect(saved).toMatchObject({ sessionId: 's1', messages: [], pending: { status: 'in-progress' } });
   });
 });

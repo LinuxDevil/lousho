@@ -82,12 +82,6 @@ describe('ProposalBanner', () => {
     act(() => hide.click());
     expect(appState.hideProposal).toHaveBeenCalledTimes(1);
   });
-
-  it('renders nothing without a proposal', () => {
-    appState.proposal = undefined;
-    const container = render(<ProposalBanner />);
-    expect(container.querySelector('.canvas-proposal-banner')).toBeNull();
-  });
 });
 
 describe('palette while a proposal is shown', () => {

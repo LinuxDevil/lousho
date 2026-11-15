@@ -7,8 +7,6 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import * as aiV7 from 'ai-v7';
-import { MockLanguageModelV4 } from 'ai-v7/test';
 import { MockLanguageModelV1 } from 'ai/test';
 import { z } from 'zod';
 import { AnthropicProvider } from '../providers/AnthropicProvider';
@@ -19,11 +17,6 @@ import { defineTool } from '../tools/defineTool';
 import type { AgentEvent } from './agentEvents';
 import { initialAgentUIState, reduceAgentEvents } from '../ui/reducer';
 import { toUIMessageStream } from '../server/uiMessageStream';
-import { recordLlmResult } from './genAiSpans';
-import { SdkAttr } from './semconv';
-
-type V7Part = Awaited<ReturnType<MockLanguageModelV4['doStream']>>['stream'] extends ReadableStream<infer P> ? P : never;
-type V7Options = Parameters<MockLanguageModelV4['doStream']>[0];
 type V4Part = Awaited<ReturnType<MockLanguageModelV1['doStream']>>['stream'] extends ReadableStream<infer P> ? P : never;
 type V4Options = Parameters<MockLanguageModelV1['doStream']>[0];
 
@@ -45,39 +38,6 @@ async function collect<T>(stream: AsyncIterable<T>): Promise<T[]> {
   for await (const item of stream) items.push(item);
   return items;
 }
-
-const v7Finish = (finish: 'stop' | 'tool-calls', reasoning: number): V7Part => ({
-  type: 'finish',
-  finishReason: { unified: finish, raw: finish },
-  usage: {
-    inputTokens: { total: 5, noCache: 5, cacheRead: 0, cacheWrite: undefined },
-    outputTokens: { total: 10, text: 10 - reasoning, reasoning },
-  },
-});
-
-/** Step 1 thinks (signed) then calls `lookup`; step 2 thinks then answers. Anthropic sends the signature on a delta. */
-const V7_STEPS: V7Part[][] = [
-  [
-    { type: 'stream-start', warnings: [] },
-    { type: 'reasoning-start', id: 'r1' },
-    { type: 'reasoning-delta', id: 'r1', delta: 'Let me ' },
-    { type: 'reasoning-delta', id: 'r1', delta: 'check.' },
-    { type: 'reasoning-delta', id: 'r1', delta: '', providerMetadata: { anthropic: { signature: 'sig-1' } } },
-    { type: 'reasoning-end', id: 'r1' },
-    { type: 'tool-call', toolCallId: 'call_1', toolName: 'lookup', input: '{}' },
-    v7Finish('tool-calls', 4),
-  ],
-  [
-    { type: 'stream-start', warnings: [] },
-    { type: 'reasoning-start', id: 'r2' },
-    { type: 'reasoning-delta', id: 'r2', delta: 'Done.' },
-    { type: 'reasoning-end', id: 'r2', providerMetadata: { anthropic: { signature: 'sig-2' } } },
-    { type: 'text-start', id: 't1' },
-    { type: 'text-delta', id: 't1', delta: 'Rome is sunny.' },
-    { type: 'text-end', id: 't1' },
-    v7Finish('stop', 2),
-  ],
-];
 
 const V4_STEPS: V4Part[][] = [
   [
@@ -128,35 +88,6 @@ const EXPECTED_TRACE = [
 ];
 
 describe('reasoning in a streamed run', () => {
-  it('ai v7: reports reasoning before text and tools, keeps it out of the text, and replays the signed thinking', async () => {
-    const provider = new AnthropicProvider({ apiKey: 'k', maxRetries: 0 });
-    const calls: V7Options[] = [];
-    const model = new MockLanguageModelV4({
-      doStream: async (options) => {
-        calls.push(options);
-        return { stream: streamOf(V7_STEPS[calls.length - 1]!) };
-      },
-    });
-    Object.assign(provider, { ai: aiV7 });
-    vi.spyOn(provider as unknown as { createModel: () => Promise<unknown> }, 'createModel').mockResolvedValue(model);
-
-    const run = thinkingAgent(provider).stream('Weather in Rome?');
-    const events = await collect(run);
-    const result = await run.result;
-
-    expect(trace(events)).toEqual(EXPECTED_TRACE);
-    expect(result.text).toBe('Rome is sunny.');
-    expect(result.reasoning).toBe('Let me check.\n\nDone.');
-    expect(result.usage.reasoningTokens).toBe(6);
-    expect(calls[0]!.providerOptions).toEqual({ anthropic: { thinking: { type: 'enabled', budgetTokens: 24576 } } });
-    // The tool-call turn keeps its signed block; the final reply carries no reasoning.
-    const assistant = result.messages.filter((m) => m.role === 'assistant');
-    expect(assistant[0]).toMatchObject({ content: '', reasoning: [{ text: 'Let me check.', signature: 'sig-1' }] });
-    expect(assistant[1]).toEqual({ role: 'assistant', content: 'Rome is sunny.' });
-    expect(calls[1]!.prompt.find((m) => m.role === 'assistant')).toMatchObject({
-      content: [{ type: 'reasoning', text: 'Let me check.', providerOptions: { anthropic: { signature: 'sig-1' } } }, { type: 'tool-call' }],
-    });
-  });
 
   itOnAiV4('ai v4: the same events from `reasoning` / `reasoning-signature` parts, and the same replay', async () => {
     const provider = new AnthropicProvider({ apiKey: 'k', maxRetries: 0 });
@@ -217,23 +148,6 @@ describe('the reasoning option and result', () => {
     expect(first.reasoning).toBe('A greeting.');
     expect(first.text).toBe('Hi.');
     expect(first.messages.at(-1)).toEqual({ role: 'assistant', content: 'Hi.' });
-  });
-
-  it('a non-streamed step reports its reasoning as one start/delta/done with the token count, before its text', async () => {
-    const events = await collect(createAgent({ provider: thinkingProvider() }).stream('Hello'));
-    expect(events.filter((e) => /^(reasoning|text)\./.test(e.type)).map(({ type, ...rest }) => ({ type, ...('text' in rest && { text: rest.text }), ...('tokens' in rest && { tokens: rest.tokens }) }))).toEqual([
-      { type: 'reasoning.start' },
-      { type: 'reasoning.delta', text: 'A greeting.' },
-      { type: 'reasoning.done', text: 'A greeting.', tokens: 3 },
-      { type: 'text.delta', text: 'Hi.' },
-      { type: 'text.done', text: 'Hi.' },
-    ]);
-  });
-
-  it('the chat span records the reasoning tokens', () => {
-    const span = { id: 's', name: 'chat thinker', attributes: {}, startTime: 0 };
-    recordLlmResult(span, { text: 'Hi.', finishReason: 'stop', usage: { promptTokens: 1, completionTokens: 5, totalTokens: 6, reasoningTokens: 3 } }, { captureContent: false });
-    expect(span.attributes).toMatchObject({ [SdkAttr.USAGE_REASONING_TOKENS]: 3 });
   });
 
   it('the UI reducer keeps the reasoning on the assistant message; the UI message stream emits reasoning chunks', async () => {

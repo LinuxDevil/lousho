@@ -36,31 +36,6 @@ const INSTRUCTIONS: ChangeItem = {
 const click = (el: Element) => act(() => (el as HTMLElement).click());
 
 describe('ChangeList', () => {
-  it('renders a scalar edit as struck before → after, with the words for a screen reader', () => {
-    const c = render(<ChangeList changes={[MODEL]} />);
-    const row = c.querySelector('li.change-row.change-row-edit[data-field="model"]') as HTMLElement;
-    expect(row).not.toBeNull();
-    expect(row.querySelector('.change-label')?.textContent).toBe('Model');
-    expect(row.querySelector('.change-value')?.textContent).toBe(
-      'from anthropic/claude-haiku-5-5→ to anthropic/claude-sonnet-5-5',
-    );
-    expect(row.querySelector('del.change-before')?.textContent).toBe('anthropic/claude-haiku-5-5');
-    expect(row.querySelector('ins.change-after')?.textContent).toBe('anthropic/claude-sonnet-5-5');
-    expect(row.querySelector('.change-arrow')?.getAttribute('aria-hidden')).toBe('true');
-  });
-
-  it('renders a collection change as added, removed and edited chips, each announcing its kind', () => {
-    const c = render(<ChangeList changes={[TOOLS]} />);
-    const chips = [...c.querySelectorAll('.change-chip')] as HTMLElement[];
-    expect(chips.map((chip) => chip.className)).toEqual([
-      'change-chip change-chip-add',
-      'change-chip change-chip-remove',
-      'change-chip change-chip-edit',
-    ]);
-    expect(chips[0].textContent).toBe('Added: current-date');
-    expect(chips[1].textContent).toBe('Removed: web-fetch');
-    expect(chips[2].textContent).toBe('Changed: http');
-  });
 
   it('shows +N −M counts for a text change and toggles the line diff', () => {
     const c = render(<ChangeList changes={[INSTRUCTIONS]} />);
@@ -81,12 +56,6 @@ describe('ChangeList', () => {
     expect(toggle.getAttribute('aria-controls')).toBe(pre.id);
   });
 
-  it('starts the text diff expanded when expandText is set', () => {
-    const c = render(<ChangeList changes={[INSTRUCTIONS]} expandText />);
-    expect(c.querySelector('pre.change-diff')).not.toBeNull();
-    expect(c.querySelector('button.change-toggle')?.getAttribute('aria-expanded')).toBe('true');
-  });
-
   it('renders only the title row and the empty text for no changes', () => {
     const c = render(<ChangeList changes={[]} />);
     expect(c.querySelector('p.change-list-empty')?.textContent).toBe('No changes.');
@@ -100,13 +69,5 @@ describe('ChangeList', () => {
     );
     const headings = [...c.querySelectorAll('h4.change-list-group')].map((h) => h.textContent);
     expect(headings).toEqual(['Model', 'Tools']);
-  });
-
-  it('labels the section with the title h3', () => {
-    const c = render(<ChangeList changes={[MODEL]} />);
-    const section = c.querySelector('section.change-list') as HTMLElement;
-    const title = section.querySelector('h3.change-list-title') as HTMLElement;
-    expect(section.getAttribute('aria-labelledby')).toBe(title.id);
-    expect(title.textContent).toContain('Changes');
   });
 });

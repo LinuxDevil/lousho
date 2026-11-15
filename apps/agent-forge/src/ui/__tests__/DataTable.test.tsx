@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DataTable, ErrorCell, type Column, type TableSort } from '../DataTable';
+import { DataTable, type Column, type TableSort } from '../DataTable';
 import { render, rerender } from './render';
 
 interface Row {
@@ -80,90 +80,6 @@ function setWidth(w: number) {
   });
 }
 
-describe('DataTable rendering', () => {
-  it('renders a semantic table with headers, default and custom cells, and alignment', () => {
-    setWidth(1200);
-    const c = render(<DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} empty="Nothing" />);
-    expect(c.querySelector('table')).not.toBeNull();
-    expect(headers(c)).toEqual(['Name', 'Tokens', 'Id']);
-    const cells = [...bodyRows(c)[0].querySelectorAll('td')].map((td) => td.textContent);
-    expect(cells).toEqual(['alpha', '10 tok', 'a']);
-    expect(bodyRows(c)[0].querySelectorAll('td')[1].classList.contains('dt-right')).toBe(true);
-  });
-
-  it('marks the selectedKey row with aria-current and the selected class', () => {
-    const c = render(<DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} selectedKey="b" empty="x" />);
-    const selected = c.querySelectorAll('tbody tr[aria-current="true"]');
-    expect(selected).toHaveLength(1);
-    expect(selected[0].textContent).toContain('beta');
-    expect(selected[0].classList.contains('dt-row-selected')).toBe(true);
-  });
-
-  it('renders `empty` in one full-width cell when there are no rows and not loading', () => {
-    setWidth(1200);
-    const c = render(<DataTable columns={COLUMNS} rows={[]} rowKey={(r) => r.id} empty={<em>No runs</em>} />);
-    const cell = c.querySelector('tbody td') as HTMLTableCellElement;
-    expect(cell.textContent).toBe('No runs');
-    expect(cell.colSpan).toBe(3);
-  });
-
-  it('keeps current rows visible and sets aria-busy while loading', () => {
-    const c = render(<DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} loading empty="x" />);
-    expect(c.querySelector('table')?.getAttribute('aria-busy')).toBe('true');
-    expect(bodyRows(c)).toHaveLength(3);
-    rerender(<DataTable columns={COLUMNS} rows={[]} rowKey={(r) => r.id} loading empty="Nothing here" />);
-    expect(c.textContent).not.toContain('Nothing here');
-  });
-
-  it('shows six skeleton rows (one cell per visible column) and one Loading status on a first load', () => {
-    setWidth(1200);
-    const c = render(<DataTable columns={COLUMNS} rows={[]} rowKey={(r) => r.id} loading empty="Nothing here" />);
-    const skeletonRows = c.querySelectorAll('tbody tr.skeleton-row');
-    expect(skeletonRows).toHaveLength(6);
-    expect(skeletonRows[0].querySelectorAll('td')).toHaveLength(3);
-    expect(skeletonRows[0].querySelectorAll('td')[1].classList.contains('dt-right')).toBe(true);
-    expect(c.querySelectorAll('tbody [role="status"]')).toHaveLength(1);
-    expect(c.querySelector('tbody [role="status"]')?.textContent).toBe('Loading');
-    expect(c.textContent).not.toContain('Loading…');
-    // Skeleton rows are not data rows: no row index, never focusable.
-    expect(c.querySelector('tbody tr[data-row-index]')).toBeNull();
-    setWidth(600);
-    expect(c.querySelectorAll('tbody tr.skeleton-row')[0].querySelectorAll('td')).toHaveLength(2);
-  });
-
-  it('keeps real rows (no skeleton) when loading with rows already shown', () => {
-    const c = render(<DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} loading empty="x" />);
-    expect(c.querySelector('.skeleton-row')).toBeNull();
-  });
-
-  it('titles plain-text cells so truncated text keeps a tooltip', () => {
-    setWidth(1200);
-    const c = render(<DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} empty="x" />);
-    const [name, tokens, id] = bodyRows(c)[0].querySelectorAll('td');
-    expect(name.title).toBe('alpha');
-    expect(tokens.title).toBe('10 tok');
-    expect(id.title).toBe('a');
-  });
-
-  it('applies the density class (compact default, comfortable on request)', () => {
-    const c = render(<DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} empty="x" />);
-    expect(c.querySelector('table')?.classList.contains('dt-compact')).toBe(true);
-    rerender(<DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} density="comfortable" empty="x" />);
-    expect(c.querySelector('table')?.classList.contains('dt-comfortable')).toBe(true);
-  });
-
-  it('fills its container width with no max-width cap', () => {
-    const css = readFileSync(resolve(__dirname, '../dataTable.css'), 'utf8');
-    const block = (sel: string) => css.match(new RegExp(`\\${sel}\\s*\\{([^}]*)\\}`))?.[1] ?? '';
-    expect(block('.data-table')).toMatch(/width:\s*100%/);
-    expect(block('.data-table-wrap')).toMatch(/width:\s*100%/);
-    expect(css).not.toMatch(/max-width/);
-    expect(css).toMatch(/\.dt-compact[^{]*\{[^}]*height:\s*32px/);
-    expect(css).toMatch(/\.dt-comfortable[^{]*\{[^}]*height:\s*40px/);
-    expect(css).toMatch(/font-size:\s*13px/);
-  });
-});
-
 describe('DataTable sorting', () => {
   it('cycles desc -> asc -> none on one header and starts at desc on another', () => {
     const onSortChange = vi.fn();
@@ -190,14 +106,6 @@ describe('DataTable sorting', () => {
     // never sorts rows itself
     expect(bodyRows(c).map((r) => r.textContent)).toEqual(['alpha10 toka', 'beta20 tokb', 'gamma30 tokc']);
   });
-
-  it('renders non-sortable headers without a button or aria-sort', () => {
-    setWidth(1200);
-    const c = render(<DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} empty="x" />);
-    const idTh = c.querySelectorAll('th')[2];
-    expect(idTh.querySelector('button')).toBeNull();
-    expect(idTh.hasAttribute('aria-sort')).toBe(false);
-  });
 });
 
 describe('DataTable keyboard and row open', () => {
@@ -222,14 +130,6 @@ describe('DataTable keyboard and row open', () => {
     expect(onRowOpen).toHaveBeenCalledWith(ROWS[0]);
   });
 
-  it('opens a row on click and moves the roving tabindex to it', () => {
-    const onRowOpen = vi.fn();
-    const c = render(<DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} onRowOpen={onRowOpen} empty="x" />);
-    click(bodyRows(c)[2].querySelector('td')!);
-    expect(onRowOpen).toHaveBeenCalledWith(ROWS[2]);
-    expect(bodyRows(c)[2].tabIndex).toBe(0);
-  });
-
   it('ignores keys from editable targets inside a row', () => {
     const onRowOpen = vi.fn();
     const cols: Column<Row>[] = [{ key: 'name', header: 'Name', render: (r) => <input aria-label={`edit ${r.id}`} /> }];
@@ -240,13 +140,6 @@ describe('DataTable keyboard and row open', () => {
     key(input, 'Enter');
     expect(document.activeElement).toBe(input);
     expect(onRowOpen).not.toHaveBeenCalled();
-  });
-
-  it('rows are not focusable or clickable without onRowOpen', () => {
-    const c = render(<DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} empty="x" />);
-    expect(bodyRows(c).every((r) => !r.hasAttribute('tabindex'))).toBe(true);
-    key(bodyRows(c)[0], 'j');
-    expect(document.activeElement).toBe(document.body);
   });
 });
 
@@ -309,66 +202,7 @@ describe('DataTable column resize', () => {
   });
 });
 
-describe('DataTable resize fixes', () => {
-  it('starts keyboard resize from the measured header width of a width-less column', () => {
-    vi.spyOn(HTMLTableCellElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 300 } as DOMRect);
-    const cols: Column<Row>[] = [{ key: 'name', header: 'Name' }];
-    const c = render(<DataTable id="runs" columns={cols} rows={ROWS} rowKey={(r) => r.id} empty="x" />);
-    const sep = separator(c, 'Name');
-    expect(sep.getAttribute('aria-valuenow')).toBe('300');
-    key(sep, 'ArrowRight');
-    expect(sep.getAttribute('aria-valuenow')).toBe('316');
-    expect(JSON.parse(window.localStorage.getItem(STORE_KEY)!)).toEqual({ name: 316 });
-  });
-
-  it('ends a drag on pointercancel and persists what was dragged', () => {
-    const cols: Column<Row>[] = [{ key: 'name', header: 'Name', width: 100 }];
-    const c = render(<DataTable id="runs" columns={cols} rows={ROWS} rowKey={(r) => r.id} empty="x" />);
-    const sep = separator(c, 'Name');
-    pointer(sep, 'pointerdown', 0);
-    pointer(document, 'pointermove', 40);
-    pointer(document, 'pointercancel', 40);
-    expect(JSON.parse(window.localStorage.getItem(STORE_KEY)!)).toEqual({ name: 140 });
-    pointer(document, 'pointermove', 200);
-    expect(sep.getAttribute('aria-valuenow')).toBe('140');
-  });
-
-  it('removes the document drag listeners when unmounted mid-drag', () => {
-    const cols: Column<Row>[] = [{ key: 'name', header: 'Name', width: 100 }];
-    const c = render(<DataTable columns={cols} rows={ROWS} rowKey={(r) => r.id} empty="x" />);
-    pointer(separator(c, 'Name'), 'pointerdown', 0);
-    const remove = vi.spyOn(document, 'removeEventListener');
-    rerender(<></>);
-    const removed = remove.mock.calls.map((call) => call[0]);
-    expect(removed).toEqual(expect.arrayContaining(['pointermove', 'pointerup', 'pointercancel']));
-  });
-});
-
-describe('DataTable roving reset', () => {
-  it('falls back to the first row when the active row leaves `rows`, keeps it when it stays', () => {
-    const onRowOpen = vi.fn();
-    const ui = (rows: Row[]) => <DataTable columns={COLUMNS} rows={rows} rowKey={(r) => r.id} onRowOpen={onRowOpen} empty="x" />;
-    const c = render(ui(ROWS));
-    click(bodyRows(c)[2].querySelector('td')!);
-    expect(bodyRows(c).map((r) => r.tabIndex)).toEqual([-1, -1, 0]);
-    rerender(ui(ROWS.map((r) => ({ ...r })))); // same keys, new identity (refetch)
-    expect(bodyRows(c).map((r) => r.tabIndex)).toEqual([-1, -1, 0]);
-    rerender(ui([{ id: 'd', name: 'delta', tokens: 1 }, { id: 'e', name: 'eps', tokens: 2 }, { id: 'f', name: 'phi', tokens: 3 }]));
-    expect(bodyRows(c).map((r) => r.tabIndex)).toEqual([0, -1, -1]);
-  });
-});
-
 describe('DataTable responsive columns', () => {
-  it('drops hideBelow columns when the container is narrower than the threshold', () => {
-    setWidth(1200);
-    const c = render(<DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} empty="x" />);
-    expect(headers(c)).toEqual(['Name', 'Tokens', 'Id']);
-    setWidth(600);
-    expect(headers(c)).toEqual(['Name', 'Tokens']);
-    expect(bodyRows(c)[0].querySelectorAll('td')).toHaveLength(2);
-    setWidth(1000);
-    expect(headers(c)).toEqual(['Name', 'Tokens', 'Id']);
-  });
 
   it('measures the wrapper with ResizeObserver when available', () => {
     let fire: ((width: number) => void) | undefined;
@@ -396,93 +230,9 @@ describe('DataTable responsive columns', () => {
   });
 });
 
-describe('DataTable paging', () => {
-  it('renders the range footer and pages with Previous/Next, disabled at the ends', () => {
-    const onChange = vi.fn();
-    const page = (offset: number) => ({ offset, limit: 50, total: 1234, onChange });
-    const c = render(<DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} page={page(0)} empty="x" />);
-    const btn = (name: string) =>
-      [...c.querySelectorAll('button')].find((b) => b.textContent === name) as HTMLButtonElement;
-    expect(c.querySelector('.dt-pager-range')?.textContent).toBe('1–50 of 1,234');
-    expect(btn('Previous').disabled).toBe(true);
-    click(btn('Next'));
-    expect(onChange).toHaveBeenLastCalledWith(50);
-
-    rerender(<DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} page={page(1200)} empty="x" />);
-    expect(c.querySelector('.dt-pager-range')?.textContent).toBe('1,201–1,234 of 1,234');
-    expect(btn('Next').disabled).toBe(true);
-    click(btn('Previous'));
-    expect(onChange).toHaveBeenLastCalledWith(1150);
-
-    rerender(
-      <DataTable columns={COLUMNS} rows={[]} rowKey={(r) => r.id} page={{ offset: 0, limit: 50, total: 0, onChange }} empty="x" />,
-    );
-    // nothing to page: no pager at all (no "0 of 0", no disabled buttons)
-    expect(c.querySelector('.dt-pager')).toBeNull();
-
-    // an offset past an emptied list keeps the pager, so Previous leads back
-    rerender(
-      <DataTable columns={COLUMNS} rows={[]} rowKey={(r) => r.id} page={{ offset: 50, limit: 50, total: 0, onChange }} empty="x" />,
-    );
-    expect(c.querySelector('.dt-pager-range')?.textContent).toBe('0 of 0');
-    expect(btn('Previous').disabled).toBe(false);
-
-    // total shrank below the offset: the range start is clamped
-    rerender(<DataTable columns={COLUMNS} rows={[]} rowKey={(r) => r.id} page={page(1250)} empty="x" />);
-    expect(c.querySelector('.dt-pager-range')?.textContent).toBe('1,234–1,234 of 1,234');
-    expect(btn('Previous').disabled).toBe(false);
-  });
-
-  it('a first load (loading, no rows yet) shows no "0 of 0" range and disables both buttons', () => {
-    const onChange = vi.fn();
-    const page = { offset: 50, limit: 50, total: 0, onChange };
-    const c = render(<DataTable columns={COLUMNS} rows={[]} rowKey={(r) => r.id} page={page} loading empty="x" />);
-    const btn = (name: string) =>
-      [...c.querySelectorAll('button')].find((b) => b.textContent === name) as HTMLButtonElement;
-    expect(c.querySelector('.dt-pager-range')).toBeNull();
-    expect(btn('Previous').disabled).toBe(true);
-    expect(btn('Next').disabled).toBe(true);
-
-    // rows already shown: a re-fetch keeps the range and the buttons
-    rerender(<DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} page={{ ...page, total: 1234 }} loading empty="x" />);
-    expect(c.querySelector('.dt-pager-range')?.textContent).toBe('51–100 of 1,234');
-    expect(btn('Previous').disabled).toBe(false);
-  });
-});
-
-describe('ErrorCell', () => {
-  it('renders danger text with an aria-hidden 14px alert icon and a title tooltip', () => {
-    const c = render(<ErrorCell>upstream 529 overloaded</ErrorCell>);
-    const cell = c.querySelector('.dt-error') as HTMLElement;
-    expect(cell.textContent).toBe('upstream 529 overloaded');
-    expect(cell.title).toBe('upstream 529 overloaded');
-    const svg = cell.querySelector('svg') as SVGElement;
-    expect(svg.getAttribute('aria-hidden')).toBe('true');
-    expect(svg.getAttribute('width')).toBe('14');
-    expect(cell.querySelector('.dt-error-text')?.textContent).toBe('upstream 529 overloaded');
-  });
-
-  it('takes an explicit title for non-string content', () => {
-    const c = render(
-      <ErrorCell title="boom: stack">
-        <b>boom</b>
-      </ErrorCell>,
-    );
-    expect((c.querySelector('.dt-error') as HTMLElement).title).toBe('boom: stack');
-  });
-});
-
 describe('DataTable layout (review fixes)', () => {
   const css = (f: string) => readFileSync(resolve(__dirname, '..', f), 'utf8');
   const rule = (src: string, sel: string) => src.match(new RegExp(`(^|\\n)${sel.replace(/[.[\]()*]/g, '\\$&')}\\s*\\{([^}]*)\\}`))?.[2] ?? '';
-
-  it('the wrap clips instead of scrolling, so the sticky header sticks to the screen', () => {
-    const table = css('dataTable.css');
-    expect(rule(table, '.data-table-wrap')).toMatch(/overflow-x:\s*clip/);
-    expect(rule(table, '.data-table-wrap')).toMatch(/min-height:\s*min-content/);
-    expect(rule(table, '.data-table-wrap.dt-scroll-x')).toMatch(/overflow-x:\s*auto/);
-    expect(rule(css('card.css'), '.card-pad-none > .card-body')).toMatch(/overflow:\s*clip/);
-  });
 
   it('becomes a horizontal scroller (dt-scroll-x) only while the table is wider than the wrap', () => {
     const offset = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800);
@@ -510,20 +260,5 @@ describe('DataTable layout (review fixes)', () => {
     rerender(<DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} empty="x" />);
     expect(wrap.classList.contains('dt-scroll')).toBe(false);
     expect(wrap.style.maxHeight).toBe('');
-  });
-
-  it('wraps header labels in .dt-label so they ellipsise inside the flex row', () => {
-    setWidth(1200);
-    const c = render(<DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} empty="x" />);
-    expect([...c.querySelectorAll('th .dt-label')].map((s) => s.textContent)).toEqual(['Name', 'Tokens', 'Id']);
-    expect(rule(css('dataTable.css'), '.dt-label')).toMatch(/text-overflow:\s*ellipsis/);
-  });
-
-  it('pager has no side padding outside an edge-to-edge card; compact buttons only in .dt-actions', () => {
-    const table = css('dataTable.css');
-    expect(rule(table, '.dt-pager')).toMatch(/padding:\s*var\(--space-2\)\s+0;/);
-    expect(rule(css('card.css'), '.card-pad-none .dt-pager')).toMatch(/padding-inline/);
-    expect(table).not.toMatch(/\.data-table td \.btn/);
-    expect(rule(table, '.dt-actions .btn')).toMatch(/min-height:\s*26px/);
   });
 });

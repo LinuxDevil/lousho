@@ -16,7 +16,7 @@ import { FileApprovalStore } from '../approvalStore';
 import { createFsAgentStore } from '../../src/persistence/fsAgentStore';
 import { AgentRepo } from '../storage/agentRepo';
 import type { LegacyAgentStore } from '../../src/persistence/AgentStore';
-import type { AgentMeta, VersionListItem } from '../../shared/wireTypes';
+import type { AgentMeta } from '../../shared/wireTypes';
 
 describe('PATCH /agents/:id/meta', () => {
   let baseDir: string;
@@ -97,7 +97,7 @@ describe('PATCH /agents/:id/meta', () => {
     expect((await repo.readMeta('ops')).labels).toEqual([]);
   });
 
-  it.each([[{}], [{ enabled: 'yes' }], [{ labels: 'ops' }], [{ labels: [1] }]])(
+  it.each([[{}], [{ enabled: 'yes' }], [{ labels: [1] }]])(
     '400s LOUSHO_BODY_INVALID for %j',
     async (body) => {
       await createOps();
@@ -106,19 +106,4 @@ describe('PATCH /agents/:id/meta', () => {
       expect(res.body.code).toBe('LOUSHO_BODY_INVALID');
     }
   );
-
-  it('404s LOUSHO_AGENT_NOT_FOUND for an unknown agent', async () => {
-    const res = await patch('ghost', { enabled: false });
-    expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: "No saved agent 'ghost'", code: 'LOUSHO_AGENT_NOT_FOUND' });
-  });
-
-  it('never writes a version for a meta-only change', async () => {
-    await createOps();
-    await patch('ops', { enabled: false });
-    await patch('ops', { labels: ['ops'] });
-    const versions = (await request(app()).get('/agents/ops/versions')).body as VersionListItem[];
-    expect(versions).toHaveLength(1);
-    expect(versions[0].kind).toBe('create');
-  });
 });

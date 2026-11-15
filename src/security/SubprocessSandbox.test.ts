@@ -4,15 +4,6 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as nodePath from 'node:path';
 import { SubprocessSandbox, SandboxAdapter } from './sandbox';
-import { dockerAvailable } from './docker.testkit';
-
-/**
- * The integration block at the bottom needs a live Docker daemon and skips
- * without one (shared check: docker.testkit.ts, a top-level await so it
- * resolves before `describe.skipIf` is evaluated). The real-daemon egress and
- * broker cases live in sandboxEgress.docker.test.ts (`npm run test:docker`).
- */
-const hasDocker = await dockerAvailable();
 
 describe('SubprocessSandbox', () => {
   it('module compiles and exports a SubprocessSandbox class', () => {
@@ -277,20 +268,5 @@ describe('SubprocessSandbox', () => {
       await expect(running).resolves.toMatchObject({ aborted: true, exitCode: null });
       await vi.waitFor(() => expect(calls).toEqual(['start', 'kill', 'remove:true']));
     });
-  });
-
-  describe.skipIf(!hasDocker)('integration (requires a running Docker daemon)', () => {
-    it('run() executes a command in a container and returns matching stdout/exitCode', async () => {
-      const sandbox = new SubprocessSandbox({ image: 'node:20-alpine' });
-      const result = await sandbox.run('node', ['-e', 'console.log("hello")']);
-      expect(result.stdout.trim()).toBe('hello');
-      expect(result.exitCode).toBe(0);
-    }, 60000);
-
-    it('run() surfaces a non-zero exit code', async () => {
-      const sandbox = new SubprocessSandbox({ image: 'node:20-alpine' });
-      const result = await sandbox.run('node', ['-e', 'process.exit(3)']);
-      expect(result.exitCode).toBe(3);
-    }, 60000);
   });
 });

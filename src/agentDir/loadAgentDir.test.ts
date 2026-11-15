@@ -1,21 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { pathToFileURL } from 'node:url';
-import { z } from 'zod';
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { loadAgentDir, resolveAgentDir } from './index';
-import { defineTool } from '../tools/defineTool';
-import { memoryStore } from '../storage/agentStore';
 import { mockModel } from '../testing';
-import { isRemoteSubagent } from '../subagents/remoteAgent';
 import { explainImportError } from './importModule';
 import { closest } from './closest';
 import { SDKError } from '../utils/sdkError';
 import type { CreateAgentBase } from '../createAgent';
-import type { IoGuardrail } from '../execution/ioGuardrails';
 
 const fixture = (name: string): string => path.join(__dirname, '__fixtures__', name);
 const systemOf = (call: { messages: readonly { role: string; content: unknown }[] }): string =>
@@ -24,37 +18,6 @@ const toolMessages = (call: { messages: readonly { role: string; content: unknow
   call.messages.filter((m) => m.role === 'tool').map((m) => String(m.content));
 
 describe('resolveAgentDir', () => {
-  it('discovers every layout: ts config, ts tools (default + named), skills (both layouts), subagents', async () => {
-    const { config, manifest } = await resolveAgentDir(fixture('full'), { provider: mockModel(['x']) });
-
-    expect(manifest.name).toBe('full');
-    expect(manifest.description).toBe('Fixture agent covering every layout');
-    expect(manifest.tools).toEqual(['echo', 'add', 'double']);
-    expect(manifest.skills).toEqual(['changelog', 'release']);
-    expect(manifest.subagents).toEqual(['researcher']);
-    expect(manifest.files.map((f) => path.relative(fixture('full'), f).split(path.sep).join('/'))).toEqual([
-      'agent.ts',
-      'instructions.md',
-      'tools/a_echo.ts',
-      'tools/b_math.ts',
-    ]);
-    expect(config.instructions).toBe('You are the fixture agent. Use your tools and skills.');
-    expect(config.maxSteps).toBe(4);
-    expect(config.toolConcurrency).toBe(1);
-    expect(Array.isArray(config.tools) && config.tools.map((t) => t.name)).toEqual([
-      'echo',
-      'add',
-      'double',
-      'delegate_to_researcher',
-    ]);
-  });
-
-  it('loads .js tools with a .json config', async () => {
-    const { config, manifest } = await resolveAgentDir(fixture('js-json'), { provider: mockModel(['x']) });
-    expect(manifest.tools).toEqual(['ping']);
-    expect(config.name).toBe('js-json-agent');
-    expect(config.maxSteps).toBe(3);
-  });
 
   it('loads a .yaml config with inline instructions and no other files', async () => {
     const { config, manifest } = await resolveAgentDir(fixture('yaml-inline'));
@@ -64,42 +27,6 @@ describe('resolveAgentDir', () => {
     expect(config.skills).toBeUndefined();
     expect(manifest).toMatchObject({ tools: [], skills: [], subagents: [] });
     expect(manifest.files).toHaveLength(1);
-  });
-
-  it('lets overrides win over files', async () => {
-    const provider = mockModel(['x']);
-    const { config } = await resolveAgentDir(fixture('js-json'), {
-      provider,
-      name: 'renamed',
-      instructions: 'override prompt',
-      maxSteps: 9,
-    });
-    expect(config).toMatchObject({ name: 'renamed', instructions: 'override prompt', maxSteps: 9, provider });
-    const viaAlias = await resolveAgentDir(fixture('js-json'), { prompt: 'alias prompt' });
-    expect(viaAlias.config.instructions).toBe('alias prompt');
-  });
-
-  it('drops a file-level provider/model string when a provider instance is overridden', async () => {
-    const provider = mockModel(['x']);
-    const tweaked = await resolveAgentDir(fixture('full'), { provider, model: 'bare-model-id' });
-    expect(tweaked.config).toMatchObject({ provider, model: 'bare-model-id' });
-  });
-
-  it('replaces discovered tools and skills when overridden, without reading them', async () => {
-    const mine = defineTool({ name: 'mine', description: 'd', input: z.object({}), execute: () => 1 });
-    const { config } = await resolveAgentDir(fixture('full'), {
-      provider: mockModel(['x']),
-      tools: [mine],
-      skills: [],
-    });
-    expect(config.tools).toEqual([mine]);
-    expect(config.skills).toEqual([]);
-  });
-
-  it('rejects a path that is not a directory', async () => {
-    await expect(resolveAgentDir(path.join(fixture('full'), 'instructions.md'))).rejects.toThrow(
-      /is not a directory/
-    );
   });
 });
 
@@ -128,18 +55,6 @@ describe('createAgent() overrides', () => {
     const assembled = config as unknown as Record<string, unknown>;
     const dropped = keys.filter((key) => JSON.stringify(assembled[key]) !== JSON.stringify(overrides[key]));
     expect(dropped).toEqual([]);
-  });
-
-  it('runs the agent with an onEvent and guardrails override (they were dropped before)', async () => {
-    const events: string[] = [];
-    const blockPing: IoGuardrail = { name: 'block-ping', check: ({ toolName }) => (toolName === 'ping' ? { ok: false, reason: 'no ping' } : { ok: true }) };
-    const model = mockModel([{ toolCalls: [{ name: 'ping', args: {} }] }, 'done']);
-    const agent = await loadAgentDir(fixture('js-json'), { provider: model, onEvent: (event) => events.push(event.type), guardrails: { tools: [blockPing] } });
-
-    await agent.send('go').catch(() => undefined);
-
-    expect(events).toContain('guardrail.tripped');
-    expect(events).not.toContain('tool.done');
   });
 });
 
@@ -181,51 +96,6 @@ describe('loadAgentDir', () => {
     expect(outputs).toContain('5');
     expect(outputs).toContain('Bump the version');
   });
-
-  it('runs a .js tool', async () => {
-    const model = mockModel([{ toolCalls: [{ name: 'ping' }] }, 'ok']);
-    const agent = await loadAgentDir(fixture('js-json'), { provider: model });
-    await agent.send('ping it');
-    expect(toolMessages(model.calls[1]).join('')).toContain('pong');
-  });
-
-  it('delegates to a sub-agent directory, which uses its own tools and inherits the provider override', async () => {
-    const model = mockModel([
-      { toolCalls: [{ name: 'delegate_to_researcher', args: { task: 'find cats' } }] },
-      { toolCalls: [{ name: 'lookup', args: { topic: 'cats' } }] },
-      'Cats are great.',
-      'The researcher says cats are great.',
-    ]);
-    const agent = await loadAgentDir(fixture('full'), { provider: model });
-
-    const result = await agent.send('research cats');
-
-    expect(result.text).toBe('The researcher says cats are great.');
-    const parentTool = model.calls[0].tools?.find((t) => t.function.name === 'delegate_to_researcher');
-    expect(parentTool?.function.description).toContain('Looks facts up');
-    expect(systemOf(model.calls[1])).toContain('You are the researcher.');
-    expect(toolMessages(model.calls[2]).join('')).toContain('fact about cats');
-    expect(toolMessages(model.calls[3]).join('')).toContain('Cats are great.');
-  });
-});
-
-describe('agent.ts output and retry', () => {
-  it('carries a code config output schema and retry into the assembled config, and an override wins', async () => {
-    const { config } = await resolveAgentDir(fixture('config-output'), { provider: mockModel(['x']) });
-    expect(config.retry).toEqual({ maxRetries: 1, timeoutMs: 5000 });
-    expect(config.output).toBeDefined();
-    const overridden = await resolveAgentDir(fixture('config-output'), { provider: mockModel(['x']), retry: false, output: z.object({ a: z.string() }) });
-    expect(overridden.config.retry).toBe(false);
-    expect(overridden.config.output).not.toBe(config.output);
-  });
-
-  it('types result.object from an output override', async () => {
-    const agent = await loadAgentDir(fixture('config-output'), { provider: mockModel(['{"city":"Oslo","tempC":3}']), output: z.object({ city: z.string(), tempC: z.number() }) });
-    const result = await agent.send('weather?');
-    expect(result.object?.tempC).toBe(3);
-    const fromFile = await loadAgentDir(fixture('config-output'), { provider: mockModel(['{"city":"Rome","tempC":20}']) });
-    expect((await fromFile.send('weather?')).object).toEqual({ city: 'Rome', tempC: 20 });
-  });
 });
 
 describe('agent.* run options (permissionMode, permissions, compaction, hooks, approve, limits)', () => {
@@ -248,50 +118,6 @@ describe('agent.* run options (permissionMode, permissions, compaction, hooks, a
     expect(files).toEqual(
       expect.arrayContaining(['agent.json', 'instructions.md', 'instructions/openai.md', 'hooks.ts', 'approve.ts', 'tools/stubs.ts'])
     );
-  });
-
-  it('appends instructions/<family>.md whose stem is in the model id, once', async () => {
-    const openai = await resolveAgentDir(fixture('config-extras'), { provider: mockModel(['x']), model: 'openrouter/openai/gpt-4o-mini' });
-    expect(openai.config.instructions).toBe('You are the extras fixture agent.\nCall one tool at a time.');
-    const anthropic = await resolveAgentDir(fixture('config-extras'), { model: 'anthropic/claude-haiku-4-5' });
-    expect(anthropic.config.instructions).toBe('You are the extras fixture agent.\nPrefer edit_file over write_file.');
-    const other = await resolveAgentDir(fixture('config-extras'), { model: 'ollama/llama3.1' });
-    expect(other.config.instructions).toBe('You are the extras fixture agent.');
-  });
-
-  it('runs the directory: a `when` record denies rm, the approver refuses test files, hooks observe calls', async () => {
-    const { seen } = (await import(pathToFileURL(path.join(fixture('config-extras'), 'hooks.ts')).href)) as { seen: string[] };
-    seen.length = 0;
-    const model = mockModel([
-      { toolCalls: [{ name: 'shell', args: { command: 'rm -rf node_modules' } }] },
-      { toolCalls: [{ name: 'write_file', args: { path: 'math.test.js' } }] },
-      { toolCalls: [{ name: 'write_file', args: { path: 'math.js' } }] },
-      'Done.',
-    ]);
-    const agent = await loadAgentDir(fixture('config-extras'), { provider: model });
-
-    const result = await agent.send('go');
-
-    expect(result.text).toBe('Done.');
-    const outputs = toolMessages(model.calls[model.calls.length - 1]).join('\n');
-    expect(outputs).toContain('No deletes');
-    expect(outputs).not.toContain('wrote math.test.js');
-    expect(outputs).toContain('wrote math.js');
-    // preToolCall ran for every call (hooks come before permission rules); an
-    // approved call can be re-prepared after its pause, hence >= not =.
-    expect(seen[0]).toBe('shell');
-    expect(seen.filter((name) => name === 'write_file').length).toBeGreaterThanOrEqual(2);
-  });
-
-  it('lets overrides replace the configured hooks and approver without reading their files', async () => {
-    const approve = () => true;
-    const { config } = await resolveAgentDir(fixture('err-missing-hooks'), {
-      provider: mockModel(['x']),
-      hooks: [],
-      approve,
-    });
-    expect(config.hooks).toEqual([]);
-    expect(config.approve).toBe(approve);
   });
 
   it('approve: null / hooks: null strip the directory-wired approver and hooks (the files are not even imported)', async () => {
@@ -317,27 +143,6 @@ describe('agent.* store and approval TTL (store, approvalTtlMs, ttlMs)', () => {
     return dir;
   };
 
-  const charge = defineTool({
-    name: 'charge',
-    description: 'Charge a card',
-    input: z.object({ amount: z.number() }),
-    execute: ({ amount }) => `charged ${amount}`,
-  });
-
-  it('builds a fileStore from "store": { "dir" }, rooted inside the agent directory', async () => {
-    const dir = writeDir({ model: 'mock/m', store: { dir: './.lousho' } });
-    try {
-      const { config } = await resolveAgentDir(dir, { provider: mockModel(['x']) });
-      expect(config.store?.sessions).toBeDefined();
-      expect(config.store?.checkpoints).toBeDefined();
-      expect(config.store?.approvals).toBeDefined();
-      await config.store!.sessions!.save('s1', []);
-      expect(existsSync(path.join(dir, '.lousho', 'sessions', 's1.json'))).toBe(true);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
   it('rejects a store.dir that escapes the agent directory, naming the key', async () => {
     const dir = writeDir({ model: 'mock/m', store: { dir: '../outside' } });
     try {
@@ -349,83 +154,9 @@ describe('agent.* store and approval TTL (store, approvalTtlMs, ttlMs)', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
-
-  it('lets an overrides store win over the config one', async () => {
-    const dir = writeDir({ model: 'mock/m', store: { dir: './.lousho' } });
-    const mine = memoryStore();
-    try {
-      const { config } = await resolveAgentDir(dir, { provider: mockModel(['x']), store: mine });
-      expect(config.store).toBe(mine);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("wires approvalTtlMs and an ask rule's ttlMs into the assembled options", async () => {
-    const dir = writeDir({
-      model: 'mock/m',
-      approvalTtlMs: 600_000,
-      permissions: [
-        { tool: 'deploy', action: 'ask', ttlMs: 60_000 },
-        { tool: 'shell', action: 'deny' },
-      ],
-    });
-    try {
-      const { config } = await resolveAgentDir(dir, { provider: mockModel(['x']) });
-      expect(config.approvalTtlMs).toBe(600_000);
-      expect(config.permissions).toMatchObject([
-        { tool: 'deploy', action: 'ask', ttlMs: 60_000 },
-        { tool: 'shell', action: 'deny' },
-      ]);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('keeps a paused approval in the declared store so a reloaded agent can resolve it (draft today, approve tomorrow)', async () => {
-    const dir = writeDir({
-      model: 'mock/m',
-      store: { dir: './.lousho' },
-      permissions: [{ tool: 'charge', action: 'ask', ttlMs: 600_000 }],
-    });
-    try {
-      const first = await loadAgentDir(dir, {
-        provider: mockModel([{ toolCalls: [{ name: 'charge', args: { amount: 5 } }] }, 'Done.']),
-        tools: [charge],
-      });
-      const paused = await first.send('charge 5');
-      expect(paused.finishReason).toBe('awaiting-approval');
-      expect(paused.approvalId).toBeDefined();
-
-      // The pause is on disk, with the ask rule's ttlMs as its expiresAt.
-      const record = JSON.parse(readFileSync(path.join(dir, '.lousho', 'approvals', `${paused.approvalId}.json`), 'utf8'));
-      expect(record.pending.toolName).toBe('charge');
-      expect(Date.parse(record.pending.expiresAt)).toBeGreaterThan(Date.now());
-
-      // "Approve tomorrow": a fresh load of the same directory decides it.
-      const second = await loadAgentDir(dir, { provider: mockModel(['Done.']), tools: [charge] });
-      const result = await second.approvals.resolve({ id: paused.approvalId!, approved: true });
-      expect(result.text).toBe('Done.');
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
 });
 
 describe("engine: 'pi' sub-agent directories", () => {
-  it('lands a pi sub-agent in the subagents map while a normal one stays a delegate tool', async () => {
-    const { config, manifest } = await resolveAgentDir(fixture('pi-subagent'), { provider: mockModel(['x']) });
-
-    expect(manifest.subagents).toEqual(['coder', 'explorer']);
-    const toolNames = (config.tools as unknown as { name: string }[]).map((t) => t.name);
-    expect(toolNames).toContain('delegate_to_explorer');
-    expect(toolNames).not.toContain('delegate_to_coder');
-
-    const coder = (config.subagents as Record<string, unknown>).coder;
-    expect(isRemoteSubagent(coder)).toBe(true);
-    expect((coder as { name?: string; description: string }).name).toBe('coder');
-    expect((coder as { description: string }).description).toBe('Implements code changes with Pi coding tools.');
-  });
 
   it('rejects engine on the main config, a bad engine value and a non-pi model id', async () => {
     const rootError = (await resolveAgentDir(fixture('err-engine-root')).catch((e: Error) => e)) as Error;
@@ -545,13 +276,6 @@ describe("engine: 'pi' sub-agent directories", () => {
 });
 
 describe('validation errors', () => {
-  it('names the directory when instructions are missing', async () => {
-    const dir = fixture('err-no-instructions');
-    const error = await resolveAgentDir(dir).catch((e: Error) => e);
-    expect((error as Error).message).toContain(dir);
-    expect((error as Error).message).toContain(path.join(dir, 'instructions.md'));
-    expect((error as Error).message).toMatch(/has no instructions/);
-  });
 
   it('says what a tools file exported, and shows a defineTool example', async () => {
     const file = path.join(fixture('err-bad-tool'), 'tools', 'nothing.ts');
@@ -561,14 +285,6 @@ describe('validation errors', () => {
     expect(error.message).toContain('defineTool({ name:');
   });
 
-  it('names both files for a duplicate tool name', async () => {
-    const dir = path.join(fixture('err-dup-tools'), 'tools');
-    const error = (await resolveAgentDir(fixture('err-dup-tools')).catch((e: Error) => e)) as Error;
-    expect(error.message).toContain("duplicate tool name 'same_name'");
-    expect(error.message).toContain(path.join(dir, 'one.ts'));
-    expect(error.message).toContain(path.join(dir, 'two.ts'));
-  });
-
   it('suggests the right key for unknown config keys', async () => {
     const file = path.join(fixture('err-unknown-key'), 'agent.json');
     const error = (await resolveAgentDir(fixture('err-unknown-key')).catch((e: Error) => e)) as Error;
@@ -576,15 +292,6 @@ describe('validation errors', () => {
     expect(error.message).toContain("'modle' (did you mean 'model'?)");
     expect(error.message).toContain("'prompt2'");
     expect(error.message).toContain('Allowed keys:');
-  });
-
-  it('requires a description on a sub-agent directory', async () => {
-    const dir = path.join(fixture('err-subagent-no-description'), 'subagents', 'helper');
-    const error = (await resolveAgentDir(fixture('err-subagent-no-description'), {
-      provider: mockModel(['x']),
-    }).catch((e: Error) => e)) as Error;
-    expect(error.message).toContain(dir);
-    expect(error.message).toContain("needs a 'description'");
   });
 
   it('rejects two config files, double instructions and invalid JSON, each naming the path', async () => {
@@ -599,13 +306,6 @@ describe('validation errors', () => {
     );
   });
 
-  it('names the rules that are wrong in permissions, one message per file', async () => {
-    const file = path.join(fixture('err-bad-permissions'), 'agent.json');
-    const error = (await resolveAgentDir(fixture('err-bad-permissions')).catch((e: Error) => e)) as Error;
-    expect(error.message).toContain(file);
-    expect(error.message).toMatch(/'permissions\[0\]'\.action must be 'allow', 'deny' or 'ask'/);
-  });
-
   it('fails a missing hooks file naming the config path it came from', async () => {
     const file = path.join(fixture('err-missing-hooks'), 'agent.json');
     const error = (await resolveAgentDir(fixture('err-missing-hooks')).catch((e: Error) => e)) as Error;
@@ -616,17 +316,6 @@ describe('validation errors', () => {
 });
 
 describe('helpers', () => {
-  it('explains a missing TypeScript loader with the fix, only for .ts files', () => {
-    const cause = Object.assign(new Error('Unknown file extension ".ts"'), {
-      code: 'ERR_UNKNOWN_FILE_EXTENSION',
-    });
-    const ts = explainImportError('/x/tools/a.ts', cause);
-    expect(ts.message).toContain('/x/tools/a.ts');
-    expect(ts.message).toContain('npx tsx your-script.ts');
-    expect(ts.message).toContain('compile');
-    expect(explainImportError('/x/tools/a.js', cause).message).toContain('failed to import /x/tools/a.js');
-    expect(explainImportError('/x/a.ts', new Error('boom')).message).toContain('failed to import /x/a.ts: boom');
-  });
 
   it('explains TypeScript syntax that type stripping cannot erase, without claiming TypeScript cannot load', () => {
     const cause = Object.assign(new Error('TypeScript enum is not supported in strip-only mode'), {

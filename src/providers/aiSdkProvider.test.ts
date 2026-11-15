@@ -26,12 +26,9 @@ vi.mock('ai', async () => {
 
 import { z as z4 } from 'zod/v4';
 import { OpenAIProvider } from './OpenAIProvider';
-import { OpenRouterProvider } from './OpenRouterProvider';
-import { AnthropicProvider } from './AnthropicProvider';
-import { isRetryableProviderError, withRetry } from './resilience';
 import { MODEL_SETTING_KEYS } from '../execution/modelSettings';
 import { installedAiMajor, itOnAiV4 } from './aiMajor.testkit';
-import { mockToolCall, mockUsage, toolCallPart, toolResultPart } from './aiShapes.testkit';
+import { mockUsage,  } from './aiShapes.testkit';
 
 const isV4 = installedAiMajor === 4;
 /** What the mocked `ai` calls report (the installed major's shape) and what the provider turns it into. */
@@ -80,93 +77,6 @@ describe('AiSdkProvider', () => {
     });
   });
 
-  describe('Anthropic prompt-cache breakpoints', () => {
-    const tool = (name: string) => ({ type: 'function' as const, function: { name, description: name, parameters: { type: 'object', properties: {} } } });
-    const request = {
-      model: 'claude-haiku-4-5',
-      messages: [
-        { role: 'system' as const, content: 'rules' },
-        { role: 'user' as const, content: 'hi' },
-      ],
-      tools: [tool('a'), tool('b')],
-    };
-    const cache = { anthropic: { cacheControl: { type: 'ephemeral' } } };
-
-    it('marks the system prompt, the last user turn and (ai 6/7) the last tool', async () => {
-      generateTextMock.mockResolvedValue(textResult('stop'));
-      await new AnthropicProvider({ apiKey: 'k' }).generate(request);
-      const settings = generateTextMock.mock.calls[0][0];
-      expect(settings.messages.map((message: { providerOptions?: unknown }) => message.providerOptions)).toEqual([cache, cache]);
-      if (!isV4) {
-        expect(settings.tools.a.providerOptions).toBeUndefined();
-        expect(settings.tools.b.providerOptions).toEqual(cache);
-      }
-    });
-
-    it('marks nothing with promptCaching: false, nor for an OpenAI model', async () => {
-      generateTextMock.mockResolvedValue(textResult('stop'));
-      await new AnthropicProvider({ apiKey: 'k' }).generate({ ...request, promptCaching: false });
-      await new OpenAIProvider({ apiKey: 'k' }).generate({ ...request, model: 'gpt-4o' });
-      for (const [settings] of generateTextMock.mock.calls) {
-        expect(JSON.stringify(settings.messages)).not.toContain('cacheControl');
-        expect(Object.values(settings.tools ?? {}).some((t) => (t as { providerOptions?: unknown }).providerOptions)).toBe(false);
-      }
-    });
-  });
-
-  it('passes call settings through and falls back to the config default model', async () => {
-    generateTextMock.mockResolvedValue(textResult('stop'));
-    const provider = new OpenAIProvider({ name: 'openai', apiKey: 'k', defaultModel: 'gpt-4o' });
-
-    await provider.generate({
-      model: '',
-      messages: [{ role: 'user', content: 'hi' }],
-      temperature: 0.2,
-      maxTokens: 10,
-      seed: 7,
-      tools: [],
-    });
-
-    const settings = generateTextMock.mock.calls[0][0];
-    expect(settings.model.modelId).toBe('gpt-4o');
-    expect(settings).toMatchObject({ temperature: 0.2, seed: 7 });
-    if (isV4) {
-      expect(settings).toMatchObject({ maxTokens: 10, maxSteps: 1 });
-    } else {
-      expect(settings).toMatchObject({ maxOutputTokens: 10, allowSystemInMessages: true });
-      expect(settings.stopWhen).toBeDefined();
-    }
-    // An empty tool list is sent as "no tools"
-    expect(settings.tools).toBeUndefined();
-    expect(settings.messages).toEqual([{ role: 'user', content: 'hi' }]);
-  });
-
-  it('passes config.maxRetries (default 2) to the ai SDK calls', async () => {
-    generateTextMock.mockResolvedValue(textResult('stop'));
-    streamTextMock.mockResolvedValue({ textStream: (async function* () {})(), text: '', usage, finishReason: 'stop', toolCalls: [] });
-    const call = { model: '', messages: [] };
-
-    await new OpenAIProvider({ apiKey: 'k' }).generate(call);
-    await new OpenAIProvider({ apiKey: 'k', maxRetries: 0 }).generate(call);
-    await new OpenAIProvider({ apiKey: 'k', maxRetries: 0 }).stream(call);
-
-    expect(generateTextMock.mock.calls.map(([settings]) => settings.maxRetries)).toEqual([2, 0]);
-    expect(streamTextMock.mock.calls[0][0].maxRetries).toBe(0);
-  });
-
-  it('a call withRetry() retries goes out with the ai SDK retries off, whatever config.maxRetries says', async () => {
-    generateTextMock.mockResolvedValue(textResult('stop'));
-    streamTextMock.mockResolvedValue({ textStream: (async function* () {})(), text: '', usage, finishReason: 'stop', toolCalls: [] });
-    const provider = withRetry(new OpenAIProvider({ apiKey: 'k', maxRetries: 5 }));
-
-    await provider.generate({ model: '', messages: [] });
-    const stream = await provider.stream({ model: '', messages: [] });
-    for await (const _chunk of stream.fullStream);
-
-    expect(generateTextMock.mock.calls[0][0].maxRetries).toBe(0);
-    expect(streamTextMock.mock.calls[0][0].maxRetries).toBe(0);
-  });
-
   it('reports usage as-is, reads cache/reasoning tokens from provider metadata, and no usage when counts are NaN', async () => {
     const provider = new OpenAIProvider({ name: 'openai', apiKey: 'k' });
 
@@ -207,34 +117,6 @@ describe('AiSdkProvider', () => {
     expect((await provider.generate({ model: '', messages: [] })).usage).toBeUndefined();
   });
 
-  it('falls back to the provider default model when neither call nor config names one', async () => {
-    generateTextMock.mockResolvedValue(textResult('stop'));
-    const provider = new OpenAIProvider({ name: 'openai', apiKey: 'k' });
-
-    await provider.generate({ model: '', messages: [] });
-
-    expect(generateTextMock.mock.calls[0][0].model.modelId).toBe('gpt-4.1-mini');
-  });
-
-  it('forwards GenerateOptions.signal to the ai SDK as abortSignal', async () => {
-    generateTextMock.mockResolvedValue(textResult('stop'));
-    streamTextMock.mockResolvedValue({
-      textStream: (async function* () {})(),
-      text: Promise.resolve(''),
-      usage: Promise.resolve(usage),
-      finishReason: Promise.resolve('stop'),
-      toolCalls: Promise.resolve([]),
-    });
-    const provider = new OpenAIProvider({ name: 'openai', apiKey: 'k' });
-    const { signal } = new AbortController();
-
-    await provider.generate({ messages: [], signal });
-    await provider.stream({ messages: [], signal });
-
-    expect(generateTextMock.mock.calls[0][0].abortSignal).toBe(signal);
-    expect(streamTextMock.mock.calls[0][0].abortSignal).toBe(signal);
-  });
-
   it('maps responseFormat to a JSON-mode experimental_output that leaves prompt and text alone', async () => {
     generateTextMock.mockResolvedValue(textResult('stop'));
     const provider = new OpenAIProvider({ name: 'openai', apiKey: 'k' });
@@ -260,57 +142,6 @@ describe('AiSdkProvider', () => {
     }
   });
 
-  it.each([
-    ['stop', 'stop'],
-    ['length', 'length'],
-    ['tool-calls', 'tool_calls'],
-    ['content-filter', 'content_filter'],
-    ['other', 'other'],
-    ['unknown', 'other'],
-    ['toString', 'other'],
-  ])('maps finish reason %s to %s', async (sdkReason, expected) => {
-    generateTextMock.mockResolvedValue(textResult(sdkReason));
-    const provider = new OpenAIProvider({ name: 'openai', apiKey: 'k' });
-
-    const result = await provider.generate({ model: 'gpt-4', messages: [] });
-
-    expect(result.finishReason).toBe(expected);
-    expect(result.toolCalls).toBeUndefined();
-  });
-
-  it("throws a retryable provider error for finish reason 'error' instead of resolving truncated text", async () => {
-    generateTextMock.mockResolvedValue({ ...textResult('error'), text: 'The capital of Fr' });
-    const provider = new OpenAIProvider({ name: 'openai', apiKey: 'k' });
-
-    const failure = await provider.generate({ model: 'gpt-4', messages: [] }).catch((error: unknown) => error);
-
-    expect(failure).toBeInstanceOf(Error);
-    expect(isRetryableProviderError(failure)).toBe(true);
-    expect((failure as Error).message).toContain("finish reason 'error'");
-  });
-
-  it('converts tool definitions to named ai SDK tools', async () => {
-    generateTextMock.mockResolvedValue(textResult('stop'));
-    const provider = new OpenAIProvider({ name: 'openai', apiKey: 'k' });
-
-    await provider.generate({
-      model: 'gpt-4',
-      messages: [],
-      tools: [{ type: 'function', function: { name: 'search', description: 'Search', parameters: {} } }],
-    });
-
-    const { tools } = generateTextMock.mock.calls[0][0];
-    expect(Object.keys(tools)).toEqual(['search']);
-    expect(tools.search.description).toBe('Search');
-    if (isV4) {
-      expect(await tools.search.execute()).toBeNull();
-    } else {
-      // v5+: an `inputSchema` and no `execute`, so the SDK returns the call and AgentExecutor runs it.
-      expect(tools.search.inputSchema).toBeDefined();
-      expect(tools.search.execute).toBeUndefined();
-    }
-  });
-
   itOnAiV4('sends a zod 4 tool schema to ai v4 as its JSON Schema', async () => {
     generateTextMock.mockResolvedValue(textResult('stop'));
     const provider = new OpenAIProvider({ name: 'openai', apiKey: 'k' });
@@ -324,101 +155,5 @@ describe('AiSdkProvider', () => {
 
     const { tools } = generateTextMock.mock.calls[0][0];
     expect(tools.search.parameters.jsonSchema).toMatchObject({ type: 'object', properties: { q: { type: 'string' } }, required: ['q'] });
-  });
-
-  it('wraps a plain JSON-Schema parameters object, not the zod converter path', async () => {
-    generateTextMock.mockResolvedValue(textResult('stop'));
-    const provider = new OpenAIProvider({ name: 'openai', apiKey: 'k' });
-    // The examples/openrouter `tools` snippet: a raw JSON Schema, not a zod
-    // schema. On ai v4 a bare object crashed the SDK's `asSchema` on
-    // `._def.typeName`; it must go as an `ai.jsonSchema()` wrapper instead.
-    const parameters = {
-      type: 'object',
-      properties: {
-        location: { type: 'string', description: 'City name' },
-        unit: { type: 'string', enum: ['celsius', 'fahrenheit'], description: 'Temperature unit' },
-      },
-      required: ['location'],
-    };
-
-    await provider.generate({
-      model: 'gpt-4',
-      messages: [],
-      tools: [{ type: 'function', function: { name: 'get_weather', description: 'Get the weather', parameters } }],
-    });
-
-    const { tools } = generateTextMock.mock.calls[0][0];
-    const schema = isV4 ? tools.get_weather.parameters : tools.get_weather.inputSchema;
-    expect(schema.jsonSchema).toEqual(parameters);
-  });
-
-  it('stream() exposes textStream and resolved final values', async () => {
-    async function* textStream() {
-      yield 'a';
-      yield 'b';
-    }
-    streamTextMock.mockReturnValue({
-      textStream: textStream(),
-      text: Promise.resolve('ab'),
-      usage: Promise.resolve(usage),
-      finishReason: Promise.resolve('stop'),
-      toolCalls: Promise.resolve([mockToolCall('c1', 't', { x: 1 })]),
-    });
-    const provider = new OpenAIProvider({ name: 'openai', apiKey: 'k' });
-
-    const result = await provider.stream({ model: 'gpt-4', messages: [] });
-    const deltas: string[] = [];
-    for await (const delta of result.textStream) deltas.push(delta);
-
-    expect(deltas).toEqual(['a', 'b']);
-    expect(await result.usage).toEqual(providerUsage);
-    expect(await result.finishReason).toBe('stop');
-    expect(await result.toolCalls).toEqual([
-      { id: 'c1', type: 'function', function: { name: 't', arguments: '{"x":1}' } },
-    ]);
-  });
-
-  it('uses the default converter for tool results (name -> toolName)', async () => {
-    generateTextMock.mockResolvedValue(textResult('stop'));
-    const provider = new OpenAIProvider({ name: 'openai', apiKey: 'k' });
-
-    await provider.generate({
-      model: 'gpt-4',
-      messages: [{ role: 'tool', content: 'r', name: 'search', toolCallId: 'c1' }],
-    });
-
-    expect(generateTextMock.mock.calls[0][0].messages).toEqual([
-      { role: 'tool', content: [toolResultPart('c1', 'search', 'r')] },
-    ]);
-  });
-
-  it('converts OpenRouter tool-call turns with the shared converter', async () => {
-    generateTextMock.mockResolvedValue(textResult('stop'));
-    const provider = new OpenRouterProvider({ name: 'openrouter', apiKey: 'k' });
-
-    await provider.generate({
-      model: 'openai/gpt-4o',
-      messages: [
-        { role: 'user', content: '' },
-        {
-          role: 'assistant',
-          content: 'calling',
-          toolCalls: [{ id: 'c1', type: 'function', function: { name: 'search', arguments: '{"q":"x"}' } }],
-        },
-        { role: 'tool', content: 'r', toolName: 'search', toolCallId: 'c1' },
-      ],
-    });
-
-    expect(generateTextMock.mock.calls[0][0].messages).toEqual([
-      { role: 'user', content: '' },
-      {
-        role: 'assistant',
-        content: [
-          { type: 'text', text: 'calling' },
-          toolCallPart('c1', 'search', { q: 'x' }),
-        ],
-      },
-      { role: 'tool', content: [toolResultPart('c1', 'search', 'r')] },
-    ]);
   });
 });

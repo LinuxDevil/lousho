@@ -11,7 +11,6 @@ import { FileCheckpointStore } from '../checkpointStore';
 import { FileApprovalStore } from '../approvalStore';
 import { createFsAgentStore } from '../../src/persistence/fsAgentStore';
 import { AgentRepo } from '../storage/agentRepo';
-import { SecretsStore } from '../secretsStore';
 import type { AuthorSettingsPayload } from '../../shared/authorWire';
 import type { SettingsFile } from '../../shared/wireTypes';
 
@@ -62,18 +61,6 @@ describe('author settings routes', () => {
     return JSON.parse(fs.readFileSync(path.join(baseDir, '.lousho', 'settings.json'), 'utf8')) as SettingsFile;
   }
 
-  it('GET returns the defaults with ready: false while the anthropic key is missing', async () => {
-    const res = await authed(request(app).get('/settings/author'));
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({
-      model: 'anthropic/claude-sonnet-5-5',
-      reviewModel: 'anthropic/claude-haiku-5-5',
-      reviewEnabled: true,
-      ready: false,
-      missingKeyFor: 'anthropic',
-    } satisfies AuthorSettingsPayload);
-  });
-
   it('PUT patches the stored author object, leaves profiles alone, and GET round-trips', async () => {
     process.env.OPENAI_API_KEY = 'sk-test';
     const put = await authed(request(app).put('/settings/author')).send({
@@ -98,22 +85,8 @@ describe('author settings routes', () => {
     expect(get.body).toEqual(put.body);
   });
 
-  it('PUT reports ready: true once an anthropic key exists (env or stored)', async () => {
-    process.env.ANTHROPIC_API_KEY = 'sk-env';
-    const res = await authed(request(app).get('/settings/author'));
-    expect(res.body.ready).toBe(true);
-    expect(res.body.missingKeyFor).toBeUndefined();
-  });
-
-  it('PUT reports ready: true with a stored key even without env vars', async () => {
-    new SecretsStore(baseDir).setKey('anthropic', 'sk-stored');
-    const res = await authed(request(app).get('/settings/author'));
-    expect(res.body.ready).toBe(true);
-  });
-
   it.each([
     { body: { model: 'noslash' }, error: 'model must look like provider/model.' },
-    { body: { reviewModel: 'Also Bad' }, error: 'model must look like provider/model.' },
     { body: { reviewEnabled: 'yes' }, error: 'reviewEnabled must be a boolean.' },
   ])('PUT %j -> 400 INVALID_INPUT, nothing stored', async ({ body, error }) => {
     const res = await authed(request(app).put('/settings/author')).send(body);

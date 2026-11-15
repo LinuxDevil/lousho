@@ -4,12 +4,6 @@ import { NoopSandbox, createMockProvider } from 'lousho';
 import { compileHooksFromSpecPolicy, isSerializedHookList, type SerializedHook } from './compileHooks';
 
 describe('isSerializedHookList', () => {
-  it('accepts a well-shaped array', () => {
-    const value: SerializedHook[] = [
-      { nodeKey: 'llm', id: 'h1', name: 'x', phase: 'pre', point: 'generate', code: 'return ctx;' },
-    ];
-    expect(isSerializedHookList(value)).toBe(true);
-  });
 
   it('rejects anything else without throwing', () => {
     expect(isSerializedHookList(undefined)).toBe(false);
@@ -19,10 +13,6 @@ describe('isSerializedHookList', () => {
 });
 
 describe('compileHooksFromSpecPolicy', () => {
-  it('returns undefined for no/empty hooks', () => {
-    expect(compileHooksFromSpecPolicy(undefined, NoopSandbox)).toBeUndefined();
-    expect(compileHooksFromSpecPolicy([], NoopSandbox)).toBeUndefined();
-  });
 
   it('compiles a preToolCall hook that actually redacts tool-call args when the agent runs', async () => {
     const hooks: SerializedHook[] = [

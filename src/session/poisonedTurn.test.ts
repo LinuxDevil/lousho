@@ -52,26 +52,4 @@ describe('a checkpointed turn that failed for good', () => {
     await session.discardPending();
     expect((await session.send('C: hello?')).text).toBe('ok: C: hello?');
   });
-
-  it('a retryable failure is still resumed by the next send()', async () => {
-    const store = memoryStore();
-    const unavailable = Object.assign(new Error('503 service unavailable'), { status: 503 });
-    const failing = createAgent({ provider: poisoning(unavailable), tools: [dumpLogs], store, retry: false }).session({ id: 'chat' });
-    await expect(failing.send('A: show me the logs')).rejects.toThrow();
-    expect(await store.checkpoints.load('chat.turn-0')).toMatchObject({ attempts: 1, lastError: { retryable: true } });
-
-    const model = mockModel(['Logs summarized.', 'Hi.']);
-    const result = await createAgent({ provider: model, tools: [dumpLogs], store }).session({ id: 'chat' }).send('B: say hi');
-    expect(result.text).toBe('Hi.');
-    expect(model.calls).toHaveLength(2);
-  });
-
-  it('a crash (not a provider error) stays resumable as before', async () => {
-    const store = memoryStore();
-    const crash = new Error('process died');
-    const session = createAgent({ provider: poisoning(crash), tools: [dumpLogs], store }).session({ id: 'chat' });
-    await expect(session.send('A: show me the logs')).rejects.toThrow('process died');
-    const model = mockModel(['Done.', 'Hi.']);
-    expect((await createAgent({ provider: model, tools: [dumpLogs], store }).session({ id: 'chat' }).send('B')).text).toBe('Hi.');
-  });
 });

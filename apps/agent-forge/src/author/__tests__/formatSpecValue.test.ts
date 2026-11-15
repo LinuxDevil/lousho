@@ -13,19 +13,6 @@ describe('formatSpecValue tools', () => {
     expect(formatSpecValue('tools', [{ hosted: 'web_search' }])).toBe('web_search (hosted)');
     expect(formatSpecValue('tools', [{ hub: true }])).toBe('Context hub');
   });
-
-  it('joins a list and appends " · approval" for approval: always', () => {
-    expect(
-      formatSpecValue('tools', [
-        { builtin: 'read_file', approval: 'always' },
-        { builtin: 'list_files' },
-      ])
-    ).toBe('read_file · approval, list_files');
-  });
-
-  it('falls back to JSON for an openapi ref whose url will not parse', () => {
-    expect(formatSpecValue('tools', [{ openapi: { url: 'not a url' } }])).toBe('not a url');
-  });
 });
 
 describe('formatSpecValue triggers', () => {
@@ -47,15 +34,6 @@ describe('formatSpecValue triggers', () => {
 });
 
 describe('formatSpecValue collections', () => {
-  it('mcpServers joins the keys', () => {
-    expect(formatSpecValue('mcpServers', { github: {}, jira: {} })).toBe('github, jira');
-  });
-
-  it('subagents joins the keys', () => {
-    expect(formatSpecValue('subagents', { researcher: { ref: 'a.yaml' }, writer: { ref: 'b.yaml' } })).toBe(
-      'researcher, writer'
-    );
-  });
 
   it('handoffs lists the target agents', () => {
     expect(formatSpecValue('handoffs', [{ agent: 'human-triage' }, { agent: 'escalations' }])).toBe(

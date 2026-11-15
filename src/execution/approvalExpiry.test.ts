@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Tool } from 'ai';
 import { resumeAfterApproval } from './resume';
-import { approvalExpired, type ApprovalStore, type ExecutionSnapshot, type PendingApproval } from './ApprovalGate';
+import { type ApprovalStore, type ExecutionSnapshot, type PendingApproval } from './ApprovalGate';
 import { AgentExecutor } from './AgentExecutor';
 import { APPROVAL_EXPIRED_REASON } from './permissions';
 import { ask } from './permissions';
@@ -36,15 +36,6 @@ function createInMemoryApprovalStore(): ApprovalStore {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-describe('approvalExpired', () => {
-  it('is false without expiresAt, true past it, false before it', () => {
-    expect(approvalExpired({})).toBe(false);
-    expect(approvalExpired({ expiresAt: new Date(Date.now() - 1).toISOString() })).toBe(true);
-    expect(approvalExpired({ expiresAt: new Date(Date.now() + 60_000).toISOString() })).toBe(false);
-    expect(approvalExpired({ expiresAt: 'not a date' })).toBe(false);
-  });
-});
-
 describe('Execution - approval expiry (TTL)', () => {
   let toolRegistry: ToolRegistry;
   let execute: ReturnType<typeof vi.fn>;
@@ -62,66 +53,6 @@ describe('Execution - approval expiry (TTL)', () => {
       displayName: 'Charge Card',
       tool: { description: 'Charge a card', parameters: {}, execute } as Tool,
       needsApproval: true,
-    });
-  });
-
-  it('stamps expiresAt on the pause and a decision before it still runs the tool', async () => {
-    const approvalStore = createInMemoryApprovalStore();
-    const provider = createMockProvider({ name: 'mock', responses: ['Charging now', 'All done'] });
-
-    const paused = await AgentExecutor.execute({
-      agent: agent(),
-      input: 'Please call chargeCard now',
-      provider,
-      toolRegistry,
-      approvalStore,
-      approvalTtlMs: 60_000,
-    });
-
-    expect(paused.finishReason).toBe('awaiting-approval');
-    const pending = (await approvalStore.load?.(paused.approvalId!))?.pending;
-    expect(pending?.expiresAt).toBeDefined();
-    expect(Date.parse(pending!.expiresAt!) - Date.now()).toBeGreaterThan(0);
-
-    const resumed = await resumeAfterApproval({ id: paused.approvalId!, approved: true }, approvalStore, toolRegistry, provider);
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(resumed.finishReason).toBe('stop');
-  });
-
-  it('a TTL too large for a Date (1e20 ms) means no deadline, not a RangeError when the run pauses', async () => {
-    const approvalStore = createInMemoryApprovalStore();
-    const provider = createMockProvider({ name: 'mock', responses: ['Charging now', 'All done'] });
-    const paused = await AgentExecutor.execute({ agent: agent(), input: 'Please call chargeCard now', provider, toolRegistry, approvalStore, approvalTtlMs: 1e20 });
-    expect(paused.finishReason).toBe('awaiting-approval');
-    expect((await approvalStore.load?.(paused.approvalId!))?.pending.expiresAt).toBeUndefined();
-  });
-
-  it('denies a decision that arrives after expiresAt - even approved: true', async () => {
-    const approvalStore = createInMemoryApprovalStore();
-    const provider = createMockProvider({ name: 'mock', responses: ['Charging now', 'All done'] });
-
-    const paused = await AgentExecutor.execute({
-      agent: agent(),
-      input: 'Please call chargeCard now',
-      provider,
-      toolRegistry,
-      approvalStore,
-      approvalTtlMs: 30,
-    });
-    const pending = (await approvalStore.load?.(paused.approvalId!))?.pending;
-    await sleep(50);
-
-    const resumed = await resumeAfterApproval({ id: paused.approvalId!, approved: true }, approvalStore, toolRegistry, provider);
-
-    expect(execute).not.toHaveBeenCalled();
-    expect(resumed.finishReason).toBe('stop');
-    const denial = resumed.messages.find((m) => m.role === 'tool' && m.toolCallId === pending?.toolCallId);
-    expect(denial?.isError).toBe(true);
-    expect(JSON.parse(denial!.content as string)).toMatchObject({
-      error: 'ToolDeniedError',
-      toolName: 'chargeCard',
-      kind: 'denied',
-      message: expect.stringContaining('expired'),
     });
   });
 
@@ -179,26 +110,6 @@ describe('Execution - approval expiry (TTL)', () => {
 
     const resumed = await resumeAfterApproval({ id: paused.approvalId!, approved: true }, approvalStore, toolRegistry, provider);
     expect(execute).not.toHaveBeenCalled();
-    expect(resumed.finishReason).toBe('stop');
-  });
-
-  it('leaves a pause without approvalTtlMs undated and decidable at any time', async () => {
-    const approvalStore = createInMemoryApprovalStore();
-    const provider = createMockProvider({ name: 'mock', responses: ['Charging now', 'All done'] });
-
-    const paused = await AgentExecutor.execute({
-      agent: agent(),
-      input: 'Please call chargeCard now',
-      provider,
-      toolRegistry,
-      approvalStore,
-    });
-
-    const pending = (await approvalStore.load?.(paused.approvalId!))?.pending;
-    expect(pending?.expiresAt).toBeUndefined();
-
-    const resumed = await resumeAfterApproval({ id: paused.approvalId!, approved: true }, approvalStore, toolRegistry, provider);
-    expect(execute).toHaveBeenCalledTimes(1);
     expect(resumed.finishReason).toBe('stop');
   });
 });

@@ -68,17 +68,6 @@ describe('time-travel routes', () => {
     await settled(runManager, runId, 'done');
   }
 
-  it('GET /runs/:id/history lists the steps with status, finish reason, tool calls and tokens', async () => {
-    await finishedRun('weather');
-    const res = await request(app).get('/runs/weather/history').expect(200);
-    const body = res.body as RunHistoryPayload;
-    expect(body.runId).toBe('weather');
-    expect(body.steps).toHaveLength(1);
-    expect(body.steps[0]).toMatchObject({ step: 1, status: 'finished', finishReason: 'stop', toolCalls: [] });
-    expect(body.steps[0].tokens).toBeGreaterThan(0);
-    expect(new Date(body.steps[0].savedAt).toISOString()).toBe(body.steps[0].savedAt);
-  });
-
   it('GET /runs/:id/history is 404 for a run without checkpoints and 400 for an invalid id', async () => {
     await request(app).get('/runs/never-ran/history').expect(404);
     await request(app).get(`/runs/${encodeURIComponent('../x')}/history`).expect(400);

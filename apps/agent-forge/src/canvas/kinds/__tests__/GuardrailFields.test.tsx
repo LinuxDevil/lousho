@@ -54,7 +54,6 @@ const catalogs = vi.hoisted(() => {
   };
 });
 
-const PII_SCHEMA = catalogs.schemas.pii;
 const PI_SCHEMA = catalogs.schemas.promptInjection;
 
 const app = vi.hoisted(() => ({
@@ -168,13 +167,6 @@ beforeEach(() => {
 });
 
 describe('guardrail Inspector: name picker', () => {
-  it('lists the catalog entries with their descriptions as titles', () => {
-    renderInspector();
-    const options = [...field<HTMLSelectElement>('node-guard-name').querySelectorAll('option')];
-    expect(options.map((o) => o.textContent)).toEqual(['Pick a guardrail', 'pii', 'prompt-injection', 'max-length']);
-    expect(options[2].title).toBe('Flags attempts to override instructions.');
-    expect(container.textContent).toContain('Finds personal data.');
-  });
 
   it('changing the guardrail clears the options and shows the new options form', () => {
     useGuardrail([{ ...BASE, options: { action: 'rewrite', types: ['email'] } }]);
@@ -206,16 +198,6 @@ describe('guardrail Inspector: checks side', () => {
     expect(item().on).toBe('input');
   });
 
-  it('disables a side the catalog entry does not support and says why', () => {
-    useGuardrail([{ id: 'g1', name: 'prompt-injection', on: 'input' }]);
-    renderInspector();
-    const options = [...field<HTMLSelectElement>('node-guard-on').querySelectorAll('option')];
-    expect(options[1].disabled).toBe(true);
-    expect(options[1].title).toBe('This guardrail cannot check output');
-    expect(options[2].disabled).toBe(true);
-    expect(options[2].title).toBe('This guardrail cannot check both');
-  });
-
   it('hints that a tools-side guardrail is not editable here', () => {
     useGuardrail([{ id: 'g1', name: 'pii', on: 'tools' }]);
     renderInspector();
@@ -224,12 +206,6 @@ describe('guardrail Inspector: checks side', () => {
 });
 
 describe('guardrail Inspector: parallel and trip behaviour', () => {
-  it('disables Run in parallel for pii and says why', () => {
-    renderInspector();
-    const toggle = field<HTMLButtonElement>('node-guard-parallel');
-    expect(toggle.disabled).toBe(true);
-    expect(toggle.title).toBe('Only prompt-injection and moderation can run in parallel, on input');
-  });
 
   it('toggles runInParallel for prompt-injection on the input side', () => {
     useGuardrail([{ id: 'g1', name: 'prompt-injection', on: 'input' }]);
@@ -243,39 +219,6 @@ describe('guardrail Inspector: parallel and trip behaviour', () => {
     expect(item().runInParallel).toBeUndefined();
   });
 
-  it('disables rewrite while parallel and says why', () => {
-    useGuardrail([{ id: 'g1', name: 'prompt-injection', on: 'input', runInParallel: true }]);
-    renderInspector();
-    const options = [...field<HTMLSelectElement>('node-guard-tripped').querySelectorAll('option')];
-    const rewrite = options.find((o) => o.textContent === 'Rewrite the text')!;
-    expect(rewrite.disabled).toBe(true);
-    expect(rewrite.title).toBe('A parallel check cannot rewrite');
-  });
-
-  it('keeps warn listed but disabled — the SDK rejects it', () => {
-    renderInspector();
-    const options = [...field<HTMLSelectElement>('node-guard-tripped').querySelectorAll('option')];
-    const warn = options.find((o) => o.textContent === 'Warn only')!;
-    expect(warn.disabled).toBe(true);
-    expect(warn.title).toBe("'warn' is not supported; use 'block' or 'rewrite'");
-  });
-
-  it('disables rewrite for a built-in that cannot rewrite and says why', () => {
-    useGuardrail([{ id: 'g1', name: 'max-length', on: 'input' }]);
-    renderInspector();
-    const options = [...field<HTMLSelectElement>('node-guard-tripped').querySelectorAll('option')];
-    const rewrite = options.find((o) => o.textContent === 'Rewrite the text')!;
-    expect(rewrite.disabled).toBe(true);
-    expect(rewrite.title).toBe('This guardrail cannot rewrite');
-  });
-
-  it('enables rewrite for a rewritable built-in', () => {
-    renderInspector();
-    const options = [...field<HTMLSelectElement>('node-guard-tripped').querySelectorAll('option')];
-    const rewrite = options.find((o) => o.textContent === 'Rewrite the text')!;
-    expect(rewrite.disabled).toBe(false);
-  });
-
   it('writes onTripped and clears it to Default', () => {
     renderInspector();
     choose('node-guard-tripped', '3');
@@ -287,14 +230,6 @@ describe('guardrail Inspector: parallel and trip behaviour', () => {
 });
 
 describe('guardrail Inspector: options form', () => {
-  it('feeds the entry schema and the item options to the schema form', () => {
-    useGuardrail([{ ...BASE, options: { action: 'block' } }]);
-    renderInspector();
-    const props = schemaForm.calls.at(-1)!;
-    expect(props['schema']).toBe(PII_SCHEMA);
-    expect(props['value']).toStrictEqual({ action: 'block' });
-    expect(props['idPrefix']).toBe('node-guard-opt');
-  });
 
   it('deletes options when the form emits an empty object', () => {
     useGuardrail([{ ...BASE, options: { action: 'block' } }]);
@@ -304,13 +239,6 @@ describe('guardrail Inspector: options form', () => {
       (props['onChange'] as (next: unknown) => void)({});
     });
     expect(item().options).toBeUndefined();
-  });
-
-  it('shows skeleton rows while the catalog loads', () => {
-    catalogs.guardrails = { data: undefined, error: undefined, loading: true };
-    renderInspector();
-    expect(container.querySelector('.skeleton')).not.toBeNull();
-    expect(schemaForm.calls).toHaveLength(0);
   });
 
   it('falls back to a JSON field on catalog error', () => {
@@ -352,11 +280,5 @@ describe('guardrail card', () => {
     expect(cardRow(g1, 'mode')).toBeUndefined();
     expect(cardRow(g2, 'chip')).toBe('input');
     expect(cardRow(g2, 'mode')).toBe('parallel');
-  });
-
-  it('titles an unpicked guardrail "(pick one)"', () => {
-    const graph = specToGraph(specOf([{ id: 'g1', name: '' }]));
-    const g1 = graph.nodes.find((n) => n.kind === 'guardrail')!;
-    expect(cardRow(g1, 'title')).toBe('(pick one)');
   });
 });

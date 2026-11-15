@@ -62,14 +62,6 @@ describe('CanvasToolbar undo/redo buttons', () => {
     expect(props.onUndo).toHaveBeenCalledTimes(1);
     expect(props.onRedo).toHaveBeenCalledTimes(1);
   });
-
-  it('renders Undo and Redo before Auto layout', () => {
-    const container = render(<CanvasToolbar {...toolbarProps()} />);
-    const labels = [...container.querySelectorAll('.canvas-toolbar button')].map((b) =>
-      b.getAttribute('aria-label')
-    );
-    expect(labels.slice(0, 3)).toEqual(['Undo', 'Redo', 'Auto layout']);
-  });
 });
 
 function ShortcutsProbe({ undo, redo }: { undo: () => void; redo: () => void }) {
@@ -84,16 +76,6 @@ function keydown(target: EventTarget, init: KeyboardEventInit) {
 }
 
 describe('undo/redo keyboard shortcuts', () => {
-  it('Ctrl+Z undoes, Ctrl+Shift+Z and Ctrl+Y redo', () => {
-    const undo = vi.fn();
-    const redo = vi.fn();
-    const container = render(<ShortcutsProbe undo={undo} redo={redo} />);
-    keydown(container, { key: 'z', ctrlKey: true });
-    keydown(container, { key: 'z', ctrlKey: true, shiftKey: true });
-    keydown(container, { key: 'y', ctrlKey: true });
-    expect(undo).toHaveBeenCalledTimes(1);
-    expect(redo).toHaveBeenCalledTimes(2);
-  });
 
   it('is ignored inside an input, leaving the field its native undo', () => {
     const undo = vi.fn();

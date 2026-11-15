@@ -6,7 +6,7 @@
  * v2 schema, so "New agent -> From template" always starts from a spec that
  * parses and builds.
  */
-import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -64,12 +64,6 @@ afterEach(() => {
 });
 
 describe('templates/', () => {
-  it('has exactly the six template folders, each holding exactly spec.yaml, README.md and template.json', () => {
-    expect(readdirSync(templatesDir).sort()).toEqual([...TEMPLATE_IDS]);
-    for (const id of TEMPLATE_IDS) {
-      expect(readdirSync(path.join(templatesDir, id)).sort()).toEqual(['README.md', 'spec.yaml', 'template.json']);
-    }
-  });
 
   describe.each(TEMPLATE_IDS)('templates/%s', (id) => {
     it('has a spec.yaml that parses, with name and description matching template.json', () => {

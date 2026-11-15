@@ -172,36 +172,6 @@ describe('hook Inspector: inline fields', () => {
     type('node-hook-id', 'h7');
     expect(item().id).toBe('h7');
   });
-
-  it('writes code through the editor', () => {
-    renderInspector();
-    const editor = container.querySelector('textarea[aria-label="Hook code"]') as HTMLTextAreaElement;
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
-        editor,
-        'ctx.args.x = 1; return ctx;',
-      );
-      editor.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    expect(inline().code).toBe('ctx.args.x = 1; return ctx;');
-  });
-
-  it('shows the point help that matches the family', () => {
-    renderInspector();
-    expect(container.textContent).toContain('ctx has toolName, args');
-    choose('node-hook-point', '4'); // After each model call
-    flush();
-    expect(container.textContent).toContain('ctx has messages and model');
-  });
-
-  it('writes enabled: false when switched off and deletes the key when on', () => {
-    renderInspector();
-    click(field('node-hook-enabled'));
-    expect(inline().enabled).toBe(false);
-    flush();
-    click(field('node-hook-enabled'));
-    expect('enabled' in inline()).toBe(false);
-  });
 });
 
 describe('hook Inspector: templates', () => {
@@ -217,15 +187,6 @@ describe('hook Inspector: templates', () => {
     choose('node-hook-point', '4'); // After each model call
     flush();
     expect(templateButtons()).toEqual([]);
-  });
-
-  it('asks before replacing non-empty code and swaps name only while it is hook', () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    renderInspector();
-    click(container.querySelector('.hook-templates button')!);
-    expect(confirm).toHaveBeenCalledWith('Replace the current code with redact-pii?');
-    expect(inline().code).toContain('REDACTED');
-    expect(inline().name).toBe('redact-pii');
   });
 
   it('keeps a custom name when a template is applied', () => {

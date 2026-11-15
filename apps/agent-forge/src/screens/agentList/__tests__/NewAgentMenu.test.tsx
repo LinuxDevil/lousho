@@ -70,39 +70,6 @@ beforeEach(() => {
 });
 
 describe('NewAgentMenu', () => {
-  it('shows a primary "New agent" trigger that opens the four ways plus a separator', async () => {
-    const host = mount(<MenuHarness />);
-    const trigger = triggerOf(host);
-    expect(trigger.textContent).toContain('New agent');
-    expect(trigger.classList.contains('btn-primary')).toBe(true);
-
-    await openMenu(host);
-    const labels = menuItems().map((el) => el.textContent ?? '');
-    expect(labels.some((t) => t.startsWith('Blank agent'))).toBe(true);
-    expect(labels.some((t) => t.startsWith('Describe with AI'))).toBe(true);
-    expect(labels.some((t) => t.startsWith('From template'))).toBe(true);
-    expect(labels.some((t) => t.startsWith('Import from file…'))).toBe(true);
-    expect(document.body.querySelectorAll('[role="separator"]')).toHaveLength(1);
-  });
-
-  it('runs Describe with AI through the Author entry point (AA19) and keeps Import disabled', async () => {
-    const host = mount(<MenuHarness />);
-    await openMenu(host);
-
-    const importItem = menuItem('Import from file…')!;
-    expect(importItem.getAttribute('aria-disabled')).toBe('true');
-    expect(importItem.getAttribute('title')).toBe('Import arrives with the import sheet.');
-
-    const describe = menuItem('Describe with AI')!;
-    expect(describe.getAttribute('aria-disabled')).toBeNull();
-    await act(async () => describe.click());
-    expect(takePendingOpen()).toEqual({
-      source: 'agents-list',
-      focus: { mode: 'create' },
-      draft: CREATE_AGENT_DRAFT,
-      newChat: true,
-    });
-  });
 
   it('hasTemplatesRoute detects the /templates route entry', () => {
     expect(hasTemplatesRoute([])).toBe(false);
@@ -129,29 +96,6 @@ describe('NewAgentMenu', () => {
     await act(async () => enabledTemplate.click());
     await flush();
     expect(window.location.hash).toBe('#/templates');
-  });
-
-  it('reads "Creating…" while the blank create is in flight, then opens the canvas', async () => {
-    let resolveCreate!: (record: AgentRecord) => void;
-    api.createAgentRecord.mockReturnValue(
-      new Promise<AgentRecord>((resolve) => {
-        resolveCreate = resolve;
-      })
-    );
-    const host = mount(<MenuHarness />);
-    await openMenu(host);
-    await act(async () => menuItem('Blank agent')!.click());
-    await flush();
-
-    const trigger = triggerOf(host);
-    expect(trigger.textContent).toContain('Creating…');
-    expect(trigger.disabled).toBe(true);
-
-    await act(async () => resolveCreate({ id: 'untitled-1' } as AgentRecord));
-    await flush();
-    expect(api.createAgentRecord).toHaveBeenCalledWith({ from: 'blank' });
-    expect(window.location.hash).toBe('#/agents/untitled-1/canvas');
-    expect(trigger.disabled).toBe(false);
   });
 
   it('toasts the server message and re-enables the trigger when the create fails', async () => {

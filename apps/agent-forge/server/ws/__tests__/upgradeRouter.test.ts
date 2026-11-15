@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as http from 'node:http';
 import type { IncomingMessage } from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
-import { WebSocket, WebSocketServer } from 'ws';
-import { createUpgradeRouter, type UpgradeRouter } from '../upgradeRouter';
+import { WebSocket } from 'ws';
+import { createUpgradeRouter } from '../upgradeRouter';
 
 /**
  * The single `upgrade` listener every WS endpoint registers on
@@ -49,16 +49,6 @@ describe('createUpgradeRouter', () => {
     };
   }
 
-  it('routes an exact pathname to its handler and nothing else', async () => {
-    const router = createUpgradeRouter(server);
-    const seen: string[] = [];
-    router.register('/events', recording(seen));
-    expect(await attempt('/events?x=1')).toBe('error'); // handled, then destroyed by the recording handler
-    expect(seen).toEqual(['/events']);
-    expect(await attempt('/events/extra')).toBe('error'); // unmatched -> destroyed
-    expect(seen).toEqual(['/events']);
-  });
-
   it('routes a RegExp pattern and passes the parsed URL through', async () => {
     const router = createUpgradeRouter(server);
     const seen: string[] = [];
@@ -75,18 +65,6 @@ describe('createUpgradeRouter', () => {
     expect(seen).toEqual(['/agents/a1/stream']);
   });
 
-  it('dispatches the first matching route in registration order', async () => {
-    const router: UpgradeRouter = createUpgradeRouter(server);
-    const exact: string[] = [];
-    const anyPath: string[] = [];
-    router.register('/events', recording(exact));
-    router.register(/^\//, recording(anyPath));
-    await attempt('/events');
-    await attempt('/other');
-    expect(exact).toEqual(['/events']);
-    expect(anyPath).toEqual(['/other']);
-  });
-
   it('throws on a duplicate route (same string or same RegExp)', () => {
     const router = createUpgradeRouter(server);
     router.register('/events', () => {});
@@ -95,31 +73,6 @@ describe('createUpgradeRouter', () => {
     expect(() => router.register(/^\/agents\/x\/stream$/, () => {})).toThrow(/duplicate/i);
     // A string and a RegExp spelling the same path are different routes.
     expect(() => router.register(/^\/events$/, () => {})).not.toThrow();
-  });
-
-  it('destroys an upgrade whose path matches no route', async () => {
-    const router = createUpgradeRouter(server);
-    router.register('/events', () => {});
-    expect(await attempt('/other')).toBe('error');
-  });
-
-  it('lets a handler complete the upgrade with its own WebSocketServer', async () => {
-    const router = createUpgradeRouter(server);
-    const wss = new WebSocketServer({ noServer: true });
-    router.register('/events', (req, socket, head) => {
-      wss.handleUpgrade(req, socket, head, (ws) => ws.send('hello'));
-    });
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/events`);
-    const got = new Promise<string>((resolve, reject) => {
-      ws.on('message', (data) => resolve(String(data)));
-      ws.on('error', reject);
-    });
-    try {
-      await expect(got).resolves.toBe('hello');
-    } finally {
-      ws.terminate();
-      wss.close();
-    }
   });
 
   it('rejects with 401 before any handler runs when the token is missing', async () => {

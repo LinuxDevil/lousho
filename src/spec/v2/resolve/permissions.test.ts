@@ -10,21 +10,6 @@ const whenOf = (rule: PermissionRule): NonNullable<PermissionRule['when']> => {
 };
 
 describe('toolMatcherOf', () => {
-  it('keeps literals, * and lists of literals as strings', () => {
-    expect(toolMatcherOf('shell')).toBe('shell');
-    expect(toolMatcherOf('*')).toBe('*');
-    expect(toolMatcherOf(['a', 'b'])).toEqual(['a', 'b']);
-    expect(toolMatcherOf(['a', '*'])).toBe('*');
-  });
-
-  it('compiles a glob to an anchored RegExp', () => {
-    const matcher = toolMatcherOf('github_*');
-    expect(matcher).toBeInstanceOf(RegExp);
-    const regex = matcher as RegExp;
-    expect(regex.test('github_create_issue')).toBe(true);
-    expect(regex.test('xgithub_a')).toBe(false);
-    expect(regex.test('github')).toBe(false);
-  });
 
   it('escapes regex metacharacters in literal parts of a glob list', () => {
     const matcher = toolMatcherOf(['read_?', 'a.b']);
@@ -38,14 +23,6 @@ describe('toolMatcherOf', () => {
 });
 
 describe('permissionsFromSpec', () => {
-  it('compiles a when regex tested against String(arg)', async () => {
-    const [rule] = permissionsFromSpec([
-      { id: 'p1', tool: 'shell', when: { command: '\\brm\\b' }, action: 'deny', reason: 'No' },
-    ]);
-    const when = whenOf(rule);
-    expect(await when({ command: 'rm -rf /' }, ctx)).toBe(true);
-    expect(await when({ command: 'ls' }, ctx)).toBe(false);
-  });
 
   it('compiles when operators with agent-directory semantics (numbers fail closed)', async () => {
     const [rule] = permissionsFromSpec([

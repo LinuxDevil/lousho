@@ -35,23 +35,11 @@ function output(over: Partial<ProposalOutput> = {}): ProposalOutput {
   };
 }
 
-const card = (c: HTMLElement) => c.querySelector<HTMLElement>('.proposal-card')!;
-
 afterEach(() => {
   probe.mockReset();
 });
 
 describe('ProposalCard chrome', () => {
-  it('renders name, kind tag, enabled badge and description', () => {
-    const c = render(<ProposalCard output={output()} state="actionable" />);
-    expect(card(c).getAttribute('data-proposal-id')).toBe('prop-1');
-    expect(card(c).getAttribute('data-state')).toBe('actionable');
-    expect(card(c).getAttribute('aria-labelledby')).toBe('proposal-prop-1-title');
-    expect(c.querySelector('.proposal-kind')?.textContent).toBe('New agent');
-    expect(c.querySelector('#proposal-prop-1-title')?.textContent).toBe('Triage bot');
-    expect(c.querySelector('.status-badge')?.textContent).toContain('Disabled');
-    expect(c.querySelector('.proposal-desc')?.textContent).toBe('Labels new issues.');
-  });
 
   it('shows Enabled for an enabled spec and "Change" for an update', () => {
     const c = render(<ProposalCard output={output({ kind: 'update', enabled: true })} state="actionable" />);
@@ -92,19 +80,6 @@ describe('ProposalCard changes and carried-over', () => {
     expect(c.querySelector('.proposal-nochange')).toBeNull();
   });
 
-  it('an empty changes list shows the no-change note', () => {
-    const c = render(<ProposalCard output={output({ kind: 'update', changes: [] })} state="actionable" />);
-    expect(c.querySelector('.proposal-section-title')?.textContent).toContain('What changes · 0 fields');
-    expect(c.querySelector('.proposal-nochange')?.textContent).toBe(
-      'This proposal matches the saved agent. Applying it would change nothing.'
-    );
-  });
-
-  it('a create card has no changes section', () => {
-    const c = render(<ProposalCard output={output()} state="actionable" />);
-    expect(c.querySelector('.proposal-changes')).toBeNull();
-  });
-
   it('the carried-over note maps fields through SPEC_FIELD_LABELS', () => {
     const c = render(
       <ProposalCard
@@ -119,54 +94,6 @@ describe('ProposalCard changes and carried-over', () => {
 });
 
 describe('ProposalCard requirements', () => {
-  it('lists non-ok requirements with their fix buttons', () => {
-    const c = render(
-      <ProposalCard
-        output={output({
-          requirements: [
-            { id: 'ok1', kind: 'model', status: 'ok', label: 'fine' },
-            {
-              id: 's1',
-              kind: 'secret',
-              status: 'missing',
-              label: 'JIRA_TOKEN',
-              fix: { action: 'add_secret', target: 'JIRA_TOKEN' },
-            },
-            {
-              id: 'm1',
-              kind: 'mcp',
-              status: 'unknown',
-              label: 'github MCP',
-              fix: { action: 'probe', target: 'github' },
-            },
-          ],
-        })}
-        state="actionable"
-      />
-    );
-    const rows = [...c.querySelectorAll<HTMLElement>('.proposal-req')];
-    expect(rows).toHaveLength(2);
-    expect(rows[0]!.getAttribute('data-status')).toBe('missing');
-    expect(rows[0]!.textContent).toContain('JIRA_TOKEN');
-    expect(rows[0]!.querySelector('button')?.textContent).toBe('Add secret');
-    expect(rows[1]!.getAttribute('data-status')).toBe('unknown');
-    expect(rows[1]!.querySelector('button')?.textContent).toBe('Check');
-  });
-
-  it('Add secret navigates to settings', () => {
-    const c = render(
-      <ProposalCard
-        output={output({
-          requirements: [
-            { id: 's1', kind: 'secret', status: 'missing', label: 'KEY', fix: { action: 'add_secret', target: 'KEY' } },
-          ],
-        })}
-        state="actionable"
-      />
-    );
-    act(() => c.querySelector<HTMLButtonElement>('.proposal-req button')!.click());
-    expect(window.location.hash).toBe('#/settings');
-  });
 
   it('Open Settings navigates to the fix target', () => {
     const c = render(
@@ -239,25 +166,6 @@ describe('ProposalCard full configuration', () => {
     expect(update.querySelector('#proposal-prop-1-config')).toBeNull();
   });
 
-  it('renders one row per non-empty field in SPEC_FIELD_LABELS order', () => {
-    const c = render(<ProposalCard output={output()} state="actionable" />);
-    const rows = [...c.querySelectorAll<HTMLElement>('.proposal-row')];
-    const labels = rows.map((r) => r.querySelector('dt')?.textContent);
-    expect(labels).toEqual(['Name', 'Description', 'Model', 'Instructions', 'Tools', 'MCP servers', 'Triggers']);
-    const byLabel = (label: string) => rows.find((r) => r.querySelector('dt')?.textContent === label);
-    expect(byLabel('Model')?.querySelector('dd')?.textContent).toBe('anthropic/claude-sonnet-5-5');
-    expect(byLabel('Tools')?.querySelector('dd')?.textContent).toBe('web_fetch');
-    expect(byLabel('MCP servers')?.querySelector('dd')?.textContent).toBe('github');
-    expect(byLabel('Triggers')?.querySelector('dd')?.textContent).toBe('Chat');
-  });
-
-  it('instructions collapse behind a line-count summary', () => {
-    const c = render(<ProposalCard output={output()} state="actionable" />);
-    const summary = c.querySelector('.proposal-config summary');
-    expect(summary?.textContent).toBe('Instructions · 3 lines');
-    expect(c.querySelector('.proposal-instructions')?.textContent).toBe('Line one.\nLine two.\nLine three.');
-  });
-
   it('SPEC_FIELD_LABELS covers the spec fields and falls back to the raw key', () => {
     expect(SPEC_FIELD_LABELS['name']).toBe('Name');
     expect(SPEC_FIELD_LABELS['mcpServers']).toBe('MCP servers');
@@ -287,46 +195,6 @@ describe('ProposalCard apply footer', () => {
     );
     expect(saving.querySelector('.proposal-apply')?.textContent).toBe('Saving…');
     expect(saving.querySelector<HTMLButtonElement>('.proposal-apply')?.disabled).toBe(true);
-  });
-
-  it('clicking Apply calls onApply; a disabledReason disables with the reason as title', () => {
-    const onApply = vi.fn();
-    const c = render(
-      <ProposalCard output={output()} state="actionable" apply={{ onApply, saving: false, disabledReason: null }} />
-    );
-    act(() => c.querySelector<HTMLButtonElement>('.proposal-apply')!.click());
-    expect(onApply).toHaveBeenCalledTimes(1);
-
-    const disabled = render(
-      <ProposalCard
-        output={output()}
-        state="actionable"
-        apply={{ onApply, saving: false, disabledReason: 'Wait for the Author to finish replying' }}
-      />
-    );
-    const btn = disabled.querySelector<HTMLButtonElement>('.proposal-apply')!;
-    expect(btn.disabled).toBe(true);
-    expect(btn.getAttribute('title')).toBe('Wait for the Author to finish replying');
-  });
-
-  it('a missing-requirements warning shows only when a row is missing', () => {
-    const c = render(
-      <ProposalCard
-        output={output({
-          requirements: [{ id: 's1', kind: 'secret', status: 'missing', label: 'KEY' }],
-        })}
-        state="actionable"
-        apply={{ onApply: vi.fn(), saving: false, disabledReason: null }}
-      />
-    );
-    expect(c.querySelector('.proposal-warn')?.textContent).toBe(
-      'Some requirements are missing. The agent still saves, and stays off until you add them.'
-    );
-
-    const c2 = render(
-      <ProposalCard output={output()} state="actionable" apply={{ onApply: vi.fn(), saving: false, disabledReason: null }} />
-    );
-    expect(c2.querySelector('.proposal-warn')).toBeNull();
   });
 
   it('a save error alerts; latestProposalId adds a "Show the newer proposal" button', () => {

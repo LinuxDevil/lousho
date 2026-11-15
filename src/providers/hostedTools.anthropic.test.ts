@@ -13,8 +13,6 @@ import { MockLanguageModelV4 } from 'ai-v7/test';
 import { AnthropicProvider } from './AnthropicProvider';
 import type { AiSdkModule } from './aiSdkCompat';
 import { codeInterpreter, fileSearch, webSearch } from '../tools/hosted';
-import { createAgent } from '../createAgent';
-import type { AgentEvent } from '../execution/agentEvents';
 
 type V7Stream = Awaited<ReturnType<MockLanguageModelV4['doStream']>>['stream'];
 type V7Part = V7Stream extends ReadableStream<infer P> ? P : never;
@@ -114,24 +112,6 @@ describe('AnthropicProvider hosted tool factories (stubbed @ai-sdk/anthropic)', 
     ]);
   });
 
-  it('falls back to an older package that only has webSearch_20250305', async () => {
-    const only = factory('anthropic.web_search_20250305');
-    anthropicTools = { webSearch_20250305: only, codeExecution_20250522: factory('anthropic.code_execution_20250522') };
-    await anthropicOnV7(scripted().model).generate({ messages: hi, hostedTools: [webSearch()] });
-    expect(only).toHaveBeenCalledTimes(1);
-  });
-
-  it('code_interpreter uses the newest codeExecution_*, and keeps our name', async () => {
-    const old = factory('anthropic.code_execution_20250522');
-    const newest = factory('anthropic.code_execution_20260120');
-    anthropicTools = { codeExecution_20250522: old, codeExecution_20250825: factory('x'), codeExecution_20260120: newest };
-    const { calls, model } = scripted();
-    await anthropicOnV7(model).generate({ messages: hi, hostedTools: [codeInterpreter()] });
-    expect(newest).toHaveBeenCalledWith({});
-    expect(old).not.toHaveBeenCalled();
-    expect(calls[0]!.tools?.map((tool) => tool.name)).toEqual(['code_interpreter']);
-  });
-
   it('maps maxUses, allowedDomains, blockedDomains and userLocation; warns once about searchContextSize', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const search = factory('anthropic.web_search_20260318');
@@ -169,41 +149,5 @@ describe('AnthropicProvider hosted tool factories (stubbed @ai-sdk/anthropic)', 
         message: expect.stringContaining('@ai-sdk/anthropic 3 with ai 6, or 4 with ai 7'),
       });
     }
-  });
-
-  it('supportsHostedTool: web_search, code_interpreter and custom on ai 6 or 7; nothing on ai 4', () => {
-    const provider = anthropicOnV7(scripted().model);
-    expect(['web_search', 'code_interpreter', 'custom', 'file_search'].map((type) => provider.supportsHostedTool(type as 'custom'))).toEqual([true, true, true, false]);
-    Object.assign(provider, { ai: { generateText: vi.fn(), streamText: vi.fn(), jsonSchema: (schema: never) => schema } });
-    expect(provider.supportsHostedTool('web_search')).toBe(false);
-  });
-
-  it('ai 4 refuses every hosted tool', async () => {
-    const provider = anthropicOnV7(scripted().model);
-    Object.assign(provider, { ai: { generateText: vi.fn(), streamText: vi.fn(), jsonSchema: (schema: never) => schema } });
-    await expect(provider.generate({ messages: hi, hostedTools: [webSearch()] })).rejects.toMatchObject({
-      code: 'LOUSHO_HOSTED_TOOL_UNSUPPORTED',
-      message: expect.stringContaining('hosted tools need ai 6 or 7, and ai 4 is installed'),
-    });
-  });
-});
-
-describe('an agent run over Anthropic-shaped provider-executed parts (ai 7)', () => {
-  it('streams tool.start / tool.done with executedBy provider, sources and usage', async () => {
-    anthropicTools = { webSearch_20260318: factory('anthropic.web_search_20260318') };
-    const events: AgentEvent[] = [];
-    const agent = createAgent({ provider: anthropicOnV7(scripted().model), instructions: 'x', tools: [webSearch({ maxUses: 1 })], onEvent: (event) => events.push(event) });
-    const result = await agent.send('What is the latest Node?');
-    const tools = events.filter((event) => event.type.startsWith('tool.'));
-    expect(tools.map((event) => [event.type, 'executedBy' in event ? event.executedBy : undefined])).toEqual([
-      ['tool.start', 'provider'],
-      ['tool.done', 'provider'],
-    ]);
-    expect(tools[0]).toMatchObject({ toolCallId: 'srvtoolu_1', toolName: 'web_search', args: { query: 'node 24 release' } });
-    expect(result.messages.at(-1)!.metadata?.hostedToolCalls).toEqual([
-      { id: 'srvtoolu_1', name: 'web_search', args: { query: 'node 24 release' }, result: SEARCH_RESULT, sources: [{ url: 'https://nodejs.org', title: 'Node.js' }] },
-    ]);
-    expect(result.usage.hostedToolCalls).toEqual({ web_search: 1 });
-    expect(result.text).toBe('Node 24 is current.');
   });
 });

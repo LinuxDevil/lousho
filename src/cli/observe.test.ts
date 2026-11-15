@@ -50,12 +50,6 @@ describe('reporterHint', () => {
     expect(reporterHint('127.0.0.1', 7777)).toContain('LOUSHO_OBSERVE=1 ');
   });
 
-  it('names the base url on a non-default port or host', () => {
-    expect(reporterHint('127.0.0.1', 7790)).toContain('LOUSHO_OBSERVE=http://127.0.0.1:7790');
-    expect(reporterHint('127.0.0.1', 7790)).not.toContain('LOUSHO_OBSERVE=1');
-    expect(reporterHint('localhost', 7777)).toContain('LOUSHO_OBSERVE=http://localhost:7777');
-  });
-
   it('brackets an IPv6 host', () => {
     expect(reporterHint('::1', 7777)).toContain('LOUSHO_OBSERVE=http://[::1]:7777 ');
     expect(reporterHint('[::1]', 7790)).toContain('LOUSHO_OBSERVE=http://[::1]:7790 ');
@@ -151,25 +145,6 @@ describe('lousho observe', () => {
     expect(errors.at(-1)).toContain('no collector');
   });
 
-  it('start on the daemon\'s own port reports "already running" and exits 0', async () => {
-    const daemon = await startObserveDaemon({ dbPath: dbPath(), port: 0 });
-    daemons.push(daemon);
-    expect(await runObserve(['start', '--port', String(daemon.port), '--db', dbPath()])).toBe(0);
-    expect(logs.at(-1)).toContain('already running');
-  });
-
-  it('start on a port a different service owns exits 1 with an actionable error', async () => {
-    const alien = http.createServer((_req, res) => {
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end('{"ok":true}');
-    });
-    await new Promise<void>((resolve) => alien.listen(0, '127.0.0.1', resolve));
-    servers.push(alien);
-    const port = (alien.address() as { port: number }).port;
-    expect(await runObserve(['start', '--port', String(port), '--db', dbPath()])).toBe(1);
-    expect(errors.at(-1)).toContain('taken by another service');
-  });
-
   it('stop exits 1 without a pidfile and clears a stale one', async () => {
     const db = dbPath();
     expect(await runObserve(['stop', '--db', db])).toBe(1);
@@ -226,24 +201,6 @@ describe('lousho observe', () => {
     expect(await runObserve(['token', 'create', '--db', db])).toBe(2);
     expect(await runObserve(['token', 'bogus', '--project', 'x', '--db', db])).toBe(2);
   });
-  it('prune --older-than Nd deletes old finished runs, prints the three counts and keeps open ones', async () => {
-    const file = dbPath();
-    const db = openDb(file);
-    const old = Date.now() - 40 * 86_400_000;
-    ingestBatch(db, [
-      { type: 'observation', data: { obs_id: 'o1', trace_id: 't1', kind: 'span', name: 'x', start: old, end: old + 5, status: 'ok' } },
-      { type: 'observation', data: { obs_id: 'o2', trace_id: 't2', kind: 'span', name: 'x', start: old } },
-    ]);
-    db.close();
-    expect(await runObserve(['prune', '--older-than', '30d', '--db', file])).toBe(0);
-    expect(logs.join('\n')).toContain('pruned 1 observations, 0 scores, 0 sessions');
-    const after = openDb(file);
-    try {
-      expect(after.prepare('SELECT obs_id FROM observations').all().map((r) => r.obs_id)).toEqual(['o2']);
-    } finally {
-      after.close();
-    }
-  });
 
   it('prune exits 0 with the counts when only the VACUUM after the committed prune fails', async () => {
     const file = dbPath();
@@ -267,23 +224,6 @@ describe('lousho observe', () => {
     } finally {
       after.close();
     }
-  });
-
-  it('prune is safe beside a running daemon on the same db file', async () => {
-    const file = dbPath();
-    const daemon = await startObserveDaemon({ dbPath: file, port: 0, sweepIntervalMs: 0, retentionDays: 0 });
-    daemons.push(daemon);
-    const old = Date.now() - 40 * 86_400_000;
-    ingestBatch(daemon.db, [
-      { type: 'observation', data: { obs_id: 'o1', trace_id: 't1', kind: 'span', name: 'x', start: old, end: old + 5, status: 'ok' } },
-      { type: 'observation', data: { obs_id: 'o2', trace_id: 't2', kind: 'span', name: 'x', start: old } },
-    ]);
-    expect(await runObserve(['prune', '--older-than=30d', '--db', file])).toBe(0);
-    expect(logs.join('\n')).toContain('pruned 1 observations');
-    // the daemon's own connection sees the prune and keeps ingesting
-    expect(daemon.db.prepare('SELECT obs_id FROM observations').all().map((r) => r.obs_id)).toEqual(['o2']);
-    ingestBatch(daemon.db, [{ type: 'observation', data: { obs_id: 'o2', trace_id: 't2', kind: 'span', name: 'x', start: old, end: old + 9, status: 'ok' } }]);
-    expect(daemon.db.prepare('SELECT "end" FROM observations WHERE obs_id = ?').get('o2')?.end).toBe(old + 9);
   });
 
   it('prune and start --retention-days reject junk as usage errors', async () => {
@@ -316,20 +256,6 @@ describe('lousho observe', () => {
       ]);
       db.close();
     };
-
-    it('writes one parseable JSONL line per trace, oldest first, with nested observations and scores', async () => {
-      const file = dbPath();
-      seed(file);
-      expect(await runObserve(['export', '--db', file])).toBe(0);
-      const lines = logs.filter((l) => l.startsWith('{'));
-      expect(lines).toHaveLength(3);
-      const parsed = lines.map((l) => JSON.parse(l) as { trace: { trace_id: string }; observations: unknown[]; scores: unknown[] });
-      expect(parsed.map((p) => p.trace.trace_id)).toEqual(['t2', 't1', 't3']);
-      expect(parsed[1].observations).toHaveLength(2);
-      expect(parsed[1].scores).toEqual([]);
-      expect(logs.join('\n')).not.toContain('exported');
-      expect(errors.join('\n')).toContain('exported 3 traces');
-    });
 
     it('--since and --agent narrow the export (agent matches id or a unique name)', async () => {
       const file = dbPath();

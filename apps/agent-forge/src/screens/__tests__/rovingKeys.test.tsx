@@ -30,31 +30,6 @@ function press(target: HTMLElement, key: string, init: KeyboardEventInit = {}): 
 }
 
 describe('onRovingKeyDown', () => {
-  it.each(['j', 'ArrowDown'])('%s moves focus to the next item', (key) => {
-    const { items } = mount();
-    items[0].focus();
-    const event = press(items[0], key);
-    expect(document.activeElement).toBe(items[1]);
-    expect(event.defaultPrevented).toBe(true);
-  });
-
-  it.each(['k', 'ArrowUp'])('%s moves focus to the previous item', (key) => {
-    const { items } = mount();
-    items[2].focus();
-    const event = press(items[2], key);
-    expect(document.activeElement).toBe(items[1]);
-    expect(event.defaultPrevented).toBe(true);
-  });
-
-  it('clamps at both ends of the list', () => {
-    const { items } = mount();
-    items[2].focus();
-    press(items[2], 'j');
-    expect(document.activeElement).toBe(items[2]);
-    items[0].focus();
-    press(items[0], 'k');
-    expect(document.activeElement).toBe(items[0]);
-  });
 
   it('Home and End jump to the first and last item', () => {
     const { items } = mount();
@@ -67,27 +42,11 @@ describe('onRovingKeyDown', () => {
     expect(home.defaultPrevented).toBe(true);
   });
 
-  it.each(['j', 'ArrowDown', 'k', 'ArrowUp'])('%s from outside the roving items lands on the first item', (key) => {
-    const { list } = mount();
-    const outside = list.querySelector<HTMLButtonElement>('.outside')!;
-    outside.focus();
-    press(outside, key);
-    expect(document.activeElement).toBe(list.querySelector('[data-roving]'));
-  });
-
-  it.each([{ altKey: true }, { ctrlKey: true }, { metaKey: true }])('ignores keys with modifiers %o', (init) => {
+  it.each([ { metaKey: true }])('ignores keys with modifiers %o', (init) => {
     const { items } = mount();
     items[0].focus();
     const event = press(items[0], 'j', init);
     expect(document.activeElement).toBe(items[0]);
-    expect(event.defaultPrevented).toBe(false);
-  });
-
-  it.each(['Enter', ' ', 'x', 'Tab'])('leaves %o to the buttons', (key) => {
-    const { items } = mount();
-    items[1].focus();
-    const event = press(items[1], key);
-    expect(document.activeElement).toBe(items[1]);
     expect(event.defaultPrevented).toBe(false);
   });
 

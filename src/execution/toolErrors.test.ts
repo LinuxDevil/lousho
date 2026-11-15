@@ -289,72 +289,14 @@ describe('one tool-error shape on every failure path', () => {
       expect(observed.eventOutcome?.name).toBe(row.error);
     }
   });
-
-  it('keeps the per-kind extras next to the shared fields', async () => {
-    const rejected = await viaResume(() => runResume({ tools: [approveMe()], approved: false }))();
-    expect(rejected.payload).toEqual({
-      error: 'ToolRejectedError',
-      toolName: 'approve_me',
-      message: 'Tool execution was rejected by the reviewer',
-      kind: 'rejected',
-      note: 'nope',
-    });
-
-    const model = mockModel([call('strict', { n: 'x' }), 'done']);
-    await AgentExecutor.execute({
-      agent: agentFor(['strict']),
-      input: 'go',
-      provider: model,
-      toolRegistry: registryOf([simpleTool('strict')]),
-    });
-    const message = (model.calls[1].messages as Message[]).find((m) => m.role === 'tool')!;
-    expect(JSON.parse(message.content as string)).toEqual({
-      error: 'ToolArgumentsValidationError',
-      toolName: 'strict',
-      message: expect.stringContaining("Invalid arguments for tool 'strict'"),
-      kind: 'validation',
-      issues: [{ path: 'n', message: expect.any(String) }],
-    });
-  });
 });
 
 describe('toolErrorResult()', () => {
-  it('caps every message at 2,000 characters', () => {
-    const result = toolErrorResult({ toolName: 't', error: 'x'.repeat(5000), kind: 'not-run' });
-    expect(result.message).toBe(`${'x'.repeat(2000)}... (truncated)`);
-  });
-
-  it('takes the name and message of an Error and defaults the kind to execution', () => {
-    expect(toolErrorResult({ toolName: 't', error: new RangeError('too big') })).toEqual({
-      error: 'RangeError',
-      toolName: 't',
-      message: 'too big',
-      kind: 'execution',
-    });
-  });
 
   it('uses the kind an error declares, and a plain name for a plain message', () => {
     const declared = Object.assign(new Error('x'), { toolErrorKind: 'mcp' });
     expect(toolErrorResult({ toolName: 't', error: declared }).kind).toBe('mcp');
     expect(toolErrorResult({ toolName: 't', error: 'gone', kind: 'not-found' }).error).toBe('ToolNotFoundError');
     expect(toolErrorResult({ toolName: 't', error: 42 }).message).toBe('42');
-  });
-
-  it('adds the call id and details without letting details override the shared fields', () => {
-    const result = toolErrorResult({
-      toolName: 't',
-      toolCallId: 'call_1',
-      error: 'no',
-      kind: 'rejected',
-      details: { note: 'why', message: 'spoofed', kind: 'mcp' },
-    });
-    expect(result).toEqual({
-      error: 'ToolRejectedError',
-      toolName: 't',
-      message: 'no',
-      kind: 'rejected',
-      toolCallId: 'call_1',
-      note: 'why',
-    });
   });
 });

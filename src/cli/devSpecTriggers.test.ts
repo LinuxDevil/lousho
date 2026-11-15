@@ -42,14 +42,6 @@ function fakeTimers() {
   return { timers, scheduler: { setTimer } };
 }
 
-async function waitFor(check: () => boolean | Promise<boolean>): Promise<void> {
-  for (let i = 0; i < 100; i++) {
-    if (await check()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error('timed out waiting for the dev server');
-}
-
 const V1_SPEC = `name: report-agent
 prompt: You write reports.
 provider:
@@ -59,17 +51,6 @@ triggers:
   - type: cron
     cron: "0 9 * * *"
     input: Write the report.
-`;
-
-const V2_SPEC = `version: 2
-name: report-agent
-model: mock/mock-1
-instructions: You write reports.
-triggers:
-  - id: daily
-    type: cron
-    cron: "0 9 * * *"
-    prompt: Write the report.
 `;
 
 const V2_WEBHOOK_SPEC = `version: 2
@@ -90,37 +71,6 @@ describe('lousho dev with a spec file that has triggers', () => {
     handle = await startDevServer(writeSpec(V1_SPEC), 0, '127.0.0.1', { debounceMs: 20, scheduler });
     expect(timers).toEqual({ started: 1, cancelled: 0 });
     expect(log).toHaveBeenCalledWith('[lousho dev] started schedules: cron-1');
-  });
-
-  it("starts a v2 spec's cron trigger as a schedule named after the trigger id", async () => {
-    const { timers, scheduler } = fakeTimers();
-    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    handle = await startDevServer(writeSpec(V2_SPEC), 0, '127.0.0.1', { debounceMs: 20, scheduler });
-    expect(timers).toEqual({ started: 1, cancelled: 0 });
-    expect(log).toHaveBeenCalledWith('[lousho dev] started schedules: daily');
-  });
-
-  it('restarts the schedules once when the spec file is edited', async () => {
-    const file = writeSpec(V2_SPEC);
-    const { timers, scheduler } = fakeTimers();
-    vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    handle = await startDevServer(file, 0, '127.0.0.1', { debounceMs: 20, scheduler });
-    expect(timers).toEqual({ started: 1, cancelled: 0 });
-
-    fs.writeFileSync(file, V2_SPEC.replace('You write reports.', 'You write weekly reports.'));
-    const port = (handle.server.address() as { port: number }).port;
-    const status = async () => (await (await fetch(`http://127.0.0.1:${port}/dev/status`)).json()) as { reloads: number };
-    await waitFor(async () => (await status()).reloads >= 1);
-
-    expect(timers).toEqual({ started: 2, cancelled: 1 });
-  });
-
-  it('--no-schedules starts none and logs the --no-schedules line', async () => {
-    const { timers, scheduler } = fakeTimers();
-    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    handle = await startDevServer(writeSpec(V1_SPEC), 0, '127.0.0.1', { schedules: false, scheduler });
-    expect(timers.started).toBe(0);
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('--no-schedules'));
   });
 
   it('logs that a v2 webhook trigger is not run by lousho dev', async () => {

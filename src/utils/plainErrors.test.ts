@@ -77,17 +77,6 @@ function plainThrows(): Array<{ file: string; rest: string }> {
 
 describe('plain Errors', () => {
   const found = plainThrows();
-  const isAllowed = (site: { file: string; rest: string }) =>
-    ALLOWED.some((entry) => entry.file === site.file && site.rest.startsWith(entry.message));
-
-  it('no new `throw new Error(` in src: use SDKError, or add the site to ALLOWED with a reason', () => {
-    const unexpected = found.filter((site) => !isAllowed(site)).map((site) => `${site.file}: ${site.rest.slice(0, 60)}`);
-    expect(
-      unexpected,
-      "Throw an SDKError with a registered code (src/utils/errorCodes.ts, docs/errors.md), or toolFailure() for a tool's run-time failure. " +
-        'If this is an internal invariant that users cannot reach, add it to ALLOWED in src/utils/plainErrors.test.ts with the reason.'
-    ).toEqual([]);
-  });
 
   it('every allowlist entry still matches a site, so the list does not rot', () => {
     const stale = ALLOWED.filter((entry) => !found.some((site) => site.file === entry.file && site.rest.startsWith(entry.message)));

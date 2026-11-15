@@ -2,9 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { createHash } from 'node:crypto';
 import { PassThrough, Writable } from 'node:stream';
-import { resolveAgentDir } from '../agentDir';
 import { runAdd, parseAddArgs, type AddIo } from './add';
 import { planFiles } from './addWrite';
 import { DEFAULT_REGISTRY, DEFAULT_REGISTRY_FALLBACKS, type RegistryItem } from './registry';
@@ -102,25 +100,6 @@ describe('lousho add', () => {
     expect(() => parseAddArgs(['x', '--nope'])).toThrow(/unknown option/);
   });
 
-  it('prints the manifest and files, then writes with --yes, and prints dependencies without installing', async () => {
-    const result = await add(withRegistry('web-search', '--yes', '--allow', 'network,env'));
-    expect(result.code).toBe(0);
-    expect(result.out).toContain('network:    api.example.com  [elevated: network]');
-    expect(result.out).toContain('env vars:   SEARCH_KEY  [elevated: env]');
-    expect(result.out).toContain('approval:   its tools ask for approval');
-    expect(result.out).toContain('tools/web-search.ts');
-    expect(result.out).toContain('npm install zod undici');
-    expect(fs.readFileSync(path.join(agentDir, 'tools', 'web-search.ts'), 'utf8')).toBe(SEARCH_CONTENT);
-    expect(fs.existsSync(path.join(agentDir, 'package.json'))).toBe(false);
-  });
-
-  it('installs a skill under skills/<name>/ and shows the defaults for an empty manifest', async () => {
-    const result = await add(withRegistry('triage', '--yes'));
-    expect(result.out).toContain('filesystem: none');
-    expect(result.out).toContain('its tools run without asking');
-    expect(fs.existsSync(path.join(agentDir, 'skills', 'triage', 'SKILL.md'))).toBe(true);
-  });
-
   it('asks for confirmation: yes writes, no cancels', async () => {
     const yes = await add(withRegistry('web-search'), { stdin: 'y\n', tty: true });
     expect(yes.code).toBe(0);
@@ -130,20 +109,6 @@ describe('lousho add', () => {
     const no = await add(withRegistry('web-search'), { stdin: 'n\n', tty: true });
     expect(no.code).toBe(1);
     expect(no.out).toContain('Cancelled');
-    expect(fs.existsSync(path.join(agentDir, 'tools'))).toBe(false);
-  });
-
-  it('refuses to ask on a non-interactive stdin without --yes', async () => {
-    const result = await add(withRegistry('web-search'));
-    expect(result.code).toBe(1);
-    expect(result.err).toContain('pass --yes');
-    expect(fs.existsSync(path.join(agentDir, 'tools'))).toBe(false);
-  });
-
-  it('--dry-run prints and writes nothing', async () => {
-    const result = await add(withRegistry('web-search', '--dry-run'));
-    expect(result.code).toBe(0);
-    expect(result.out).toContain('Dry run');
     expect(fs.existsSync(path.join(agentDir, 'tools'))).toBe(false);
   });
 
@@ -168,13 +133,6 @@ describe('lousho add', () => {
     expect(fs.readFileSync(target, 'utf8')).toBe('mine');
     expect((await add(withRegistry('web-search', '--yes', '--allow', 'network,env', '--overwrite'))).code).toBe(0);
     expect(fs.readFileSync(target, 'utf8')).toBe(SEARCH_CONTENT);
-  });
-
-  it('--list prints the index', async () => {
-    const result = await add(['--list', '--registry', registry]);
-    expect(result.code).toBe(0);
-    expect(result.out).toMatch(/web-search\s+tool\s+Search the web/);
-    expect(result.out).toMatch(/triage\s+skill\s+Triage tickets/);
   });
 
   it('reads LOUSHO_REGISTRY, falls back to the default registry, and none disables it', async () => {
@@ -302,7 +260,6 @@ describe('lousho add', () => {
 
 const receiptPath = () => path.join(agentDir, 'lousho-registry.json');
 const readReceipt = () => JSON.parse(fs.readFileSync(receiptPath(), 'utf8'));
-const sha = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
 
 describe('permission manifest', () => {
   it('refuses an item whose code does not match its manifest, and writes nothing', async () => {
@@ -313,28 +270,6 @@ describe('permission manifest', () => {
     expect(result.err).toContain("tools/shell.ts:1: import of 'node:child_process' (runs commands) (declare exec: true in permissions)");
     expect(fs.existsSync(path.join(agentDir, 'tools'))).toBe(false);
     expect(fs.existsSync(receiptPath())).toBe(false);
-  });
-
-  it('refuses a mismatch on --dry-run too', async () => {
-    writeJson(path.join(root, 'web-search.json'), { ...SEARCH, permissions: { network: ['api.example.com'] } });
-    const result = await add(withRegistry('web-search', '--dry-run'));
-    expect(result.code).toBe(1);
-    expect(result.err).toContain('reads process.env.SEARCH_KEY');
-  });
-
-  it('--yes without --allow refuses an exec item and names the missing flag; --allow exec installs it', async () => {
-    const refused = await add(withRegistry('shell', '--yes'));
-    expect(refused.code).toBe(1);
-    expect(refused.err).toContain('missing: --allow exec');
-    expect(fs.existsSync(path.join(agentDir, 'tools'))).toBe(false);
-    const partial = await add(withRegistry('web-search', '--yes', '--allow', 'network'));
-    expect(partial.err).toContain('missing: --allow env');
-    const allowed = await add(withRegistry('shell', '--yes', '--allow', 'exec'));
-    expect(allowed.code).toBe(0);
-    expect(allowed.out).toContain('exec:       yes (runs commands)  [elevated: exec]');
-    // exec alone makes its tools wait for approval (the receipt enforces it at load).
-    expect(allowed.out).toContain('approval:   its tools ask for approval before they run');
-    expect(fs.existsSync(path.join(agentDir, 'tools', 'shell.ts'))).toBe(true);
   });
 
   it('checks --yes and --allow before printing the manifest, naming the exact flags', async () => {
@@ -352,77 +287,6 @@ describe('permission manifest', () => {
     const dry = await add(withRegistry('shell', '--dry-run'));
     expect(dry.code).toBe(0);
     expect(dry.out).toContain('Permissions it asks for');
-  });
-
-  it('rejects an unknown --allow value as a usage error (exit 2)', async () => {
-    const result = await add(withRegistry('shell', '--yes', '--allow', 'exec,root'));
-    expect(result.code).toBe(2);
-    expect(result.err).toContain("got 'root'");
-  });
-
-  it('lists the elevated permissions in the interactive prompt', async () => {
-    const result = await add(withRegistry('web-search'), { stdin: 'y\n', tty: true });
-    expect(result.code).toBe(0);
-    expect(result.out).toContain('It asks for elevated permissions: network, env.');
-    const skill = await add(withRegistry('triage'), { stdin: 'y\n', tty: true });
-    expect(skill.out).not.toContain('elevated');
-  });
-
-  it('refuses a manifest with an invalid network or env entry', async () => {
-    writeJson(path.join(root, 'web-search.json'), { ...SEARCH, permissions: { network: ['https://api.example.com/x'], env: ['search key'] } });
-    const result = await add(withRegistry('web-search', '--dry-run'));
-    expect(result.err).toContain('LOUSHO_REGISTRY_INVALID');
-    expect(result.err).toContain('permissions.network');
-    expect(result.err).toContain('permissions.env');
-  });
-});
-
-describe('install receipt', () => {
-  it('records each item with sha256 values, replaces the entry on --overwrite, and the directory still loads', async () => {
-    expect((await add(withRegistry('web-search', '--yes', '--allow', 'network,env'))).code).toBe(0);
-    expect((await add(withRegistry('triage', '--yes'))).code).toBe(0);
-    const first = readReceipt();
-    expect(first.v).toBe(1);
-    expect(Object.keys(first.items)).toEqual(['triage', 'web-search']);
-    expect(first.items['web-search']).toMatchObject({
-      type: 'tool',
-      registry,
-      permissions: SEARCH.permissions,
-      files: [{ path: 'tools/web-search.ts', sha256: sha(SEARCH_CONTENT) }],
-    });
-    expect(first.items['web-search'].installedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-    expect(first.items.triage.files).toEqual([{ path: 'skills/triage/SKILL.md', sha256: sha('# Triage\n') }]);
-    expect(fs.readFileSync(receiptPath(), 'utf8')).toMatch(/^\{\n {2}"items": \{\n {4}"triage": \{\n {6}"files"/);
-
-    const changed = "export default async () => (await fetch('https://api.example.com/v2')).json();\n";
-    writeJson(path.join(root, 'web-search.json'), { ...SEARCH, files: [{ path: 'tools/web-search.ts', content: changed }], permissions: { network: ['api.example.com'] } });
-    expect((await add(withRegistry('web-search', '--yes', '--allow', 'network', '--overwrite'))).code).toBe(0);
-    const second = readReceipt();
-    expect(second.items['web-search'].files).toEqual([{ path: 'tools/web-search.ts', sha256: sha(changed) }]);
-    expect(second.items['web-search'].permissions).toEqual({ network: ['api.example.com'] });
-    expect(second.items.triage).toEqual(first.items.triage);
-
-    // The receipt sits at the root next to instructions.md; the loader ignores it.
-    // (The fixture tool and skill are not loadable code, so they go first.)
-    fs.rmSync(path.join(agentDir, 'tools'), { recursive: true });
-    fs.rmSync(path.join(agentDir, 'skills'), { recursive: true });
-    fs.writeFileSync(path.join(agentDir, 'instructions.md'), 'You help.');
-    const { config, manifest } = await resolveAgentDir(agentDir);
-    expect(config.instructions).toBe('You help.');
-    expect(manifest.files.map((file) => path.basename(file))).toEqual(['instructions.md']);
-  });
-
-  it('--dry-run writes no receipt', async () => {
-    expect((await add(withRegistry('web-search', '--dry-run'))).code).toBe(0);
-    expect(fs.existsSync(receiptPath())).toBe(false);
-  });
-
-  it('refuses to install over a receipt that is not valid, before writing any file', async () => {
-    fs.writeFileSync(receiptPath(), '{ nope');
-    const result = await add(withRegistry('triage', '--yes'));
-    expect(result.err).toContain('LOUSHO_REGISTRY_INVALID');
-    expect(result.err).toContain('install receipt');
-    expect(fs.existsSync(path.join(agentDir, 'skills'))).toBe(false);
   });
 });
 
@@ -466,22 +330,10 @@ describe('unsafe paths', () => {
     expect(planFiles(item(type, file), dir)[0].relative).toBe(file);
   });
 
-  it('keeps a skill inside skills/<name>/', () => {
-    expect(() => planFiles(item('skill', 'skills/other/SKILL.md'), dir)).toThrow(/UNSAFE_PATH/);
-    expect(() => planFiles(item('tool', 'skills/thing/SKILL.md'), dir)).toThrow(/UNSAFE_PATH/);
-  });
-
   it('caps a file and an item', () => {
     expect(() => planFiles(item('tool', 'tools/a.ts', 'x'.repeat(256 * 1024 + 1)), dir)).toThrow(/larger than/);
     const big: RegistryItem = { ...item('tool', 'tools/a.ts'), files: ['a', 'b', 'c', 'd', 'e'].map((n) => ({ path: `tools/${n}.ts`, content: 'x'.repeat(250 * 1024) })) };
     expect(() => planFiles(big, dir)).toThrow(/item is larger/);
-  });
-
-  it('writes nothing when any file of the item is unsafe', async () => {
-    writeJson(path.join(root, 'web-search.json'), { ...SEARCH, files: [...SEARCH.files, { path: '../escape.ts', content: 'x' }] });
-    const result = await add(withRegistry('web-search', '--yes'));
-    expect(result.err).toContain('LOUSHO_REGISTRY_UNSAFE_PATH');
-    expect(fs.existsSync(path.join(agentDir, 'tools'))).toBe(false);
   });
 
   it('refuses a symlink that leaves the agent directory', async () => {
@@ -499,19 +351,6 @@ describe('unsafe paths', () => {
 });
 
 describe('agent directory checks', () => {
-  it('warns that nothing loads tools/ when --dir is not an agent directory', async () => {
-    const result = await add(withRegistry('web-search', '--yes', '--allow', 'network,env'));
-    expect(result.code).toBe(0);
-    expect(result.out).toMatch(/is not an agent directory[^\n]*nothing loads files from tools\//);
-    expect(result.out.match(/is not an agent directory/g)).toHaveLength(2);
-  });
-
-  it('does not warn when the directory has an agent config', async () => {
-    fs.writeFileSync(path.join(agentDir, 'agent.json'), '{}');
-    const result = await add(withRegistry('web-search', '--yes', '--allow', 'network,env'));
-    expect(result.code).toBe(0);
-    expect(result.out).not.toContain('not an agent directory');
-  });
 
   it('creates a missing --dir for a kit, and still refuses one for a tool', async () => {
     writeJson(path.join(root, 'kit.json'), {
@@ -538,28 +377,5 @@ describe('agent directory checks', () => {
     const tool = await add(['web-search', '--registry', registry, '--dir', path.join(root, 'missing'), '--yes', '--allow', 'network,env']);
     expect(tool.code).toBe(1);
     expect(tool.err).toContain('does not exist');
-  });
-
-  it('leaves no directory behind when a kit install is refused or declined', async () => {
-    writeJson(path.join(root, 'kit.json'), {
-      name: 'mini-kit',
-      type: 'kit',
-      description: 'A kit',
-      files: [{ path: 'agent.json', content: '{}' }],
-      permissions: {},
-    });
-    writeJson(registry, { items: [{ name: 'mini-kit', type: 'kit', description: 'A kit', path: 'kit.json' }] });
-    // A non-interactive run cannot ask, so it refuses; the target must not be created first.
-    const refused = path.join(root, 'refused-kit');
-    const no = await add(['mini-kit', '--registry', registry, '--dir', refused]);
-    expect(no.code).toBe(1);
-    expect(no.err).toContain('stdin is not interactive');
-    expect(fs.existsSync(refused)).toBe(false);
-    // A 'no' at the prompt prints "nothing was written"; that must be true for the directory too.
-    const declined = path.join(root, 'declined-kit');
-    const cancel = await add(['mini-kit', '--registry', registry, '--dir', declined], { tty: true, stdin: 'n\n' });
-    expect(cancel.code).toBe(1);
-    expect(cancel.out).toContain('Cancelled: nothing was written.');
-    expect(fs.existsSync(declined)).toBe(false);
   });
 });

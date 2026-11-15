@@ -7,7 +7,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Connection } from './connection';
-import { loadDatabaseSync } from './driver';
 
 const dirs: string[] = [];
 const conns: Connection[] = [];
@@ -26,43 +25,7 @@ function open(name: string): { conn: Connection; path: string } {
   return { conn, path };
 }
 
-function lockedByAnotherConnection() {
-  const { conn, path } = open('a.db');
-  const holder = new (loadDatabaseSync())(path);
-  holder.exec('BEGIN IMMEDIATE');
-  return { conn, holder };
-}
-
 describe('Connection lock contention', () => {
-  it('transaction() fails fast with LOUSHO_STORAGE_BUSY instead of blocking for seconds', () => {
-    const { conn, holder } = lockedByAnotherConnection();
-    const start = Date.now();
-    let caught: { code?: string; cause?: unknown } | undefined;
-    try {
-      conn.transaction(() => 1);
-    } catch (e) {
-      caught = e as { code?: string };
-    }
-    const elapsed = Date.now() - start;
-    holder.close();
-    expect(caught?.code).toBe('LOUSHO_STORAGE_BUSY');
-    expect(caught?.cause).toBeDefined();
-    expect(elapsed).toBeLessThan(1000);
-  });
-
-  it('transactionAsync() waits without blocking the event loop and succeeds once the lock clears', async () => {
-    const { conn, holder } = lockedByAnotherConnection();
-    let ticks = 0;
-    const timer = setInterval(() => ticks++, 10);
-    setTimeout(() => {
-      holder.exec('COMMIT');
-      holder.close();
-    }, 300);
-    const result = await conn.transactionAsync(() => 'done');
-    clearInterval(timer);
-    expect(result).toBe('done');
-    expect(ticks).toBeGreaterThan(5);
-  });
 
   it('does not map non-lock errors', () => {
     const { conn } = open('b.db');

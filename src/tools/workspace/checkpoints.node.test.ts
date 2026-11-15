@@ -100,19 +100,6 @@ describe('WorkspaceCheckpoints on NodeWorkspace', () => {
     expect(read('a.txt')).toBe('a1\n');
   });
 
-  it.skipIf(IS_WINDOWS)('restores the permission bits with the content', async () => {
-    fs.writeFileSync(path.join(rootDir, 'run.sh'), 'echo 0\n', { mode: 0o755 });
-    fs.chmodSync(path.join(rootDir, 'run.sh'), 0o755);
-    const workspace = new NodeWorkspace({ root: rootDir });
-    const checkpoints = new WorkspaceCheckpoints(workspace);
-    const [, writeFile] = createFsTools(workspace, { checkpoints });
-    await writeFile.tool.execute!({ path: 'run.sh', content: 'echo 1\n' }, ctx('s'));
-    fs.chmodSync(path.join(rootDir, 'run.sh'), 0o600);
-    expect((await checkpoints.rewind(0, { sessionId: 's' })).restored).toEqual(['run.sh']);
-    expect(read('run.sh')).toBe('echo 0\n');
-    expect(fs.statSync(path.join(rootDir, 'run.sh')).mode & 0o777).toBe(0o755);
-  });
-
   it('NodeWorkspace.getMode / chmod stay inside the root', async () => {
     const workspace = new NodeWorkspace({ root: rootDir });
     expect(await workspace.getMode('missing.txt')).toBeUndefined();

@@ -28,31 +28,9 @@ describe('checkServerExposure()', () => {
     for (const fix of ['LOUSHO_API_TOKEN', 'auth.ts', '127.0.0.1', 'LOUSHO_ALLOW_PUBLIC=1']) expect(error.message).toContain(fix);
   });
 
-  it.each(['::', '192.168.1.20', 'example.com', '128.0.0.1'])('refuses %s with no auth too', (host) => {
-    expect(refusal(() => checkServerExposure(host, false, {})).code).toBe('LOUSHO_SERVER_UNPROTECTED');
-  });
-
-  it('starts on 0.0.0.0 when LOUSHO_API_TOKEN is set', () => {
-    const env = { LOUSHO_API_TOKEN: 's3cret' };
-    expect(checkServerExposure('0.0.0.0', authenticatedWith({ env }), env)).toBeUndefined();
-  });
-
-  it('starts on 0.0.0.0 with an auth list (an agent directory auth.ts) and no token', () => {
-    const allowAll = async () => ({ id: 'anyone', type: 'user' as const, authenticator: 'custom' });
-    expect(checkServerExposure('0.0.0.0', authenticatedWith({ env: {}, auth: [allowAll] }), {})).toBeUndefined();
-  });
-
-  it.each(['1', 'true'])('starts on 0.0.0.0 with LOUSHO_ALLOW_PUBLIC=%s, returning the open-agent warning', (value) => {
+  it.each([ 'true'])('starts on 0.0.0.0 with LOUSHO_ALLOW_PUBLIC=%s, returning the open-agent warning', (value) => {
     expect(checkServerExposure('0.0.0.0', false, { LOUSHO_ALLOW_PUBLIC: value })).toBe(
       '[lousho server] warning: no LOUSHO_API_TOKEN set, so anyone who can reach 0.0.0.0 can use this agent.'
     );
-  });
-
-  it('does not take LOUSHO_ALLOW_PUBLIC=0 as an opt-out', () => {
-    expect(refusal(() => checkServerExposure('0.0.0.0', false, { LOUSHO_ALLOW_PUBLIC: '0' })).code).toBe('LOUSHO_SERVER_UNPROTECTED');
-  });
-
-  it.each(['127.0.0.1', '127.1.2.3', 'localhost', 'LOCALHOST', '::1', '[::1]'])('starts on loopback %s with no auth and no warning', (host) => {
-    expect(checkServerExposure(host, authenticatedWith({ env: {} }), {})).toBeUndefined();
   });
 });

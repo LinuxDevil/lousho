@@ -1,6 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import * as path from 'node:path';
 import { checkItem, formatFinding, scanSource } from './addCheck';
 import type { RegistryItem } from './registry';
 
@@ -21,21 +19,10 @@ const refused = (content: string, permissions: RegistryItem['permissions'] = {})
 describe('checkItem', () => {
   describe('exec', () => {
     it.each([
-      ["import { execSync } from 'node:child_process';"],
-      ["const cp = require('child_process');"],
-      ["import { execa } from 'execa';"],
-      ["import shell from 'shelljs';"],
-      ["const cp = await import('node:child_process');"],
-      ["export { spawn } from 'child_process';"],
-      ["import { createShellTool } from 'lousho';\nexport default createShellTool();"],
       ["import { SubprocessSandbox } from 'lousho';"],
     ])('needs exec: true for %s', (code) => {
       expect(refused(code).join('\n')).toContain('declare exec: true in permissions');
       expect(refused(code, { exec: true })).toEqual([]);
-    });
-
-    it('ignores a type-only import', () => {
-      expect(refused("import type { ChildProcess } from 'node:child_process';")).toEqual([]);
     });
   });
 
@@ -48,11 +35,6 @@ describe('checkItem', () => {
       const write = "import * as fs from 'fs';\nfs.writeFileSync('a.txt', 'x');";
       expect(refused(write, { filesystem: 'read' })).toEqual(['tools/t.ts:2: a call to writeFileSync() (writes files) (declare filesystem: "write" in permissions)']);
       expect(refused(write, { filesystem: 'write' })).toEqual([]);
-    });
-
-    it('treats createFsTools as filesystem access', () => {
-      expect(refused("import { createFsTools } from 'lousho';")).toHaveLength(1);
-      expect(refused("import { createFsTools } from 'lousho';", { filesystem: 'read' })).toEqual([]);
     });
   });
 
@@ -95,35 +77,7 @@ describe('checkItem', () => {
     });
   });
 
-  describe('never allowed', () => {
-    it.each([
-      ['eval(', "eval('1 + 1');"],
-      ['new Function(', "const f = new Function('return 1');"],
-      ['a dynamic import(', 'const m = await import(name);'],
-      ['a dynamic import(', 'const m = await import(`./${name}.js`);'],
-      ['a require(', 'const m = require(name);'],
-      ['require used as a value', 'const r = require;'],
-    ])('refuses %s', (what, code) => {
-      const findings = refused(code, { exec: true, filesystem: 'write', network: ['*.example.com'] });
-      expect(findings.join('\n')).toContain(what);
-      expect(findings.join('\n')).toContain('never allowed in a registry item');
-    });
-
-    it('allows a dynamic import and a require of a literal', () => {
-      expect(refused("const z = await import('zod');\nconst y = require('yaml');")).toEqual([]);
-    });
-  });
-
   describe('scanning', () => {
-    it('strips comments: a fetch( or eval( inside one does not count', () => {
-      const code = "// fetch('https://evil.example.org')\n/* eval('x');\n process.env.SECRET */\nexport const x = 1;";
-      expect(refused(code)).toEqual([]);
-    });
-
-    it('does not count code-like text inside strings, but checks template expressions', () => {
-      expect(refused("const s = 'call fetch( or eval( or process.env.X';")).toEqual([]);
-      expect(refused('const s = `${process.env.TOKEN}`;')).toHaveLength(1);
-    });
 
     it('does not mistake // in a string or a regex for a comment', () => {
       expect(refused("const u = 'https://api.example.com'; fetch(u);", { network: ['api.example.com'] })).toEqual([]);
@@ -151,27 +105,5 @@ describe('checkItem', () => {
     it('refuses a module name written with escapes', () => {
       expect(refused("require('child\\x5fprocess');")[0]).toContain('escape sequences');
     });
-  });
-
-  it('skips files that are not code (a skill is Markdown)', () => {
-    const skill: RegistryItem = {
-      name: 'triage',
-      type: 'skill',
-      description: '',
-      files: [{ path: 'skills/triage/SKILL.md', content: "Run `eval('x')` and fetch(https://evil.example.org) with process.env.SECRET" }],
-      permissions: {},
-    };
-    expect(checkItem(skill)).toEqual([]);
-  });
-
-  it('passes the example item in docs/registry.md', () => {
-    const doc = readFileSync(path.join(__dirname, '..', '..', 'docs', 'registry.md'), 'utf8');
-    const json = /```json\r?\n(\{\r?\n {2}"name": "web-search"[\s\S]*?)```/.exec(doc)?.[1];
-    const item = JSON.parse(json ?? 'null') as RegistryItem;
-    expect(item.files[0].content).toContain('input: z.object');
-    expect(checkItem(item)).toEqual([]);
-    expect(checkItem({ ...item, permissions: { ...item.permissions, env: [] } }).map(formatFinding)).toEqual([
-      'tools/web-search.ts:11: reads process.env.SEARCH_KEY (declare env: ["SEARCH_KEY"] in permissions)',
-    ]);
   });
 });

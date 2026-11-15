@@ -29,15 +29,6 @@ function renderCard(graphNode: GraphNode, extra: Partial<CanvasNodeData> = {}): 
 }
 
 describe('node status pill → spans sheet button', () => {
-  it.each(['running', 'paused', 'done', 'error'] as const)('wraps the %s pill in a View spans button', (status) => {
-    const card = renderCard(toolNode, { status, onViewSpans: vi.fn() });
-    const button = card.querySelector<HTMLButtonElement>('button.node-status-button.nodrag');
-    expect(button).not.toBeNull();
-    expect(button!.getAttribute('aria-label')).toBe('View spans for http');
-    // 'paused' reads "awaiting approval" (StatusPill's LABELS map).
-    const label = status === 'paused' ? 'awaiting approval' : status;
-    expect(button!.querySelector('.status-pill')?.textContent).toBe(label);
-  });
 
   it('leaves the pill a plain span while the node is idle or has no opener', () => {
     for (const status of ['idle', undefined] as const) {

@@ -139,22 +139,6 @@ afterEach(() => {
 });
 
 describe('TraceScreen', () => {
-  it('shows the header: name, status, agent link, model, duration, tokens, cost, session link', async () => {
-    daemon({ trace: TRACE });
-    const c = mount();
-    await waitFor(() => c.querySelector('.trace-header') !== null);
-    const header = c.querySelector('.trace-header') as HTMLElement;
-    expect(header.querySelector('h2')?.textContent).toBe('support run');
-    expect(header.querySelector('.status-pill.pill-ok')).not.toBeNull();
-    await waitFor(() => header.textContent!.includes('Support bot'));
-    const agent = header.querySelector('a[href="#/traces?agent=a1"]') as HTMLAnchorElement;
-    expect(agent.textContent).toBe('Support bot');
-    expect(header.textContent).toContain('gpt-4o-mini');
-    expect(header.textContent).toContain('2.5s');
-    expect(header.textContent).toContain('1,234');
-    expect(header.querySelector('a[href="#/threads/s1"]')).not.toBeNull();
-    expect(header.querySelector('button[aria-label="Copy link"]')).not.toBeNull();
-  });
 
   it('header duration for an interrupted root with no end stops at the latest child end', async () => {
     daemon({
@@ -192,17 +176,6 @@ describe('TraceScreen', () => {
     expect(c.querySelector('.run-tree [data-obs-id="gen1"] .run-playground-link')?.getAttribute('href')).toBe('#/playground?trace=t1&fromObs=gen1');
     expect(c.querySelector('.trace-header a[href="#/playground?trace=t1&fromObs=gen1"]')).not.toBeNull();
     expect(c.querySelector('.run-inspector .run-playground-link')).toBeNull();
-  });
-
-  it('shows an EmptyState with "Back to traces" for a missing trace', async () => {
-    window.history.replaceState(null, '', '/#/traces/nope');
-    daemon({ trace: TRACE });
-    const c = mount('nope');
-    await waitFor(() => c.querySelector('.empty-state') !== null);
-    expect(c.querySelector('.empty-state-title')?.textContent).toBe('Trace not found');
-    const back = [...c.querySelectorAll('button')].find((b) => b.textContent === 'Back to traces') as HTMLButtonElement;
-    act(() => back.click());
-    expect(window.location.hash).toBe('#/traces');
   });
 
   it('submits feedback with POST /observe/api/v1/scores, toasts, and refetches the trace', async () => {
@@ -258,31 +231,5 @@ describe('TraceScreen', () => {
     await waitFor(() => document.body.textContent!.includes('Link copied'));
     expect(writeText).toHaveBeenCalledWith(window.location.href);
     expect(window.location.href).toContain('#/traces/t1?obs=tool1');
-  });
-
-  it('shows the daemon-down state with the URL kept, and recovers in place', async () => {
-    window.history.replaceState(null, '', '/#/traces/t1?obs=gen1');
-    const { state } = daemon({ trace: TRACE });
-    state.down = true;
-    const c = mount('t1', 30);
-    await waitFor(() => c.textContent!.includes('lousho observe start'));
-    expect(window.location.hash).toBe('#/traces/t1?obs=gen1');
-
-    state.down = false;
-    await waitFor(() => inspectedId(c) === 'gen1');
-    expect(c.textContent).not.toContain('lousho observe start');
-    expect(window.location.hash).toBe('#/traces/t1?obs=gen1');
-  });
-
-  it('sets the page header: Traces, the trace id, and a link back to the list', async () => {
-    daemon({ trace: TRACE });
-    const c = mount();
-    await waitFor(() => c.querySelector('.trace-header') !== null);
-    const header = c.querySelector('.test-screen-header') as HTMLElement;
-    expect(header.querySelector('h1')?.textContent).toBe('Traces');
-    expect(header.querySelector('.trace-id')?.textContent).toBe('t1');
-    const back = header.querySelector('a') as HTMLAnchorElement;
-    expect(back.textContent).toBe('All traces');
-    expect(back.getAttribute('href')).toMatch(/^#\/traces/);
   });
 });

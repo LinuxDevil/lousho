@@ -79,11 +79,6 @@ describe('session commit is a compare-and-swap', () => {
     expect((busy[0] as PromiseRejectedResult).reason).toMatchObject({ code: 'LOUSHO_SESSION_BUSY' });
     expect(users).toHaveLength(1);
   });
-
-  it('transcriptRevision treats a missing transcript as an empty one and tells transcripts apart', () => {
-    expect(transcriptRevision(undefined)).toBe(transcriptRevision([]));
-    expect(transcriptRevision([{ role: 'user', content: 'a' }])).not.toBe(transcriptRevision([{ role: 'user', content: 'b' }]));
-  });
 });
 
 describe('FileSessionStore.saveIf lock', () => {

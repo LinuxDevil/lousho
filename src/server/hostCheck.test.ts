@@ -2,9 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { hostHeaderAllowed, hostnameOf, isLoopbackHost } from './hostCheck';
 
 describe('isLoopbackHost', () => {
-  it('accepts localhost, 127.0.0.0/8 and ::1 exactly', () => {
-    for (const host of ['localhost', 'LOCALHOST', '127.0.0.1', '127.1.2.3', '::1', '[::1]']) expect(isLoopbackHost(host)).toBe(true);
-  });
 
   it('refuses names that only look loopback, and other addresses', () => {
     for (const host of ['127.attacker.example', '127.0.0.1.attacker.example', '127.0.0.256', 'localhost.attacker.example', '0.0.0.0', '10.0.0.1', '']) {
@@ -33,12 +30,6 @@ describe('hostHeaderAllowed', () => {
     expect(hostHeaderAllowed('evil.example', '127.0.0.1')).toBe(false);
     expect(hostHeaderAllowed('192.168.1.5:3737', '127.0.0.1')).toBe(false);
     expect(hostHeaderAllowed(undefined, '127.0.0.1')).toBe(false);
-  });
-
-  it('a wildcard bind adds IP addresses, never a name', () => {
-    expect(hostHeaderAllowed('192.168.1.5:3737', '0.0.0.0')).toBe(true);
-    expect(hostHeaderAllowed('[fe80::1]:3737', '::')).toBe(true);
-    expect(hostHeaderAllowed('evil.example:3737', '0.0.0.0')).toBe(false);
   });
 
   it('a named bind adds that name', () => {

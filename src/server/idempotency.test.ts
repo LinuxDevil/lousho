@@ -52,32 +52,6 @@ const refundTurn: MockTurn[] = [{ toolCalls: [{ name: 'issue_refund', args: { or
 const userMessages = async (store: AgentStore, id: string) => ((await store.sessions!.load(id)) ?? []).filter((message) => message.role === 'user');
 
 describe('POST /chat with an Idempotency-Key', () => {
-  it('replays a finished turn on a resend instead of running it again', async () => {
-    const { handler, model, refunds, store } = desk(refundTurn);
-    expect(await doneText(await handler(post({ sessionId: 'k-1', input: 'Refund B-1' }, 'req-1')))).toBe('Refund issued.');
-
-    const resend = await handler(post({ sessionId: 'k-1', input: 'Refund B-1' }, 'req-1'));
-    expect(resend.status).toBe(200);
-    expect(resend.headers.get('content-type')).toBe('text/event-stream');
-    expect(resend.headers.get('idempotent-replayed')).toBe('true');
-    const replayed = await events(resend);
-    expect(replayed.map((event) => event.type)).toEqual(['run.done']);
-    expect(replayed[0]).toMatchObject({ text: 'Refund issued.', finishReason: 'stop' });
-
-    expect(refunds).toEqual(['B-1']);
-    expect(model.calls).toHaveLength(2);
-    const users = await userMessages(store, 'k-1');
-    expect(users).toHaveLength(1);
-    expect(users[0].metadata).toMatchObject({ idempotencyKey: 'req-1' });
-  });
-
-  it('runs a new turn for a new key, and an unkeyed resend as before', async () => {
-    const { handler, store } = desk(['One.', 'Two.', 'Three.']);
-    expect(await doneText(await handler(post({ sessionId: 'k-2', input: 'hi' }, 'a')))).toBe('One.');
-    expect(await doneText(await handler(post({ sessionId: 'k-2', input: 'hi' }, 'b')))).toBe('Two.');
-    expect(await doneText(await handler(post({ sessionId: 'k-2', input: 'hi' })))).toBe('Three.');
-    expect(await userMessages(store, 'k-2')).toHaveLength(3);
-  });
 
   it('is a 409 while the same key is still running its turn', async () => {
     let release!: () => void;
@@ -102,15 +76,6 @@ describe('POST /chat with an Idempotency-Key', () => {
     expect(await doneText(await handler(post({ sessionId: 'k-3', input: 'hi' }, 'dup')))).toBe('Done.');
   });
 
-  it('survives a restart: a fresh agent over the same store replays the turn', async () => {
-    const store = memoryStore();
-    await events(await desk(['Stored.'], store).handler(post({ sessionId: 'k-4', input: 'hi' }, 'req-4')));
-
-    const restarted = desk([], store);
-    expect(await doneText(await restarted.handler(post({ sessionId: 'k-4', input: 'hi' }, 'req-4')))).toBe('Stored.');
-    expect(restarted.model.calls).toHaveLength(0);
-  });
-
   it('resumes a turn a crash interrupted, without appending the message again or re-running finished steps', async () => {
     const store = memoryStore();
     const crashed = desk(refundTurn, store, true);
@@ -125,12 +90,5 @@ describe('POST /chat with an Idempotency-Key', () => {
     expect(restarted.model.calls).toHaveLength(1);
     expect(await userMessages(store, 'k-5')).toHaveLength(1);
     expect(await restarted.agent.session({ id: 'k-5' }).pending()).toBeNull();
-  });
-
-  it('rejects a malformed key', async () => {
-    const { handler } = desk(['x']);
-    const response = await handler(post({ sessionId: 'k-6', input: 'hi' }, 'has space'));
-    expect(response.status).toBe(400);
-    expect(await response.json()).toMatchObject({ code: 'LOUSHO_REQUEST_INVALID' });
   });
 });

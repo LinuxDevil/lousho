@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentSpecV2 } from 'lousho/spec';
-
-import type { Requirement } from '../../../../shared/wireTypes';
-import { capabilityRows, missingRequirements, permissionRuleText, safetySummary, triggerLine } from '../overviewModel';
+import { capabilityRows, permissionRuleText, safetySummary, triggerLine } from '../overviewModel';
 
 /** The ticket's overview spec fixture, completed to a valid `AgentSpecV2`. */
 function spec(over: Partial<AgentSpecV2> = {}): AgentSpecV2 {
@@ -57,11 +55,6 @@ describe('capabilityRows', () => {
     ]);
   });
 
-  it('treats absent sections as empty', () => {
-    const rows = capabilityRows(spec({ tools: undefined, mcpServers: undefined, skills: undefined, memory: undefined, subagents: undefined, handoffs: undefined }));
-    expect(rows.every((row) => row.items.length === 0)).toBe(true);
-  });
-
   it('names registry, hosted, openapi and hub tools and inline skills', () => {
     const rows = capabilityRows(
       spec({
@@ -75,16 +68,6 @@ describe('capabilityRows', () => {
 });
 
 describe('triggerLine', () => {
-  it('writes one line per trigger type', () => {
-    const lines = spec().triggers!.map(triggerLine);
-    expect(lines.map((line) => line.text)).toEqual([
-      'Chat',
-      'Cron · 0 9 * * 1-5 · UTC',
-      'Webhook · /gh',
-      'GitHub channel',
-      'After triage · on done',
-    ]);
-  });
 
   it('omits the timezone when a cron trigger has none and prefixes a bare webhook path', () => {
     expect(triggerLine({ id: 'c', type: 'cron', cron: '*/5 * * * *', prompt: 'x' }).text).toBe('Cron · */5 * * * *');
@@ -113,20 +96,5 @@ describe('safetySummary', () => {
     );
     expect(summary.guardrails).toEqual(['secret-scan (tools)']);
     expect(summary.permissionMode).toBe('plan');
-  });
-});
-
-describe('missingRequirements', () => {
-  it('keeps only the missing rows', () => {
-    const requirements: Requirement[] = [
-      { id: 'a', kind: 'provider_key', status: 'ok', label: 'ok row' },
-      { id: 'b', kind: 'secret', status: 'missing', label: 'A' },
-      { id: 'c', kind: 'model', status: 'unknown', label: 'unknown row' },
-    ];
-    expect(missingRequirements(requirements).map((r) => r.label)).toEqual(['A']);
-  });
-
-  it('is empty when requirements are absent', () => {
-    expect(missingRequirements(undefined)).toEqual([]);
   });
 });

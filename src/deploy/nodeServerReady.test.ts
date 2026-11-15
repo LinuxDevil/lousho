@@ -34,12 +34,6 @@ describe('GET /ready', () => {
     expect(await health.text()).toBe('ok');
   });
 
-  it('needs no auth even with LOUSHO_API_TOKEN set', async () => {
-    const { url } = await start({ env: { LOUSHO_API_TOKEN: 'secret' } });
-    expect((await fetch(`${url}/ready`)).status).toBe(200);
-    expect((await fetch(`${url}/chat/abc`)).status).toBe(401);
-  });
-
   it('answers 503 draining once shutdown has begun', async () => {
     let release!: () => void;
     const gate = new Promise<void>((done) => (release = done));

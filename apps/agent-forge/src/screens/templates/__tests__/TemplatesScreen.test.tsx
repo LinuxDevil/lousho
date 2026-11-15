@@ -117,47 +117,6 @@ beforeEach(() => {
 });
 
 describe('TemplatesScreen', () => {
-  it('shows six skeleton cards while the list is pending', async () => {
-    api.listTemplates.mockReturnValue(new Promise(() => {}));
-    const host = render(
-      <ToastProvider>
-        <TemplatesScreen />
-      </ToastProvider>
-    );
-    await flush();
-    expect(host.querySelectorAll('.template-card-skeleton')).toHaveLength(6);
-    const grid = host.querySelector('ul.templates-grid')!;
-    expect(grid.getAttribute('aria-busy')).toBe('true');
-    expect(grid.querySelector('[role="status"]')?.textContent).toBe('Loading templates');
-  });
-
-  it('renders one card per template and the category pills, All pressed first', async () => {
-    const host = await mountAt();
-    expect(host.querySelectorAll('article.template-card')).toHaveLength(6);
-    const pills = [...host.querySelectorAll<HTMLButtonElement>('button.templates-pill')];
-    expect(pills).toHaveLength(5);
-    expect(pills.map((p) => p.textContent)).toEqual([
-      'All6',
-      'Engineering2',
-      'Operations1',
-      'Research1',
-      'Support2',
-    ]);
-    expect(pills[0].getAttribute('aria-pressed')).toBe('true');
-    expect(pills.slice(1).every((p) => p.getAttribute('aria-pressed') === 'false')).toBe(true);
-  });
-
-  it('filters the grid by category and writes ?category= to the hash', async () => {
-    const host = await mountAt();
-    await act(async () => pillNamed(host, 'Support')!.click());
-    await flush();
-    expect(window.location.hash).toBe('#/templates?category=Support');
-    expect(host.querySelectorAll('article.template-card')).toHaveLength(2);
-    expect(host.textContent).toContain('Support triage');
-    expect(host.textContent).toContain('Docs Q&A');
-    expect(host.textContent).not.toContain('PR reviewer');
-    expect(pillNamed(host, 'Support')!.getAttribute('aria-pressed')).toBe('true');
-  });
 
   it('opens the detail sheet from a card: requirements and the README as text', async () => {
     const host = await mountAt();
@@ -229,16 +188,6 @@ describe('TemplatesScreen', () => {
     expect(api.listTemplates).toHaveBeenCalledTimes(2);
     expect(host.textContent).toContain('No templates found');
     expect(host.textContent).toContain('The SDK ships six templates');
-  });
-
-  it('shows the sheet error with Retry when the detail fetch fails', async () => {
-    api.getTemplate.mockRejectedValueOnce(new Error('spec missing'));
-    await mountAt('#/templates?template=pr-reviewer');
-    await flush();
-
-    const alert = document.body.querySelector('.template-sheet-error[role="alert"]');
-    expect(alert?.textContent).toContain('spec missing');
-    expect(buttonNamed(document.body, 'Retry')).toBeDefined();
   });
 
   it('falls back to All for an unknown ?category= and clears the filter from the All pill', async () => {

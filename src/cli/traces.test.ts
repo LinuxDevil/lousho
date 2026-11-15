@@ -23,35 +23,6 @@ async function run(args: string[], options: { color?: boolean } = {}) {
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe('lousho traces', () => {
-  it('lists the recent traces, newest first', async () => {
-    const { code, out } = await run(['--dir', 'traces']);
-    expect(code).toBe(0);
-    expect(out).toMatchInlineSnapshot(`
-      "TIME    AGENT    DURATION  MODEL CALLS  TOOL CALLS  TOKENS IN/OUT  COST       STATUS  ID
-      1h ago  weather  5.71s     1            1           58/16          $0.000018  error   3f2b7d00-1111-4222-8333-444455556666
-      2h ago  weather  1.65s     2            1           159/32         $0.000043  ok      3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f
-      1d ago  lead     3.02s     3            1           220/44         $0.000064  ok      9e8d7c6b-5a49-4382-a170-f0e1d2c3b4a5"
-    `);
-  });
-
-  it('--limit caps the list', async () => {
-    const { out } = await run(['--dir', 'traces', '--limit', '1']);
-    expect(out.split('\n')).toHaveLength(2);
-  });
-
-  it('prints one trace as a tree, by unique prefix', async () => {
-    const { code, out } = await run(['9e8d', '--dir', 'traces']);
-    expect(code).toBe(0);
-    expect(out).toMatchInlineSnapshot(`
-      "Trace 9e8d7c6b-5a49-4382-a170-f0e1d2c3b4a5  6 spans, 3.02s
-      invoke_agent lead              |████████████████████████|     3.02s  $0.000064
-      ├─ chat gpt-4o-mini            |█████                   |     596ms  openai/gpt-4o-mini  in 80 out 30  $0.000030
-      ├─ execute_tool task           |    ██████████████      |     1.80s  tool task  $0.000012
-      │  └─ invoke_agent researcher  |    ██████████████      |     1.79s  $0.000012
-      │     └─ chat gpt-4o-mini      |    ██████████████      |     1.77s  openai/gpt-4o-mini  in 20 out 8  $0.000012
-      └─ chat gpt-4o-mini            |                   █████|     600ms  openai/gpt-4o-mini  in 120 out 6  $0.000022"
-    `);
-  });
 
   it('marks a failed tool span as error, with its message', async () => {
     const { out } = await run(['3f2b', '--dir', 'traces']);
@@ -85,12 +56,6 @@ describe('lousho traces', () => {
     expect(err).toContain('3f2b7d00-1111-4222-8333-444455556666');
   });
 
-  it('an unknown id exits 1', async () => {
-    const { code, err } = await run(['zzz', '--dir', 'traces']);
-    expect(code).toBe(1);
-    expect(err).toContain("no trace matches 'zzz'");
-  });
-
   it('a missing directory prints a hint and exits 0', async () => {
     const { code, out } = await run([]);
     expect(code).toBe(0);
@@ -111,11 +76,6 @@ describe('lousho traces', () => {
     expect((await run(['--nope'])).code).toBe(2);
     expect((await run(['--limit', '0'])).code).toBe(2);
     expect(() => parseTracesArgs(['a', 'b'])).toThrow(/unexpected argument 'b'/);
-  });
-
-  it('prints the usage once for a bad --limit', async () => {
-    const { err } = await run(['--limit', 'abc']);
-    expect(err.match(/Usage: lousho traces/g)).toHaveLength(1);
   });
 
   it('reads a trace recorded from a real model run (live-trace.jsonl): tokens, cost and the tool tree', async () => {

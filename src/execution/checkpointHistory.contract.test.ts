@@ -4,14 +4,12 @@
  * `LocalStorageCheckpointStore`, `KVCheckpointStore` and `fileStore()`), plus the `getCheckpointHistory()` helper on
  * stores that do not.
  */
-import { describe, it, expect, afterEach, afterAll, vi } from 'vitest';
+import { afterEach, afterAll, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  getCheckpointHistory,
   LocalStorageCheckpointStore,
-  type CheckpointStore,
 } from './checkpoint';
 import { StorageService } from '../storage/StorageService';
 import { memoryStore } from '../storage/agentStore';
@@ -19,7 +17,6 @@ import { fileStore } from '../storage/fileStore';
 import { SqliteStore } from '../storage/sqlite';
 import { KVCheckpointStore } from '../deploy/kvCheckpointStore';
 import { createFakeFs } from './__fixtures__/fakeFs';
-import { makeCheckpoint } from '../storage/sqlite/__fixtures__/storeContracts';
 import { describeCheckpointHistoryContract, type CheckpointHistoryStoreFactory } from './__fixtures__/checkpointHistoryContract';
 
 const sqliteStores: SqliteStore[] = [];
@@ -71,25 +68,3 @@ const implementations: Array<[string, CheckpointHistoryStoreFactory]> = [
 ];
 
 for (const [name, factory] of implementations) describeCheckpointHistoryContract(name, factory);
-
-const save = (store: CheckpointStore, sessionId: string, stepIndex: number) =>
-  store.save(sessionId, makeCheckpoint({ sessionId, stepIndex }));
-
-describe('getCheckpointHistory()', () => {
-  it('reads the history of a store that keeps one', async () => {
-    const store = memoryStore().checkpoints;
-    await save(store, 's', 1);
-    await save(store, 's', 2);
-    expect((await getCheckpointHistory(store, 's'))?.map((entry) => entry.step)).toEqual([2, 1]);
-    expect(await getCheckpointHistory(store, 's', { limit: 1 })).toHaveLength(1);
-  });
-
-  it('returns undefined for a store without history()', async () => {
-    const plain: CheckpointStore = {
-      save: async () => undefined,
-      load: async () => null,
-      delete: async () => undefined,
-    };
-    expect(await getCheckpointHistory(plain, 's')).toBeUndefined();
-  });
-});

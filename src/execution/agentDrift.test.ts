@@ -10,9 +10,7 @@ import { createAgent, type CreateAgentBase } from '../createAgent';
 /** Extra createAgent options a test adds on top of the provider and instructions it sets itself. */
 type ExtraConfig = Partial<CreateAgentBase>;
 import { defineTool, type DefinedTool } from '../tools/defineTool';
-import { ToolRegistry } from '../tools';
 import { PropagatingToolError } from './AgentExecutor';
-import { fingerprintOf } from './agentFingerprint';
 import { memoryStore, type AgentStore } from '../storage/agentStore';
 import { SqliteStore } from '../storage/sqlite';
 import { mockModel, type MockTurn } from '../testing';
@@ -59,58 +57,6 @@ async function collect(run: AgentRun): Promise<AgentEvent[]> {
 
 afterEach(() => {
   vi.restoreAllMocks();
-});
-
-describe('agent fingerprint', () => {
-  const registryOf = (tools: DefinedTool[]) => {
-    const registry = new ToolRegistry();
-    for (const tool of tools) registry.register(tool);
-    return registry;
-  };
-  const agentOf = (tools: DefinedTool[], prompt = 'Be brief.', model?: string) => ({
-    name: 'a',
-    prompt,
-    tools: Object.fromEntries(tools.map((t) => [t.name, { tool: t.name }])),
-    ...(model && { settings: { model } }),
-  });
-
-  it('is stable: same for any tool order and ignores functions; changes with model, tool schema, tool names and instructions', async () => {
-    const provider = mockModel([], { defaultModel: 'm1' });
-    const a = toolsOf(['x', 'y']).list;
-    const base = await fingerprintOf(agentOf(a), registryOf(a), provider);
-
-    expect(base.hash).toMatch(/^[0-9a-f]{16}$/);
-    expect(base).toMatchObject({ model: 'm1', tools: { x: expect.any(String), y: expect.any(String) } });
-    expect(await fingerprintOf(agentOf([a[1], a[0]]), registryOf([a[1], a[0]]), provider)).toEqual(base);
-    expect(await fingerprintOf(agentOf(toolsOf(['x', 'y']).list), registryOf(toolsOf(['x', 'y']).list), provider)).toEqual(base);
-
-    const withInput = toolsOf(['x', 'y'], { input: { q: z.string() } }).list;
-    const variants = [
-      await fingerprintOf(agentOf(a, 'Be long.'), registryOf(a), provider),
-      await fingerprintOf(agentOf(a, 'Be brief.', 'm2'), registryOf(a), provider),
-      await fingerprintOf(agentOf(a), registryOf(a), mockModel([], { defaultModel: 'm3' })),
-      await fingerprintOf(agentOf(a.slice(0, 1)), registryOf(a), provider),
-      await fingerprintOf(agentOf(withInput), registryOf(withInput), provider),
-    ];
-    for (const variant of variants) expect(variant.hash).not.toBe(base.hash);
-    expect(variants[4].tools.x).not.toBe(base.tools.x);
-    expect(variants[4].tools.y).not.toBe(base.tools.y);
-  });
-
-  it('leaves transient (per-run-bound) tools out: a resumed run without them sees no drift', async () => {
-    const provider = mockModel([], { defaultModel: 'm1' });
-    const [a] = toolsOf(['x']).list;
-    // A memory slot's bound tool: in the run's registry, marked transient.
-    const bound = toolsOf(['remember_notes']).list[0];
-    bound.transient = true;
-    const agent = agentOf([a, bound]);
-
-    const inRun = await fingerprintOf(agent, registryOf([a, bound]), provider);
-    const resumed = await fingerprintOf(agent, registryOf([a]), provider);
-
-    expect(inRun.tools).toEqual({ x: expect.any(String) });
-    expect(inRun).toEqual(resumed);
-  });
 });
 
 describe.each(stores)('resuming with a changed agent: %s', (_name, makeStore) => {

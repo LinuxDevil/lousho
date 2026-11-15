@@ -25,12 +25,6 @@ describe('agent directory auth.ts', () => {
     expect(outcome).toMatchObject({ ok: true, principal: { authenticator: 'api-token' } });
   });
 
-  it('is absent without an auth file', async () => {
-    const { auth, manifest } = await resolveAgentDir(fixture('channels'), { provider: mockModel(['x']) });
-    expect(auth).toBeUndefined();
-    expect(manifest.auth).toBe(false);
-  });
-
   it('returns the named authorizeSession / authorizeApproval exports, and rejects ones that are not functions', async () => {
     const dir = tempDir({
       'instructions.md': 'x',

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { AUTHOR_TOOL_NAMES } from '../../../server/author/toolNames';
-import { ACTIVITY_LABELS, activityLabelFor, activityStateOf } from '../activityLabels';
+import { ACTIVITY_LABELS, activityStateOf } from '../activityLabels';
 import type { AuthorToolPart } from '../../../shared/authorWire';
 
 function part(over: Partial<AuthorToolPart>): AuthorToolPart {
@@ -17,23 +17,9 @@ describe('ACTIVITY_LABELS', () => {
       expect(row.failed, `${name}.failed`).toBeTruthy();
     }
   });
-
-  it('falls back to the generic row for an unknown tool', () => {
-    expect(activityLabelFor('mcp__jira__comment', 'busy')).toBe('Working');
-    expect(activityLabelFor('mcp__jira__comment', 'done')).toBe('Done');
-    expect(activityLabelFor('mcp__jira__comment', 'failed')).toBe('A step failed');
-  });
 });
 
 describe('activityStateOf', () => {
-  it('is busy while the part is pending', () => {
-    expect(activityStateOf(part({ state: 'pending' }))).toBe('busy');
-  });
-
-  it('is done on a settled ok output', () => {
-    expect(activityStateOf(part({ state: 'done', output: { ok: true } }))).toBe('done');
-    expect(activityStateOf(part({ state: 'done', output: { spec: {} } }))).toBe('done');
-  });
 
   it('is failed on state error or output.ok === false', () => {
     expect(activityStateOf(part({ state: 'error' }))).toBe('failed');

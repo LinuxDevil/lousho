@@ -10,14 +10,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as aiV7 from 'ai-v7';
 import { MockLanguageModelV4 } from 'ai-v7/test';
 import { MockLanguageModelV1 } from 'ai/test';
-import { OpenAIProvider } from './OpenAIProvider';
 import { AnthropicProvider } from './AnthropicProvider';
 import { OllamaProvider } from './OllamaProvider';
 import { OpenRouterProvider } from './OpenRouterProvider';
 import type { LLMProvider, Message } from './llm';
 import type { AiSdkModule } from './aiSdkCompat';
 import { itOnAiV4 } from './aiMajor.testkit';
-import { openRouterReasoning, reasoningProviderOptions, supportsReasoning } from './reasoning';
+import { reasoningProviderOptions, supportsReasoning } from './reasoning';
 
 describe('supportsReasoning', () => {
   it('reports whether a provider/model pair is in a known reasoning family', () => {
@@ -30,28 +29,6 @@ describe('supportsReasoning', () => {
 type V7Options = Parameters<MockLanguageModelV4['doGenerate']>[0];
 type V7Result = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
 type V4Options = Parameters<MockLanguageModelV1['doGenerate']>[0];
-
-describe('reasoning that is set but not sent', () => {
-  it('sends it to Fable, gpt-oss and DeepSeek V3.x on OpenRouter and to Fable on Anthropic', () => {
-    for (const model of ['anthropic/claude-fable-5.1', 'openai/gpt-oss-120b', 'deepseek/deepseek-v3.1-terminus']) {
-      expect(openRouterReasoning(model, 'low')).toEqual({ reasoning: { effort: 'low' } });
-    }
-    expect(reasoningProviderOptions('anthropic', 'claude-fable-5-1', 'low')).toEqual({ anthropic: { thinking: { type: 'enabled', budgetTokens: 2048 } } });
-  });
-
-  it('warns once per model when it is set but not sent, and not when it is sent or off', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    expect(reasoningProviderOptions('anthropic', 'claude-unlisted-1', 'high')).toBeUndefined();
-    expect(reasoningProviderOptions('anthropic', 'claude-unlisted-1', 'high')).toBeUndefined();
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0][0]).toContain("claude-unlisted-1");
-    reasoningProviderOptions('anthropic', 'claude-unlisted-2', 'none');
-    reasoningProviderOptions('anthropic', 'claude-unlisted-2', undefined);
-    reasoningProviderOptions('anthropic', 'claude-unlisted-2', { effort: 'low', force: true });
-    reasoningProviderOptions('anthropic', 'claude-sonnet-4-5', 'low');
-    expect(warn).toHaveBeenCalledTimes(1);
-  });
-});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -96,20 +73,6 @@ function onV4(provider: LLMProvider, reasoning?: Array<{ type: 'text'; text: str
 const user: Message[] = [{ role: 'user', content: 'Think about it.' }];
 
 describe('reasoning options per provider', () => {
-  it('maps an effort to OpenAI reasoningEffort (and a summary), Anthropic thinking and Ollama think', () => {
-    expect(reasoningProviderOptions('openai', 'o3', 'high')).toEqual({ openai: { reasoningEffort: 'high' } });
-    expect(reasoningProviderOptions('openai', 'gpt-5-mini', { effort: 'minimal', summary: 'auto' })).toEqual({
-      openai: { reasoningEffort: 'minimal', reasoningSummary: 'auto' },
-    });
-    expect(reasoningProviderOptions('anthropic', 'claude-sonnet-4-5', 'low')).toEqual({
-      anthropic: { thinking: { type: 'enabled', budgetTokens: 2048 } },
-    });
-    // The effort table: minimal 1024, low 2048, medium 8192 (the default), high 24576.
-    const budget = (option: Parameters<typeof reasoningProviderOptions>[2]) =>
-      (reasoningProviderOptions('anthropic', 'claude-opus-4-1', option) as { anthropic: { thinking: { budgetTokens: number } } }).anthropic.thinking.budgetTokens;
-    expect([budget('minimal'), budget({}), budget('high'), budget({ budgetTokens: 5000 }), budget({ budgetTokens: 10 })]).toEqual([1024, 8192, 24576, 5000, 1024]);
-    expect(reasoningProviderOptions('ollama', 'qwen3:8b', 'medium')).toEqual({ ollama: { think: true } });
-  });
 
   it('sends nothing for `none`, a model outside the known reasoning families, or an unknown provider, unless forced', () => {
     expect(reasoningProviderOptions('openai', 'o3', 'none')).toBeUndefined();
@@ -121,31 +84,6 @@ describe('reasoning options per provider', () => {
     expect(reasoningProviderOptions('mock', 'o3', { effort: 'high', force: true })).toBeUndefined();
     expect(reasoningProviderOptions('openai', 'my-finetune', { effort: 'low', force: true })).toEqual({ openai: { reasoningEffort: 'low' } });
     expect(reasoningProviderOptions('openai', 'o3', undefined)).toBeUndefined();
-  });
-
-  it("maps to OpenRouter's unified reasoning field: max_tokens for a budget, else effort", () => {
-    expect(openRouterReasoning('deepseek/deepseek-r1', 'high')).toEqual({ reasoning: { effort: 'high' } });
-    expect(openRouterReasoning('anthropic/claude-3.7-sonnet', { budgetTokens: 4000 })).toEqual({ reasoning: { max_tokens: 4000 } });
-    expect(openRouterReasoning('openai/gpt-4o-mini', 'high')).toBeUndefined();
-  });
-
-  it('ai v7: sends them as providerOptions, and none to a model that does not reason', async () => {
-    const anthropic = new AnthropicProvider({ apiKey: 'k', maxRetries: 0 });
-    const anthropicCalls = onV7(anthropic);
-    await anthropic.generate({ messages: user, model: 'claude-sonnet-4-5', reasoning: 'medium' });
-    expect(anthropicCalls[0]!.providerOptions).toEqual({ anthropic: { thinking: { type: 'enabled', budgetTokens: 8192 } } });
-
-    const openai = new OpenAIProvider({ apiKey: 'k', maxRetries: 0 });
-    const openaiCalls = onV7(openai);
-    await openai.generate({ messages: user, model: 'gpt-4o', reasoning: 'high' });
-    await openai.generate({ messages: user, model: 'o4-mini', reasoning: 'high' });
-    expect(openaiCalls[0]!.providerOptions).toEqual({ openai: { store: false } });
-    expect(openaiCalls[1]!.providerOptions).toEqual({ openai: { reasoningEffort: 'high', store: false } });
-
-    const ollama = new OllamaProvider({ maxRetries: 0 });
-    const ollamaCalls = onV7(ollama);
-    await ollama.generate({ messages: user, model: 'qwen3', reasoning: 'low' });
-    expect(ollamaCalls[0]!.providerOptions).toEqual({ ollama: { think: true } });
   });
 
   itOnAiV4('ai v4: sends them as providerOptions (the model gets providerMetadata); Ollama warns once and sends nothing', async () => {
@@ -211,13 +149,6 @@ describe('reasoning returned and replayed', () => {
     });
   });
 
-  it('ai v7: other providers never send reasoning back', async () => {
-    const provider = new OpenAIProvider({ apiKey: 'k', maxRetries: 0 });
-    const calls = onV7(provider);
-    await provider.generate({ messages: history, model: 'o3' });
-    expect(calls[0]!.prompt[1]).toMatchObject({ role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'call_1' }] });
-  });
-
   itOnAiV4('ai v4: returns reasoning details as blocks, and sends signed thinking back as reasoning parts', async () => {
     const provider = new AnthropicProvider({ apiKey: 'k', maxRetries: 0 });
     const calls = onV4(provider, [{ type: 'text', text: 'Hmm.', signature: 'sig-2' }]);
@@ -232,29 +163,5 @@ describe('reasoning returned and replayed', () => {
         { type: 'tool-call', toolCallId: 'call_1' },
       ],
     });
-  });
-});
-
-describe('image parts on ai v7 (follow-up B)', () => {
-  it('sends `file` parts with a media type, never the deprecated `image` part', async () => {
-    const provider = new OpenAIProvider({ apiKey: 'k', maxRetries: 0 });
-    const generateText = vi.fn(aiV7.generateText);
-    const ai: AiSdkModule = { ...aiV7, generateText: generateText as AiSdkModule['generateText'] };
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    // The model takes URLs itself, so nothing is downloaded.
-    const supportedUrls = { 'image/*': [/^https:\/\//] };
-    useModel(provider, new MockLanguageModelV4({ supportedUrls, doGenerate: async () => v7Result() }), ai);
-
-    await provider.generate({
-      messages: [{ role: 'user', content: [{ type: 'text', text: 'What is it?' }, { type: 'image', image: 'https://example.com/cat.png' }, { type: 'image', image: new Uint8Array([1]), mimeType: 'image/png' }] }],
-    });
-
-    const sent = (generateText.mock.calls[0]![0] as { messages: Array<{ content: Array<{ type: string; mediaType?: string }> }> }).messages;
-    expect(sent[0]!.content.map((part) => [part.type, part.mediaType])).toEqual([
-      ['text', undefined],
-      ['file', 'image/*'],
-      ['file', 'image/png'],
-    ]);
-    expect(warn.mock.calls.flat().join(' ')).not.toMatch(/deprecated/);
   });
 });

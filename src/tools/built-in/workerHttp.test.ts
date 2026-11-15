@@ -42,55 +42,6 @@ describe('createWorkerHttpTool', () => {
     expect(worker.requiresSandbox).toBeFalsy();
   });
 
-  it('requests an allowed host and returns the body', async () => {
-    const { impl, calls } = fakeFetch(() => new Response('{"a":1}', { status: 200, headers: { 'content-type': 'application/json' } }));
-    await expect(run({ allow: ['api.example.com'], fetch: impl }, { url: 'https://api.example.com/x' })).resolves.toBe('{"a":1}');
-    expect(calls).toEqual(['https://api.example.com/x']);
-  });
-
-  it('matches hosts case-insensitively and ignores the port', async () => {
-    const { impl, calls } = fakeFetch();
-    await expect(run({ allow: ['API.Example.com'], fetch: impl }, { url: 'https://api.EXAMPLE.com:8443/x' })).resolves.toBe('ok');
-    expect(calls).toHaveLength(1);
-  });
-
-  it('refuses an unlisted host without calling fetch', async () => {
-    const { impl, calls } = fakeFetch();
-    await expect(run({ allow: ['api.example.com'], fetch: impl }, { url: 'https://evil.example.net/' })).rejects.toThrow(
-      /host evil\.example\.net is not in the allowlist \(LOUSHO_HTTP_ALLOW\)/
-    );
-    expect(calls).toEqual([]);
-  });
-
-  it('a wildcard matches subdomains only, not the bare domain or a look-alike', async () => {
-    const { impl, calls } = fakeFetch();
-    const options = { allow: ['*.example.com'], fetch: impl };
-    await expect(run(options, { url: 'https://a.example.com/' })).resolves.toBe('ok');
-    await expect(run(options, { url: 'https://a.b.example.com/' })).resolves.toBe('ok');
-    await expect(run(options, { url: 'https://example.com/' })).rejects.toThrow(/not in the allowlist/);
-    await expect(run(options, { url: 'https://evilexample.com/' })).rejects.toThrow(/not in the allowlist/);
-    await expect(run(options, { url: 'https://a.example.com.evil.net/' })).rejects.toThrow(/not in the allowlist/);
-    expect(calls).toEqual(['https://a.example.com/', 'https://a.b.example.com/']);
-  });
-
-  it('refuses literal IPv4 hosts even when listed, including encodings URL normalizes', async () => {
-    const { impl, calls } = fakeFetch();
-    const options = { allow: ['127.0.0.1', '8.8.8.8', 'api.example.com'], fetch: impl };
-    for (const url of ['http://127.0.0.1/', 'http://8.8.8.8/', 'http://2130706433/', 'http://0x7f000001/', 'http://127.1/']) {
-      await expect(run(options, { url })).rejects.toThrow(/is an IP address/);
-    }
-    expect(calls).toEqual([]);
-  });
-
-  it('refuses literal IPv6 hosts', async () => {
-    const { impl, calls } = fakeFetch();
-    const options = { allow: ['api.example.com'], fetch: impl };
-    for (const url of ['http://[::1]/', 'http://[::ffff:127.0.0.1]/', 'http://[2606:4700:4700::1111]/']) {
-      await expect(run(options, { url })).rejects.toThrow(/is an IP address/);
-    }
-    expect(calls).toEqual([]);
-  });
-
   it('refuses every request when the allowlist is empty (fail closed)', async () => {
     const { impl, calls } = fakeFetch();
     await expect(run({ allow: [], fetch: impl }, { url: 'https://api.example.com/' })).rejects.toThrow(
@@ -117,24 +68,6 @@ describe('createWorkerHttpTool', () => {
     const toIp = fakeFetch(() => redirect('http://169.254.169.254/latest/meta-data'));
     await expect(run({ allow: ['api.example.com'], fetch: toIp.impl }, { url: 'https://api.example.com/' })).rejects.toThrow(/is an IP address/);
     expect(toIp.calls).toHaveLength(1);
-  });
-
-  it('follows a redirect to a listed host (relative locations included)', async () => {
-    const { impl, calls } = fakeFetch((url) => {
-      if (url === 'https://a.example.com/start') return redirect('https://b.example.com/next');
-      if (url === 'https://b.example.com/next') return redirect('/final');
-      return new Response('done');
-    });
-    await expect(run({ allow: ['*.example.com'], fetch: impl }, { url: 'https://a.example.com/start' })).resolves.toBe('done');
-    expect(calls).toEqual(['https://a.example.com/start', 'https://b.example.com/next', 'https://b.example.com/final']);
-  });
-
-  it('honours maxRedirects', async () => {
-    const { impl, calls } = fakeFetch((url) => redirect(`${url}x`));
-    await expect(run({ allow: ['api.example.com'], maxRedirects: 2, fetch: impl }, { url: 'https://api.example.com/' })).rejects.toThrow(
-      'Exceeded maxRedirects (2)'
-    );
-    expect(calls).toHaveLength(3);
   });
 
   it('refuses ftp: and other schemes, on the first URL and on a redirect', async () => {

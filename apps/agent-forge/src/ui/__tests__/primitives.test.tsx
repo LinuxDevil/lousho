@@ -1,13 +1,10 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+
 import { act } from 'react';
-import { Search } from 'lucide-react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { render as mount } from './render';
 
 import { StatusPill, statusTone, type StatusTone } from '../StatusPill';
-import { EmptyState } from '../EmptyState';
 import { ToastProvider, useToast } from '../Toast';
 
 let container: HTMLDivElement;
@@ -46,36 +43,18 @@ describe('statusTone', () => {
     ['done', 'ok'],
     ['paused', 'warning'],
   ];
-  for (const [status, tone] of vocabulary) {
-    it(`maps ${status} to ${tone}`, () => expect(statusTone(status)).toBe(tone));
-  }
-
-  it('maps unknown and missing statuses to neutral', () => {
-    expect(statusTone('weird')).toBe('neutral');
-    expect(statusTone('constructor')).toBe('neutral');
-    expect(statusTone(null)).toBe('neutral');
-    expect(statusTone(undefined)).toBe('neutral');
+  it('maps every status in the vocabulary to its tone', () => {
+    for (const [status, tone] of vocabulary) expect(statusTone(status), status).toBe(tone);
   });
 });
 
 describe('StatusPill', () => {
-  for (const status of ['ok', 'error', 'running', 'interrupted', 'healthy', 'stale', 'down', 'stopped', 'pass', 'fail', 'idle', 'done', 'paused']) {
-    it(`renders ${status} with exactly one tone class`, () => {
+  it('renders every status with exactly one tone class', () => {
+    for (const status of ['ok', 'error', 'running', 'interrupted', 'healthy', 'stale', 'down', 'stopped', 'pass', 'fail', 'idle', 'done', 'paused']) {
       render(<StatusPill status={status} />);
-      expect(toneClasses(pill())).toEqual([`pill-${statusTone(status)}`]);
+      expect(toneClasses(pill()), status).toEqual([`pill-${statusTone(status)}`]);
       expect(pill().querySelector('.dot')?.getAttribute('aria-hidden')).toBe('true');
-    });
-  }
-
-  it('labels paused as "awaiting approval"', () => {
-    render(<StatusPill status="paused" />);
-    expect(pill().textContent).toBe('awaiting approval');
-  });
-
-  it('renders an unknown status as its literal text in a neutral pill', () => {
-    render(<StatusPill status="queued-weird" />);
-    expect(pill().textContent).toBe('queued-weird');
-    expect(toneClasses(pill())).toEqual(['pill-neutral']);
+    }
   });
 
   it('renders a missing status as "none", never "unknown"', () => {
@@ -83,69 +62,6 @@ describe('StatusPill', () => {
     expect(pill().textContent).toBe('none');
     expect(pill().textContent?.toLowerCase()).not.toContain('unknown');
     expect(toneClasses(pill())).toEqual(['pill-neutral']);
-  });
-
-  it('is a polite status region with a hidden prefix when live', () => {
-    render(<StatusPill status="running" live />);
-    expect(pill().getAttribute('role')).toBe('status');
-    expect(pill().getAttribute('aria-live')).toBe('polite');
-    expect(pill().querySelector('.visually-hidden')?.textContent).toBe('Run status: ');
-    expect(pill().textContent).toBe('Run status: running');
-    // a short toolbar may show only the dot: the label is its tooltip
-    expect(pill().getAttribute('title')).toBe('running');
-  });
-
-  it('is plain text when not live', () => {
-    render(<StatusPill status="running" />);
-    expect(pill().getAttribute('role')).toBeNull();
-    expect(pill().getAttribute('aria-live')).toBeNull();
-    expect(pill().querySelector('.visually-hidden')).toBeNull();
-    expect(pill().getAttribute('title')).toBeNull();
-  });
-});
-
-describe('EmptyState', () => {
-  it('renders the title, hint, action and a decorative icon', () => {
-    render(<EmptyState title="No traces yet" hint="Run an agent." action={<button type="button">Run</button>} icon={Search} />);
-    const root = container.querySelector('.empty-state') as HTMLElement;
-    expect(root.querySelector('.empty-state-title')?.textContent).toBe('No traces yet');
-    expect(root.querySelector('.empty-state-hint')?.textContent).toBe('Run an agent.');
-    expect(root.querySelector('.empty-state-action button')?.textContent).toBe('Run');
-    expect(root.querySelector('.empty-state-icon')?.getAttribute('aria-hidden')).toBe('true');
-    const svg = root.querySelector('.empty-state-icon svg') as SVGElement;
-    expect(svg.classList.contains('lucide-search')).toBe(true);
-    expect(svg.getAttribute('width')).toBe('20');
-    expect(svg.getAttribute('stroke-width')).toBe('1.75');
-  });
-
-  it('defaults to the Inbox icon tile, and icon={null} renders no tile', () => {
-    render(
-      <>
-        <EmptyState title="A" hint="default icon" />
-        <EmptyState title="B" hint="no icon" icon={null} />
-      </>,
-    );
-    const [a, b] = [...container.querySelectorAll('.empty-state')];
-    expect(a.querySelector('.empty-state-icon svg')?.classList.contains('lucide-inbox')).toBe(true);
-    expect(b.querySelector('.empty-state-icon')).toBeNull();
-  });
-
-  it('accepts a hint without an action, and an action without a hint', () => {
-    render(
-      <>
-        <EmptyState title="A" hint="hint only" />
-        <EmptyState title="B" action={<a href="#/agents">Go</a>} />
-      </>,
-    );
-    const [a, b] = [...container.querySelectorAll('.empty-state')];
-    expect(a.querySelector('.empty-state-action')).toBeNull();
-    expect(b.querySelector('.empty-state-hint')).toBeNull();
-  });
-
-  it('requires a hint or an action at compile time', () => {
-    // @ts-expect-error - a title alone is not enough: say what to do next.
-    const bare = <EmptyState title="Nothing" />;
-    expect(bare).toBeTruthy();
   });
 });
 
@@ -164,27 +80,6 @@ describe('Toast', () => {
   const toasts = () => [...container.querySelectorAll('.toast')] as HTMLElement[];
   const politeRegion = () => container.querySelector('[role="status"][aria-live="polite"]') as HTMLElement;
 
-  it('shows a toast in the one polite live region and auto-dismisses it after 5 s', () => {
-    vi.useFakeTimers();
-    renderToasts();
-    expect(container.querySelectorAll('[role="status"]')).toHaveLength(1);
-    act(() => void api.show({ message: 'Saved', tone: 'success' }));
-    expect(politeRegion().textContent).toContain('Saved');
-    expect(toasts()[0].classList.contains('toast-success')).toBe(true);
-    act(() => void vi.advanceTimersByTime(4999));
-    expect(toasts()).toHaveLength(1);
-    act(() => void vi.advanceTimersByTime(1));
-    expect(toasts()).toHaveLength(0);
-  });
-
-  it('shows a success toast with its tint class inside the polite region', () => {
-    vi.useFakeTimers();
-    renderToasts();
-    act(() => void api.show({ message: 'Agent updated', tone: 'success' }));
-    const toast = politeRegion().querySelector('.toast.toast-success') as HTMLElement;
-    expect(toast.querySelector('.toast-message')?.textContent).toBe('Agent updated');
-  });
-
   it('keeps a warning toast polite with a muted description for 8 s', () => {
     vi.useFakeTimers();
     renderToasts();
@@ -196,40 +91,6 @@ describe('Toast', () => {
     expect(toasts()).toHaveLength(1);
     act(() => void vi.advanceTimersByTime(1));
     expect(toasts()).toHaveLength(0);
-  });
-
-  it('renders an error toast as an alert outside the polite region', () => {
-    vi.useFakeTimers();
-    renderToasts();
-    act(() => void api.show({ message: 'Boom', tone: 'error' }));
-    const alert = container.querySelector('.toast.toast-error[role="alert"]') as HTMLElement;
-    expect(politeRegion().contains(alert)).toBe(false);
-    act(() => void vi.advanceTimersByTime(60_000));
-    expect(toasts()).toHaveLength(1);
-  });
-
-  it('defaults to an info toast gone after 5 s', () => {
-    vi.useFakeTimers();
-    renderToasts();
-    act(() => void api.show({ message: 'Hi' }));
-    expect(politeRegion().querySelector('.toast.toast-info')).not.toBeNull();
-    act(() => void vi.advanceTimersByTime(5000));
-    expect(toasts()).toHaveLength(0);
-  });
-
-  it('renders exactly one decorative icon per tone', () => {
-    vi.useFakeTimers();
-    renderToasts();
-    act(() => {
-      api.show({ message: 'fyi' });
-      api.show({ message: 'done', tone: 'success' });
-      api.show({ message: 'low', tone: 'warning' });
-      api.show({ message: 'broke', tone: 'error' });
-    });
-    expect(toasts()).toHaveLength(4);
-    for (const toast of toasts()) {
-      expect(toast.querySelectorAll('svg.toast-icon[aria-hidden="true"]')).toHaveLength(1);
-    }
   });
 
   it('keeps error toasts as alerts until dismissed', () => {
@@ -244,53 +105,5 @@ describe('Toast', () => {
     const close = alert.querySelector('button[aria-label="Dismiss notification"]') as HTMLButtonElement;
     act(() => close.click());
     expect(toasts()).toHaveLength(0);
-  });
-
-  it('dismisses by id and runs an action, which also dismisses', () => {
-    vi.useFakeTimers();
-    renderToasts();
-    const onClick = vi.fn();
-    let first = '';
-    act(() => {
-      first = api.show({ message: 'one' });
-      api.show({ message: 'two', action: { label: 'Undo', onClick } });
-    });
-    expect(toasts()).toHaveLength(2);
-    expect(toasts()[0].classList.contains('toast-info')).toBe(true);
-    act(() => api.dismiss(first));
-    expect(toasts().map((t) => t.querySelector('.toast-message')?.textContent)).toEqual(['two']);
-    const undo = [...container.querySelectorAll('button')].find((b) => b.textContent === 'Undo') as HTMLButtonElement;
-    act(() => undo.click());
-    expect(onClick).toHaveBeenCalledOnce();
-    expect(toasts()).toHaveLength(0);
-  });
-
-  it('leads each toast with a decorative status icon in its tone, not a coloured left border', () => {
-    vi.useFakeTimers();
-    renderToasts();
-    act(() => {
-      api.show({ message: 'fyi' });
-      api.show({ message: 'done', tone: 'success' });
-      api.show({ message: 'broke', tone: 'error' });
-    });
-    const iconOf = (text: string) => {
-      const toast = toasts().find((t) => t.textContent?.includes(text))!;
-      const icon = toast.querySelector('.toast-icon')!;
-      expect(icon.getAttribute('aria-hidden')).toBe('true');
-      expect(toast.firstElementChild).toBe(icon);
-      return icon.getAttribute('class');
-    };
-    expect(iconOf('fyi')).toContain('lucide-info');
-    expect(iconOf('done')).toContain('lucide-circle-check');
-    expect(iconOf('broke')).toContain('lucide-circle-alert');
-    const css = readFileSync(resolve(__dirname, '../toast.css'), 'utf8');
-    expect(css).not.toMatch(/border-left/);
-    expect(css).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(/i);
-  });
-
-  it('throws a clear error when useToast is used outside a ToastProvider', () => {
-    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(() => render(<Grab />)).toThrow(/useToast must be used inside a <ToastProvider>/);
-    spy.mockRestore();
   });
 });

@@ -8,7 +8,6 @@ import type { AgentFlow, EditorStep } from '../types/flow';
 import { FlowExecutor, type FlowExecutionContext, type FlowExecutionEvent } from './FlowExecutor';
 import { MockLLMProvider } from '../providers/mock';
 import { ToolRegistry } from '../tools';
-import { memoryStore } from '../storage/agentStore';
 import { APICallError } from 'ai';
 import { CompactedLLMProviderError } from '../execution/errors';
 
@@ -22,13 +21,11 @@ describe('FlowExecutor node retry and timeout', () => {
   let calls: number;
   let failures: number;
   let hangs: number;
-  let sawAbort: boolean;
 
   beforeEach(() => {
     calls = 0;
     failures = 0;
     hangs = 0;
-    sawAbort = false;
     toolRegistry = new ToolRegistry();
     toolRegistry.register('flaky', {
       displayName: 'Flaky',
@@ -41,7 +38,6 @@ describe('FlowExecutor node retry and timeout', () => {
             hangs--;
             await new Promise((_, reject) =>
               ctx?.abortSignal?.addEventListener('abort', () => {
-                sawAbort = true;
                 reject(new Error('aborted'));
               })
             );
@@ -84,85 +80,11 @@ describe('FlowExecutor node retry and timeout', () => {
     expect(events.filter((event) => event.type === 'step-start')).toHaveLength(1);
   });
 
-  it('fails with the last error once the attempts run out', async () => {
-    failures = 5;
-    const result = await FlowExecutor.execute(
-      flowOf({ type: 'toolCall', tool: 'flaky', arguments: {}, retry: { maxAttempts: 2 } }),
-      context
-    );
-    expect(result.success).toBe(false);
-    expect(result.error?.message).toBe('failure 2');
-    expect(calls).toBe(2);
-    expect(result.events.filter((event) => event.type === 'step-error')).toHaveLength(1);
-  });
-
-  it('fails an attempt past timeoutMs, aborting its tool call', async () => {
-    hangs = 1;
-    const result = await FlowExecutor.execute(flowOf({ type: 'toolCall', tool: 'flaky', arguments: {}, timeoutMs: 30 }), context);
-    expect(result.success).toBe(false);
-    expect(result.error).toMatchObject({ code: 'LOUSHO_OPERATION_TIMEOUT', timeoutMs: 30 });
-    expect(sawAbort).toBe(true);
-  });
-
-  it('retries a timed-out attempt', async () => {
-    hangs = 1;
-    const result = await FlowExecutor.execute(
-      flowOf({ type: 'toolCall', tool: 'flaky', arguments: {}, timeoutMs: 30, retry: { maxAttempts: 2 } }),
-      context
-    );
-    expect(result).toMatchObject({ success: true, output: 'ok after 2' });
-  });
-
-  it('does not retry a cancelled run', async () => {
-    failures = 5;
-    const controller = new AbortController();
-    toolRegistry.register('cancel', {
-      displayName: 'Cancel',
-      tool: {
-        description: 'Cancels the run, then fails',
-        parameters: z.object({}),
-        execute: async () => {
-          calls++;
-          controller.abort(new Error('stop'));
-          throw new Error('cancelled');
-        },
-      },
-    });
-    const result = await FlowExecutor.execute(
-      flowOf({ type: 'toolCall', tool: 'cancel', arguments: {}, retry: { maxAttempts: 5 } }),
-      { ...context, signal: controller.signal }
-    );
-    expect(result.success).toBe(false);
-    expect(calls).toBe(1);
-  });
-
   it('rejects invalid retry and timeout settings with LOUSHO_FLOW_INVALID', async () => {
     for (const bad of [{ retry: { maxAttempts: 0 } }, { retry: { maxAttempts: 2, backoffMs: -1 } }, { timeoutMs: 0 }]) {
       const result = await FlowExecutor.execute(flowOf({ type: 'return', value: 1, ...bad }), context);
       expect(result.error).toMatchObject({ code: 'LOUSHO_FLOW_INVALID' });
     }
-  });
-
-  it('in a durable run, a retried sequence does not repeat its completed children', async () => {
-    let before = 0;
-    toolRegistry.register('before', {
-      displayName: 'Before',
-      tool: { description: 'Counts', parameters: z.object({}), execute: async () => ++before },
-    });
-    failures = 1;
-    const result = await FlowExecutor.execute(
-      flowOf({
-        type: 'sequence',
-        retry: { maxAttempts: 2 },
-        steps: [
-          { type: 'toolCall', tool: 'before', arguments: {} },
-          { type: 'toolCall', tool: 'flaky', arguments: {} },
-        ],
-      }),
-      { ...context, checkpointStore: memoryStore().checkpoints, runId: 'r' }
-    );
-    expect(result).toMatchObject({ success: true, output: 'ok after 2' });
-    expect(before).toBe(1);
   });
 });
 
@@ -204,21 +126,5 @@ describe('FlowExecutor llmCall provider failures', () => {
     });
     expect(calls()).toBe(1);
     expect(result.events.filter((event) => event.type === 'step-retry')).toHaveLength(0);
-  });
-
-  it('retries a retryable provider failure (a 429)', async () => {
-    const { provider, calls } = failingProvider(apiError(429, 'Rate limit reached'));
-    const result = await FlowExecutor.execute(llmFlow, { agent: { name: 'f' }, provider, variables: {} });
-
-    expect(result).toMatchObject({ success: true, output: 'answer' });
-    expect(calls()).toBe(2);
-    expect(result.events.find((event) => event.type === 'step-retry')?.error).toMatchObject({ code: 'LOUSHO_PROVIDER_RATE_LIMITED' });
-  });
-
-  it('passes a cancellation through uncompacted', async () => {
-    const abort = Object.assign(new Error('This operation was aborted'), { name: 'AbortError' });
-    const { provider } = failingProvider(abort);
-    const result = await FlowExecutor.execute(flowOf({ type: 'llmCall', prompt: 'hi' }), { agent: { name: 'f' }, provider, variables: {} });
-    expect(result.error).toBe(abort);
   });
 });

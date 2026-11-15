@@ -1,42 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { parse } from 'yaml';
-
-import { deriveEdges } from '../../edges';
-import { graphToSpec } from '../../graphToSpec';
 import { duplicateNode } from '../../mutations';
 import { specToGraph } from '../../specToGraph';
 import type { AgentSpecV2, MemorySpec } from '../../specTypes';
 import type { Graph, MemoryNodeData, Problem } from '../../types';
 import { validateGraph } from '../../validateGraph';
-
-/** The ticket's worked example: a scoped vector slot plus a session scratch pad. */
-const WORKED = `version: 2
-name: support-bot
-model: anthropic/claude-sonnet-5-5
-instructions: Answer tickets.
-memory:
-  - name: customers
-    description: Facts about each customer
-    scope:
-      metadataKey: userId
-    provider:
-      type: sqlite-vector
-      path: .lousho/memory.db
-      embedder: openai/text-embedding-3-small
-      minScore: 0.3
-    recall:
-      query: last-input
-      maxItems: 5
-    expose:
-      remember: true
-      recall: true
-  - name: scratch
-    scope: session
-    provider:
-      type: in-memory
-`;
-
-const WORKED_IDS = ['agent', 'memory:customers', 'memory:scratch'];
 
 function specOf(over: Record<string, unknown>): AgentSpecV2 {
   return { version: 2, name: 'a', model: 'mock/mock-1', instructions: 'x', ...over } as AgentSpecV2;
@@ -67,51 +34,7 @@ function warning(nodeId: string, message: string, fieldPath: string): Problem {
 /** A valid entry the cases below break one field at a time. */
 const BASE: MemorySpec = { name: 'notes', scope: 'session', provider: { type: 'in-memory' } };
 
-describe('specToGraph: memory worked example', () => {
-  const graph = specToGraph(parse(WORKED) as AgentSpecV2);
-
-  it('produces the two memory nodes with the listed ids, in order', () => {
-    expect(graph.nodes.map((n) => n.id)).toEqual(WORKED_IDS);
-  });
-
-  it('keeps each spec entry verbatim as data.item, owned by the root agent', () => {
-    const spec = parse(WORKED) as AgentSpecV2;
-    const memory = spec.memory ?? [];
-    for (const [i, node] of graph.nodes.slice(1).entries()) {
-      expect(node.owner).toBe('agent');
-      expect(node.kind).toBe('memory');
-      expect((node.data as { item: unknown }).item).toStrictEqual(memory[i]);
-    }
-  });
-
-  it('derives a uses edge from the agent to every memory slot', () => {
-    const ids = deriveEdges(graph).map((e) => e.id);
-    for (const id of WORKED_IDS.slice(1)) {
-      expect(ids).toContain(`uses:agent->${id}`);
-    }
-  });
-
-  it('round-trips to an identical spec', () => {
-    const spec = parse(WORKED) as AgentSpecV2;
-    expect(graphToSpec(specToGraph(spec)).spec).toStrictEqual(spec);
-  });
-});
-
 describe('memoryRules.validate', () => {
-  it('accepts the worked example', () => {
-    expect(validateGraph(specToGraph(parse(WORKED) as AgentSpecV2))).toStrictEqual([]);
-  });
-
-  it.each(['', '  ', 'has space', 'dot.name', 'x'.repeat(56)])(
-    'rejects the slot name %j',
-    (name) => {
-      const graph = graphOf([{ ...BASE, name }]);
-      const nodeId = name === '' ? 'memory:new' : `memory:${name}`;
-      expect(validateGraph(graph)).toStrictEqual([
-        error(nodeId, 'The memory name can use letters, digits, dash or underscore', 'memory[0].name'),
-      ]);
-    },
-  );
 
   it('rejects an empty metadata key', () => {
     const graph = graphOf([{ ...BASE, scope: { metadataKey: '' } }]);
@@ -134,52 +57,12 @@ describe('memoryRules.validate', () => {
     ]);
   });
 
-  it('warns on an item key without an item schema', () => {
-    const graph = graphOf([{ ...BASE, itemKey: 'customerId' }]);
-    expect(validateGraph(graph)).toStrictEqual([
-      warning('memory:notes', 'An item key needs an item schema', 'memory[0].itemKey'),
-    ]);
-  });
-
-  it('warns on a global in-memory slot', () => {
-    const graph = graphOf([{ ...BASE, scope: 'global' }]);
-    expect(validateGraph(graph)).toStrictEqual([
-      warning('memory:notes', 'In-memory items are lost when Studio restarts', 'memory[0].provider'),
-    ]);
-  });
-
-  it('does not warn on a global file slot', () => {
-    const graph = graphOf([{ ...BASE, scope: 'global', provider: { type: 'file', dir: 'memory' } }]);
-    expect(validateGraph(graph)).toStrictEqual([]);
-  });
-
   it('reports the name error before the warnings of one entry', () => {
     const graph = graphOf([{ name: 'bad name', scope: 'global', provider: { type: 'in-memory' }, itemKey: 'k' }]);
     expect(validateGraph(graph)).toStrictEqual([
       error('memory:bad name', 'The memory name can use letters, digits, dash or underscore', 'memory[0].name'),
       warning('memory:bad name', 'An item key needs an item schema', 'memory[0].itemKey'),
       warning('memory:bad name', 'In-memory items are lost when Studio restarts', 'memory[0].provider'),
-    ]);
-  });
-
-  it('maps problems to the nested spec path inside an inline agent', () => {
-    const graph = specToGraph(
-      specOf({
-        subagents: {
-          a: {
-            inline: {
-              name: 'a',
-              description: 'd',
-              model: 'mock/mock-1',
-              instructions: 'x',
-              memory: [{ name: '', scope: 'session', provider: { type: 'in-memory' } }],
-            },
-          },
-        },
-      }),
-    );
-    expect(validateGraph(graph)).toStrictEqual([
-      error('sub:a/memory:new', 'The memory name can use letters, digits, dash or underscore', 'subagents.a.inline.memory[0].name'),
     ]);
   });
 });

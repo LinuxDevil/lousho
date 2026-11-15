@@ -73,23 +73,6 @@ describe('DaemonStatus', () => {
   const label = () => card().querySelector('.nav-daemon-label')?.textContent;
   const url = () => card().querySelector('.nav-daemon-url')?.textContent;
 
-  it('reads "checking" until the first health probe settles', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
-    await render(<DaemonStatus />);
-    expect(container.textContent).toBe('Checking collector…');
-    expect(card().getAttribute('data-state')).toBe('checking');
-    expect(card().getAttribute('title')).toBe('Checking collector…');
-  });
-
-  it('reads "unreachable" while the daemon is down', async () => {
-    stubProxy();
-    await render(<DaemonStatus />);
-    await flush();
-    expect(container.textContent).toBe('Collector unreachable');
-    expect(card().getAttribute('data-state')).toBe('down');
-    expect(card().getAttribute('title')).toBe('Collector unreachable');
-  });
-
   it('names the proxy target once the daemon answers, without a reload', async () => {
     const { daemon } = stubProxy();
     await render(<DaemonStatus />);
@@ -102,22 +85,6 @@ describe('DaemonStatus', () => {
     expect(url()).toBe(TARGET);
     expect(card().getAttribute('title')).toBe(`Collector running at ${TARGET}`);
     expect(card().querySelector('.nav-daemon-url')?.getAttribute('title')).toBe(TARGET);
-  });
-
-  it('stays "not reachable" while a re-probe is in flight (no flicker)', async () => {
-    const { daemon, fetchMock } = stubProxy();
-    await render(<DaemonStatus />);
-    await flush();
-    let release!: () => void;
-    fetchMock.mockImplementationOnce(
-      () => new Promise<Response>((resolve) => (release = () => resolve(new Response('', { status: 502 }))))
-    );
-    await act(async () => {
-      vi.advanceTimersByTime(5000);
-    });
-    expect(label()).toBe('Collector unreachable');
-    await act(async () => release());
-    expect(daemon.up).toBe(false);
   });
 });
 

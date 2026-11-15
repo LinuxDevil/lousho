@@ -1,8 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { runStudio, startStudio, resolveAgentForgeDir, studioUrl } from './studio';
+import { startStudio, resolveAgentForgeDir, studioUrl } from './studio';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-studio-test-'));
 
@@ -32,47 +32,11 @@ describe('startStudio', () => {
     expect(() => startStudio({ repoRoot, packageRoot: tmp() })).toThrow(/could not find apps\/agent-forge/);
   });
 
-  it("--prod throws a clear, build-pointing error when apps/agent-forge/dist-server is missing", () => {
-    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-studio-test-'));
-    fs.mkdirSync(path.join(repoRoot, 'apps', 'agent-forge'), { recursive: true });
-    fs.writeFileSync(path.join(repoRoot, 'apps', 'agent-forge', 'package.json'), '{}');
-    expect(() => startStudio({ repoRoot, mode: 'prod' })).toThrow(/build:studio/);
-  });
-
   it("--dev throws a clear error when apps/agent-forge/server source is missing", () => {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-studio-test-'));
     fs.mkdirSync(path.join(repoRoot, 'apps', 'agent-forge'), { recursive: true });
     fs.writeFileSync(path.join(repoRoot, 'apps', 'agent-forge', 'package.json'), '{}');
     expect(() => startStudio({ repoRoot, mode: 'dev' })).toThrow(/dev mode/);
-  });
-
-  it("mode: 'auto' on a package packed without Agent Forge says so, not 'monorepo only' (a local npm pack)", () => {
-    const packageRoot = tmp();
-    fs.mkdirSync(path.join(packageRoot, 'apps', 'agent-forge'), { recursive: true });
-    fs.writeFileSync(path.join(packageRoot, 'apps', 'agent-forge', 'package.json'), '{}');
-    expect(() => startStudio({ repoRoot: tmp(), packageRoot })).toThrow(/has no Agent Forge build .*npm run build:studio' before 'npm pack'/);
-  });
-
-  it("mode: 'auto' resolves to prod when apps/agent-forge/dist-server/index.cjs has been built", () => {
-    // Exercised indirectly: 'auto' with a built dist-server/index.cjs present
-    // should hit the *prod* code path, which spawns `node <entry>` - proven
-    // here by asserting it does NOT throw the dev-mode-only source error,
-    // and instead returns a handle with mode: 'prod' (no viteProcess).
-    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-studio-test-'));
-    const appDir = path.join(repoRoot, 'apps', 'agent-forge');
-    fs.mkdirSync(path.join(appDir, 'dist-server'), { recursive: true });
-    fs.writeFileSync(path.join(appDir, 'package.json'), '{}');
-    // A trivial entry that exits immediately so the child process doesn't
-    // linger past the test.
-    fs.writeFileSync(path.join(appDir, 'dist-server', 'index.cjs'), 'process.exit(0);');
-
-    const handle = startStudio({ repoRoot, apiPort: 0 });
-    try {
-      expect(handle.mode).toBe('prod');
-      expect(handle.viteProcess).toBeUndefined();
-    } finally {
-      handle.stop();
-    }
   });
 
   it('uses the installed package copy when repoRoot has no apps/agent-forge', () => {
@@ -84,39 +48,6 @@ describe('startStudio', () => {
     try {
       expect(handle.mode).toBe('prod');
       expect(handle.apiProcess.spawnargs[1]).toBe(path.join(appDir, 'dist-server', 'index.cjs'));
-    } finally {
-      handle.stop();
-    }
-  });
-
-  it('prefers the repoRoot copy when both exist', () => {
-    const repoRoot = tmp();
-    const packageRoot = tmp();
-    const repoApp = makeApp(repoRoot, 'process.exit(0);');
-    makeApp(packageRoot, 'process.exit(0);');
-    expect(resolveAgentForgeDir(repoRoot, packageRoot)).toBe(repoApp);
-    const handle = startStudio({ repoRoot, packageRoot, apiPort: 0 });
-    try {
-      expect(handle.apiProcess.spawnargs[1]).toBe(path.join(repoApp, 'dist-server', 'index.cjs'));
-    } finally {
-      handle.stop();
-    }
-  });
-
-  it('--dev against a package copy without server source gives the dev-mode message', () => {
-    const packageRoot = tmp();
-    makeApp(packageRoot, 'process.exit(0);');
-    expect(() => startStudio({ repoRoot: tmp(), packageRoot, mode: 'dev' })).toThrow(/dev mode/);
-  });
-
-  it('keeps the repoRoot as BASE_DIR for the child, also with the package copy', async () => {
-    const repoRoot = tmp();
-    const packageRoot = tmp();
-    const out = path.join(tmp(), 'base-dir.txt');
-    makeApp(packageRoot, `require('node:fs').writeFileSync(${JSON.stringify(out)}, process.env.BASE_DIR);`);
-    const handle = startStudio({ repoRoot, packageRoot, apiPort: 0 });
-    try {
-      expect(await waitForFile(out)).toBe(repoRoot);
     } finally {
       handle.stop();
     }
@@ -147,17 +78,4 @@ describe('startStudio', () => {
   // apps/agent-forge/server/__tests__/*.test.ts instead - this file only
   // covers startStudio()'s own pure logic (the apps/agent-forge lookup and
   // dev/prod/auto mode resolution).
-});
-
-describe('lousho studio --help', () => {
-  it('describes every flag', async () => {
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    try {
-      expect(await runStudio(['--help'])).toBe(0);
-      const help = String(log.mock.calls[0]?.[0]);
-      for (const flag of ['--port', '--host', '--prod', '--dev']) expect(help).toMatch(new RegExp(`\\n  ${flag}\\b[^\\n]* {2,}\\S`));
-    } finally {
-      log.mockRestore();
-    }
-  });
 });

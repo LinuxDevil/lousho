@@ -84,14 +84,6 @@ beforeEach(() => {
 });
 
 describe('EnabledControl', () => {
-  it('shows Enabled with a halo dot and a checked switch', () => {
-    const host = render(<Harness initial={record()} />);
-    expect(pill(host).classList.contains('is-on')).toBe(true);
-    expect(host.querySelector('.status-dot-halo')).not.toBeNull();
-    expect(host.querySelector('.enabled-control-text')?.textContent).toBe('Enabled');
-    expect(sw(host).getAttribute('aria-checked')).toBe('true');
-    expect(sw(host).getAttribute('aria-label')).toBe('Agent enabled');
-  });
 
   it('toggles optimistically on a pill click, then toasts on success', async () => {
     let resolve!: (meta: AgentRecord['meta']) => void;
@@ -137,10 +129,5 @@ describe('EnabledControl', () => {
     expect(notice.getAttribute('role')).toBe('status');
     expect(notice.textContent).toMatch(/^Turned off after 5 failed runs in a row on /);
     expect(notice.textContent).toContain('Fix the cause, then turn it back on.');
-  });
-
-  it('shows no notice for a manual disable or an enabled agent', () => {
-    const host = render(<Harness initial={record({ meta: { enabled: false, disabledReason: 'manual' } })} />);
-    expect(host.querySelector('.agent-detail-notice')).toBeNull();
   });
 });

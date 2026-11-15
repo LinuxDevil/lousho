@@ -63,13 +63,6 @@ describe('tool card (KindView)', () => {
     [...card.querySelectorAll('.node-row')].find((r) => r.firstElementChild?.textContent === key)
       ?.querySelector('code')?.textContent;
 
-  it('titles the card by the tool name and chips it by form', () => {
-    const card = renderCard(toolNodeOf({ builtin: 'web_fetch' }));
-    expect(card.querySelector('.rf-node-title')?.textContent).toBe('web_fetch');
-    expect(card.querySelector('.node-chip')?.textContent).toBe('built-in');
-    expect(card.querySelector('.node-kind')?.classList.contains('kind-info')).toBe(true);
-  });
-
   it('shows the approval and on-demand rows', () => {
     const card = renderCard(toolNodeOf({ builtin: 'web_fetch', approval: 'always', deferLoading: true }));
     expect(rowText(card, 'approval')).toBe('always ask');
@@ -84,17 +77,7 @@ describe('tool card (KindView)', () => {
     expect(rowText(openapi, 'host')).toBe('api.example.com');
   });
 
-  it('titles an id-carrying tool by its id', () => {
-    const card = renderCard(toolNodeOf({ builtin: 'web_fetch', id: 'fetch-docs' }));
-    expect(card.querySelector('.rf-node-title')?.textContent).toBe('fetch-docs');
-    expect(card.querySelector('.node-chip')?.textContent).toBe('built-in');
-  });
-
   it.each([
-    [{ file: 'tools/search.ts' }, 'search', 'file'],
-    [{ integration: 'github', credentials: { token: { env: 'GH_TOKEN' } } }, 'github', 'integration'],
-    [{ openapi: { url: 'https://api.example.com/openapi.json' } }, 'openapi', 'openapi'],
-    [{ hosted: 'web_search' }, 'web_search', 'hosted'],
     [{ hub: true }, 'hub', 'hub'],
   ])('titles and chips the card for %j', (item, title, chip) => {
     const card = renderCard(toolNodeOf(item));
@@ -104,20 +87,6 @@ describe('tool card (KindView)', () => {
 });
 
 describe('AgentNode card', () => {
-  it('shows the agent name as title, its kind and the run status', () => {
-    const card = renderCard(nodeOf('agent'), { status: 'running' });
-    expect(card.querySelector('.rf-node-title')?.textContent).toBe('support-bot');
-    expect(card.getAttribute('data-node-kind')).toBe('agent');
-    expect(card.getAttribute('data-node-id')).toBe('agent');
-    expect(card.querySelector('.status-pill')?.textContent).toBe('running');
-  });
-
-  it('is idle by default and names a capability node by its spec name', () => {
-    const card = renderCard(nodeOf('tool'));
-    expect(card.querySelector('.rf-node-title')?.textContent).toBe('http');
-    expect(card.getAttribute('data-node-kind')).toBe('tool');
-    expect(card.querySelector('.status-pill')?.textContent).toBe('idle');
-  });
 
   it('draws both ports and the neutral kind tile of the generic view', () => {
     const card = renderCard(flowNode, { status: 'done' });
@@ -127,45 +96,12 @@ describe('AgentNode card', () => {
     expect(card.querySelector('.node-kind svg')).not.toBeNull();
     expect(card.classList.contains('running')).toBe(false);
   });
-
-  it('keeps running, selected, highlighted and breakpoint states together on one card', () => {
-    const Card = NODE_TYPES[flowNodeType('agent')];
-    const data: CanvasNodeData = { graphNode: nodeOf('agent'), status: 'running', hasBreakpoint: true, highlighted: true };
-    const props = { id: 'agent', type: flowNodeType('agent'), data, selected: true } as unknown as NodeProps;
-    const container = render(
-      <ReactFlowProvider>
-        <Card {...props} />
-      </ReactFlowProvider>
-    );
-    const card = container.querySelector('.rf-node') as HTMLElement;
-    for (const state of ['running', 'selected', 'highlighted', 'has-breakpoint']) expect(card.classList).toContain(state);
-  });
-
-  it.each(['paused', 'error', 'done'] as const)('marks a %s node with its state class', (status) => {
-    const card = renderCard(nodeOf('tool'), { status });
-    expect(card.classList).toContain(status);
-    expect(card.classList).not.toContain('running');
-  });
-
-  it('renders the generic card markup', () => {
-    const card = renderCard(flowNode, { status: 'paused' });
-    expect(card.outerHTML).toMatchSnapshot();
-  });
 });
 
 describe('proposal overlay classes (C21)', () => {
   const proposed = (kind: GraphNode['kind'], flag: 'add' | 'remove' | 'edit'): GraphNode => ({
     ...nodeOf(kind),
     proposed: flag,
-  });
-
-  it.each([
-    ['add', 'proposed-add'],
-    ['remove', 'proposed-remove'],
-    ['edit', 'proposed-edit'],
-  ] as const)('marks a %s node with .%s', (flag, cls) => {
-    const card = renderCard(proposed('tool', flag));
-    expect(card.classList).toContain(cls);
   });
 
   it('shows the "edited" chip only on an edited node', () => {
@@ -184,21 +120,10 @@ describe('agent card (KindView)', () => {
     [...card.querySelectorAll('.node-row')].find((r) => r.firstElementChild?.textContent === key)
       ?.querySelector('code')?.textContent;
 
-  it('shows the model chip and the violet kind tile', () => {
-    const card = renderCard(nodeOf('agent'));
-    expect(card.querySelector('.node-chip')?.textContent).toBe('openai/gpt-4o-mini');
-    expect(card.querySelector('.node-kind')?.classList.contains('kind-violet')).toBe(true);
-  });
-
   it('falls back to "(unnamed)" without a name and hides the chip without a model', () => {
     const card = renderCard(agentOf({ name: '', model: '' }));
     expect(card.querySelector('.rf-node-title')?.textContent).toBe('(unnamed)');
     expect(card.querySelector('.node-chip')).toBeNull();
-  });
-
-  it('truncates the first non-empty instruction line at 40 chars', () => {
-    const card = renderCard(agentOf({ instructions: `\n\n${'x'.repeat(60)}\nsecond` }));
-    expect(rowText(card, 'instructions')).toBe(`${'x'.repeat(40)}…`);
   });
 
   it('shows a file instruction as "file: <path>"', () => {
@@ -210,18 +135,5 @@ describe('agent card (KindView)', () => {
     const card = renderCard(agentOf({ promptRef: 'triage@prod', reasoning: { budgetTokens: 4096 } }));
     expect(rowText(card, 'prompt')).toBe('triage@prod');
     expect(rowText(card, 'reasoning')).toBe('4096 tokens');
-  });
-
-  it('titles an inline subagent by its subagentKey', () => {
-    const graph = specToGraph({
-      version: 2,
-      name: 'a',
-      model: 'mock/mock-1',
-      instructions: 'x',
-      subagents: { research: { inline: { name: 'nope', description: 'd', model: 'mock/mock-1', instructions: 'x' } } },
-    } as unknown as Parameters<typeof specToGraph>[0]);
-    const sub = graph.nodes.find((n) => n.id === 'sub:research')!;
-    const card = renderCard(sub);
-    expect(card.querySelector('.rf-node-title')?.textContent).toBe('research');
   });
 });

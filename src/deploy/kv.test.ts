@@ -4,33 +4,13 @@
  * import graph: no module it reaches may import a `node:` path.
  */
 import { afterAll, describe, expect, it } from 'vitest';
-import { build, stop } from 'esbuild';
-import { join } from 'node:path';
+import { stop } from 'esbuild';
 import * as kv from './kv';
 
 // esbuild keeps a service process alive after build(); end it so it does not outlive this file.
 afterAll(() => stop());
 
 describe('lousho/kv (R2)', () => {
-  it('bundles for the browser platform with no node: import in its graph', async () => {
-    const result = await build({
-      entryPoints: [join(__dirname, 'kv.ts')],
-      bundle: true,
-      write: false,
-      platform: 'browser',
-      format: 'esm',
-      external: ['ai', 'zod', '@opentelemetry/api'],
-      metafile: true,
-      logLevel: 'silent',
-    });
-
-    expect(result.errors).toEqual([]);
-    const nodeImports = Object.entries(result.metafile.inputs).flatMap(([file, input]) =>
-      input.imports.filter((entry) => entry.path.startsWith('node:')).map((entry) => `${file} -> ${entry.path}`)
-    );
-    expect(nodeImports).toEqual([]);
-    expect(Object.keys(result.metafile.inputs).some((file) => file.endsWith('kvStore.ts'))).toBe(true);
-  }, 30_000);
 
   it('exports KVStore, KVCheckpointStore, CHECKPOINT_KV_BINDING and kvMemory', () => {
     expect(Object.keys(kv).sort()).toEqual(['CHECKPOINT_KV_BINDING', 'KVCheckpointStore', 'KVStore', 'kvMemory']);

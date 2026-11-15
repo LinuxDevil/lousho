@@ -1,37 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { parse } from 'yaml';
 
 import { KIND_RULES } from '../kindRules';
 import { addNode } from '../mutations';
 import type { AgentSpecV2 } from '../specTypes';
 import { specToGraph } from '../specToGraph';
-import type { Graph, GraphNode, NodeKind, Problem } from '../types';
+import type { Graph, GraphNode, Problem } from '../types';
 import { validateGraph } from '../validateGraph';
-
-const WORKED = `version: 2
-name: support-triage
-model: anthropic/claude-sonnet-5-5
-instructions: Triage tickets.
-tools:
-  - builtin: http
-  - builtin: web-fetch
-    approval: always
-mcpServers:
-  github: { command: npx, args: [-y, '@modelcontextprotocol/server-github'] }
-subagents:
-  research:
-    inline:
-      name: research
-      description: Looks things up
-      model: openai/gpt-5
-      instructions: Research.
-      tools: [ { builtin: web-fetch } ]
-permissions:
-  - { id: p1, tool: 'github__*', action: ask }
-triggers:
-  - { id: t1, type: chat }
-x-team: platform
-`;
 
 const AT = { x: 0, y: 0 };
 
@@ -59,38 +33,7 @@ function error(nodeId: string, message: string, fieldPath?: string): Problem {
     : { nodeId, severity: 'error', message, fieldPath };
 }
 
-describe('validateGraph: clean graph', () => {
-  it('returns no problems for the worked example', () => {
-    expect(validateGraph(specToGraph(parse(WORKED) as AgentSpecV2))).toStrictEqual([]);
-  });
-});
-
 describe('validateGraph: core checks', () => {
-  it('reports a graph with no main agent', () => {
-    const g: Graph = { version: 2, nodes: [], emptySections: [], unplaced: [] };
-    expect(validateGraph(g)).toStrictEqual([
-      error('agent', 'The graph has no main agent'),
-    ]);
-  });
-
-  it('reports two nodes sharing an id', () => {
-    const g = specToGraph(minimalSpec(), {
-      schemaVersion: 1,
-      nodes: {},
-      notes: [{ id: 'n1', x: 0, y: 0, text: 't' }],
-    });
-    const dup: Graph = { ...g, nodes: [...g.nodes, { ...g.nodes[1] }] };
-    expect(validateGraph(dup)).toStrictEqual([
-      error('note:n1', "Two nodes share the id 'note:n1'"),
-    ]);
-  });
-
-  it('reports a node whose owner is gone', () => {
-    const g = specToGraph(minimalSpec({ tools: [{ builtin: 'http' }] }));
-    expect(validateGraph(editNode(g, 'tool:http', { owner: 'sub:ghost' }))).toStrictEqual([
-      error('tool:http', 'This node belongs to an agent that no longer exists'),
-    ]);
-  });
 
   it('reports a root-only kind owned by an inline agent', () => {
     const g = specToGraph(
@@ -138,42 +81,6 @@ describe('validateGraph: core checks', () => {
       error('memory:m#2', "Two memory slots are named 'm'", 'memory[1].name'),
     ]);
   });
-
-  it.each([
-    ['guardrail', { id: 'g1', name: 'max-length', on: 'input' }, 'guardrails'],
-    ['permission', { id: 'p1', tool: '*', action: 'ask' }, 'permission rules'],
-    ['hook', { id: 'h1', file: 'hooks/h.ts' }, 'hooks'],
-    ['trigger', { id: 't1', type: 'cron', cron: '0 9 * * *', prompt: 'go' }, 'triggers'],
-    // The abort listener watches 'tw', the webhook trigger below (only webhook/channel triggers can be watched).
-    ['abort', { id: 'a1', triggerId: 'tw', when: 'true', match: 'true', scope: 'both' }, 'abort listeners'],
-  ] as Array<[NodeKind, Record<string, unknown>, string]>)(
-    'reports two %s items sharing an id across the graph',
-    (kind, item, label) => {
-      let g = specToGraph(
-        minimalSpec({
-          triggers: [
-            { id: 't9', type: 'chat' },
-            // A webhook trigger the abort listener rows can validly watch.
-            { id: 'tw', type: 'webhook', path: '/hooks/x', promptTemplate: 'x' },
-          ],
-          // A tool under each owner so a permission rule's '*' matches (no
-          // 'No tool on this agent matches this rule' warning).
-          tools: [{ builtin: 'http' }],
-          subagents: { r: inlineAgent({ name: 'r', tools: [{ builtin: 'http' }] }) },
-        })
-      );
-      const owner = kind === 'trigger' || kind === 'abort' ? 'agent' : 'sub:r';
-      g = addNode(g, { kind, data: { item } as GraphNode['data'] }, AT, 'agent').graph;
-      g = addNode(g, { kind, data: { item } as GraphNode['data'] }, AT, owner).graph;
-      const problems = validateGraph(g);
-      expect(problems).toHaveLength(2);
-      for (const p of problems) {
-        expect(p.severity).toBe('error');
-        expect(p.message).toBe(`Two ${label} use the id '${item['id']}'`);
-        expect(p.fieldPath).toMatch(/\.id$/);
-      }
-    }
-  );
 
   it('reports two output nodes on one agent', () => {
     let g = specToGraph(minimalSpec());

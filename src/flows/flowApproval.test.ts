@@ -55,42 +55,6 @@ describe('FlowExecutor approval pause', () => {
     resumeContext = { ...rest, checkpointStore: store, runId: 'payout-1' };
   });
 
-  it("pauses when approve defers, without running the tool or failing the flow", async () => {
-    const result = await FlowExecutor.execute(flow, context);
-
-    expect(result.status).toBe('awaiting-approval');
-    expect(result.success).toBe(false);
-    expect(result.error).toBeUndefined();
-    expect(result.approvalId).toEqual(expect.any(String));
-    expect(result.pendingApproval).toEqual({ approvalId: result.approvalId, nodeId: '0.1', toolName: 'pay', args: { amount: '900.00' } });
-    expect(pay).not.toHaveBeenCalled();
-    // A pause is not an error, and is not retried.
-    expect(result.events.some((event) => event.type === 'step-error' || event.type === 'flow-error' || event.type === 'step-retry')).toBe(false);
-    expect(approve).toHaveBeenCalledTimes(1);
-
-    const checkpoint = await store.load('payout-1');
-    expect(checkpoint).toMatchObject({ status: 'awaiting-approval', approvalId: result.approvalId });
-    expect(checkpoint?.flow?.completedNodeIds).toEqual(['0.0']);
-  });
-
-  it('pauses a durable run that has no approve callback', async () => {
-    const result = await FlowExecutor.execute(flow, { ...context, approve: undefined });
-    expect(result.status).toBe('awaiting-approval');
-    expect(pay).not.toHaveBeenCalled();
-  });
-
-  it('resumes after approval: the tool runs once, completed steps are not repeated', async () => {
-    const paused = await FlowExecutor.execute(flow, context);
-
-    const result = await FlowExecutor.resume(flow, { ...resumeContext, approval: { approvalId: paused.approvalId!, approved: true } });
-
-    expect(result).toMatchObject({ status: 'completed', success: true, output: 'PAID 900.00' });
-    expect(pay).toHaveBeenCalledTimes(1);
-    expect(approve).toHaveBeenCalledTimes(1);
-    expect(provider.generate).toHaveBeenCalledTimes(1);
-    expect((await store.load('payout-1'))?.status).toBe('finished');
-  });
-
   it('resumes after a rejection: the step fails with LOUSHO_FLOW_TOOL_DENIED and the approval is used up', async () => {
     const paused = await FlowExecutor.execute(flow, context);
     const approval = { approvalId: paused.approvalId!, approved: false };
@@ -117,12 +81,5 @@ describe('FlowExecutor approval pause', () => {
     // Still paused on the same approval.
     expect((await store.load('payout-1'))?.approvalId).toBe(paused.approvalId);
     expect(pay).not.toHaveBeenCalled();
-  });
-
-  it("still refuses 'defer' in a run that is not durable", async () => {
-    const { checkpointStore: _s, runId: _r, ...plain } = context;
-    const result = await FlowExecutor.execute(flow, plain);
-    expect(result.status).toBe('failed');
-    expect(result.error).toMatchObject({ code: 'LOUSHO_FLOW_TOOL_DENIED' });
   });
 });

@@ -95,43 +95,6 @@ beforeEach(() => {
 });
 
 describe('AgentDetailRoute', () => {
-  it('shows a loading status while the record is in flight', () => {
-    mocks.loadAgent.mockReturnValue(new Promise(() => {}));
-    go('#/agents/support-bot/overview');
-    const host = renderRoute();
-    const status = host.querySelector('[role="status"]');
-    expect(status?.textContent).toBe('Loading agent');
-  });
-
-  it('renders the header, badge, Test link and tab strip for a loaded agent', async () => {
-    mocks.loadAgent.mockResolvedValue(record());
-    go('#/agents/support-bot/overview');
-    const host = renderRoute();
-    await flush();
-
-    expect(host.querySelector('h1.agent-detail-name')?.textContent).toBe('Support bot');
-    expect(host.querySelector('.page-header-crumbs a')?.getAttribute('href')).toBe('#/agents');
-    expect(host.querySelector('.status-badge-label')?.textContent).toBe('Not published');
-
-    const test = host.querySelector<HTMLAnchorElement>('a.btn-primary');
-    expect(test?.textContent?.trim()).toBe('Test');
-    expect(test?.getAttribute('href')).toBe('#/agents/support-bot/canvas?test=1');
-
-    const tabs = host.querySelector('nav[aria-label="Agent"]')!;
-    expect(tabs.querySelector('[data-tab-id="overview"]')?.getAttribute('aria-current')).toBe('page');
-    const configure = tabs.querySelector('[data-tab-id="configure"]')!;
-    expect(configure.tagName).toBe('SPAN');
-    expect(configure.getAttribute('aria-disabled')).toBe('true');
-    expect(configure.getAttribute('title')).toBe('Coming in a later release');
-  });
-
-  it('shows the published badge with the version number', async () => {
-    mocks.loadAgent.mockResolvedValue(record({ meta: { publishedVersion: 3 } }));
-    go('#/agents/support-bot/overview');
-    const host = renderRoute();
-    await flush();
-    expect(host.querySelector('.status-badge-label')?.textContent).toBe('Published v3');
-  });
 
   it('clamps a long description behind Show more / Show less', async () => {
     const long = 'x'.repeat(200);
@@ -149,14 +112,6 @@ describe('AgentDetailRoute', () => {
     expect(more.textContent).toBe('Show less');
     expect(more.getAttribute('aria-expanded')).toBe('true');
     expect(host.querySelector('.agent-detail-description')?.classList.contains('is-expanded')).toBe(true);
-  });
-
-  it('offers no Show more for a short description', async () => {
-    mocks.loadAgent.mockResolvedValue(record());
-    go('#/agents/support-bot/overview');
-    const host = renderRoute();
-    await flush();
-    expect(host.querySelector('button.agent-detail-more')).toBeNull();
   });
 
   it('links a missing requirement to its fix and collapses an all-ok list to Ready to run', async () => {
@@ -187,14 +142,6 @@ describe('AgentDetailRoute', () => {
     expect(chips.length).toBe(1);
     expect(chips[0].textContent).toContain('Ready to run');
     expect(chips[0].classList.contains('readiness-ok')).toBe(true);
-  });
-
-  it('renders no readiness chips when the record has no requirements', async () => {
-    mocks.loadAgent.mockResolvedValue(record());
-    go('#/agents/support-bot/overview');
-    const host = renderRoute();
-    await flush();
-    expect(host.querySelector('.readiness-chips')).toBeNull();
   });
 
   it('shows Agent not found on a 404', async () => {

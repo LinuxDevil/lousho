@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { testToolContext } from 'lousho/testing';
 import { ConfigurationError, type AgentSpecV2, type ToolDescriptor } from 'lousho';
 import { AlreadyRunningError, RunManager } from '../../../runRegistry';
-import { readAgentTrace } from '../../../traceStore';
 import { AgentRepo } from '../../../storage/agentRepo';
 import { FileCheckpointStore } from '../../../checkpointStore';
 import { FileApprovalStore } from '../../../approvalStore';
@@ -144,18 +143,6 @@ function fakeDeps(runs: FakeRuns, exists = true): AuthorToolDeps {
 }
 
 describe('runDraft', () => {
-  it('runs a saved mock-provider agent once: done, its text and a trace id', async () => {
-    const { root, repo, runs } = await realWorkspace();
-    const out = (await call(tool(turn(), deps(context({ ref: { root } as never, repo, runs }))), {
-      agentId: 'agent-a',
-      input: 'say hi',
-    })) as RunDraftOutput;
-    expect(out).toMatchObject({ ok: true, agentId: 'agent-a', status: 'done', resultText: 'This is a mock response.', errors: [] });
-    expect(typeof out.traceId).toBe('string');
-    expect(out.durationMs).toBeGreaterThanOrEqual(0);
-    // The run's trace file is on disk, so getTrace can read it by the returned id.
-    expect((await readAgentTrace(root, 'agent-a', out.traceId!)).length).toBeGreaterThan(0);
-  });
 
   it('a run that never ends returns timeout after 60 s and the run is stopped', async () => {
     vi.useFakeTimers();

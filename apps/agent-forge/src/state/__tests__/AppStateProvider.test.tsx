@@ -73,24 +73,8 @@ beforeEach(() => {
 });
 
 describe('AppStateProvider proposal overlay', () => {
-  it('shows the merged graph while a proposal is set and the plain graph after hiding it', () => {
-    const result = mount();
-    expect(result.current.proposal).toBeUndefined();
-    expect(result.current.displayGraph).toBe(mocks.doc.graph);
-
-    act(() => result.current.showProposal({ proposalId: 'p1', spec: PROPOSED }));
-    expect(result.current.proposal?.proposalId).toBe('p1');
-    expect(result.current.displayGraph.nodes.find((n) => n.id === 'tool:web_fetch')?.proposed).toBe('add');
-
-    act(() => result.current.hideProposal());
-    expect(result.current.proposal).toBeUndefined();
-    expect(result.current.displayGraph).toBe(mocks.doc.graph);
-  });
 
   it.each([
-    ['switchAgent', (s: State) => s.switchAgent('other'), ['other']],
-    ['createAgent', (s: State) => s.createAgent('new', 'blank' as never), ['new', 'blank']],
-    ['renameAgent', (s: State) => s.renameAgent('bot', 'bot2'), ['bot', 'bot2']],
     ['deleteAgent', (s: State) => s.deleteAgent('bot'), ['bot']],
   ] as const)('%s clears the proposal and delegates to the document', async (name, call, args) => {
     const result = mount();

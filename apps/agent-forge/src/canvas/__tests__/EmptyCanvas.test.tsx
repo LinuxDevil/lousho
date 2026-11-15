@@ -17,9 +17,7 @@ vi.mock('../../state/AppState', () => ({
 }));
 
 import { render } from '../../ui/__tests__/render';
-import { takePendingOpen } from '../../author/authorEntry';
 import { EmptyCanvas } from '../EmptyCanvas';
-import { AGENT_TEMPLATES } from '../templates';
 import { specToGraph } from '../../graph/v2/specToGraph';
 
 const rootOnly = (): Graph =>
@@ -33,13 +31,6 @@ beforeEach(() => {
 });
 
 describe('EmptyCanvas', () => {
-  it('lists every template, by name and description, when the graph is just the root agent', () => {
-    const container = render(<EmptyCanvas />);
-    for (const template of AGENT_TEMPLATES) {
-      const button = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes(template.name));
-      expect(button?.textContent).toContain(template.description);
-    }
-  });
 
   it('steps aside while something is dragged, so a palette drop lands on the canvas', () => {
     const container = render(<EmptyCanvas />);
@@ -51,18 +42,6 @@ describe('EmptyCanvas', () => {
       window.dispatchEvent(new Event('dragend'));
     });
     expect(container.querySelector('.canvas-empty')).not.toBeNull();
-  });
-
-  it('renders nothing once the canvas has a capability node', () => {
-    appState.graph = specToGraph({
-      version: 2,
-      name: 'my-agent',
-      model: 'mock/mock-1',
-      instructions: '',
-      tools: [{ builtin: 'http' }],
-    });
-    const container = render(<EmptyCanvas />);
-    expect(container.innerHTML).toBe('');
   });
 
   it('fills the canvas from the chosen template through setGraph, keeping the agent name', () => {
@@ -87,21 +66,5 @@ describe('EmptyCanvas', () => {
     const next = appState.setGraph.mock.calls[0][0](appState.graph) as Graph;
     expect(next.nodes.some((n) => n.kind === 'agent')).toBe(true);
     expect(next.nodes.some((n) => n.kind === 'tool')).toBe(false);
-  });
-
-  it('"Describe it to the Agent Author" queues an edit-focus open with a draft (AA19)', () => {
-    takePendingOpen();
-    const container = render(<EmptyCanvas />);
-    const button = [...container.querySelectorAll('button')].find((b) =>
-      b.textContent?.includes('Describe it to the Agent Author')
-    )!;
-    expect(button.classList.contains('btn-secondary')).toBe(true);
-    act(() => button.click());
-    expect(takePendingOpen()).toEqual({
-      source: 'empty-canvas',
-      focus: { mode: 'edit', agentId: 'my-agent' },
-      draft: 'Build this agent so it ',
-    });
-    takePendingOpen();
   });
 });

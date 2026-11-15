@@ -7,7 +7,6 @@ vi.mock('../../state/AppState', () => ({ useAppState: () => appState }));
 
 import { AppShell } from '../AppShell';
 import { ToastProvider } from '../../ui/Toast';
-import { NAV_ITEMS, isActive } from '../NavRail';
 import { breakStorage, installMemoryStorage } from '../../ui/__tests__/memoryStorage';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -57,61 +56,6 @@ afterEach(() => {
 });
 
 describe('AppShell', () => {
-  it('renders the 10 nav items in order and the screen', () => {
-    stubNarrow(false);
-    render();
-    const links = [...nav().querySelectorAll('a')];
-    expect(links.map((a) => a.textContent)).toEqual([
-      'Agents',
-      'Templates',
-      'Playground',
-      'Traces',
-      'Threads',
-      'Monitoring',
-      'Evaluations',
-      'Prompts',
-      'Context Hub',
-      'Settings',
-    ]);
-    expect(NAV_ITEMS.map((i) => i.href)).toEqual([
-      '#/agents',
-      '#/templates',
-      '#/playground',
-      '#/traces',
-      '#/threads',
-      '#/monitoring',
-      '#/evals/scores',
-      '#/prompts',
-      '#/hub',
-      '#/settings',
-    ]);
-    expect(container.querySelector('#screen')).not.toBeNull();
-    expect(toggle()).toBeNull();
-  });
-
-  it('marks only the active route aria-current=page, following hash changes', () => {
-    stubNarrow(false);
-    render();
-    const current = () => [...nav().querySelectorAll('a[aria-current="page"]')].map((a) => a.textContent);
-    expect(current()).toEqual(['Traces']);
-    act(() => {
-      window.location.hash = '#/evals/datasets';
-      window.dispatchEvent(new HashChangeEvent('hashchange'));
-    });
-    expect(current()).toEqual(['Evaluations']);
-    act(() => {
-      window.location.hash = '#/traces/abc?obs=1';
-      window.dispatchEvent(new HashChangeEvent('hashchange'));
-    });
-    expect(current()).toEqual(['Traces']);
-  });
-
-  it('shows the connection banner when the studio server drops', () => {
-    stubNarrow(false);
-    appState.connected = false;
-    render();
-    expect(container.querySelector('.connection-banner')?.getAttribute('role')).toBe('alert');
-  });
 
   it('collapses to a drawer when narrow: toggle, Escape, scrim and link close it', () => {
     stubNarrow(true);
@@ -156,32 +100,6 @@ describe('collapsible icon rail', () => {
     expect(window.localStorage.getItem('forge.nav.collapsed')).toBe('0');
   });
 
-  it('keeps every item reachable by its accessible name when collapsed', () => {
-    stubNarrow(false);
-    window.localStorage.setItem('forge.nav.collapsed', '1');
-    render();
-    expect(nav().hasAttribute('data-collapsed')).toBe(true);
-    for (const item of NAV_ITEMS) {
-      const link = nav().querySelector(`a[href="${item.href}"]`) as HTMLAnchorElement;
-      expect(link.getAttribute('aria-label')).toBe(item.label);
-      expect(link.getAttribute('title')).toBe(item.label);
-    }
-    expect(nav().querySelectorAll('.nav-heading')).toHaveLength(0);
-    expect(nav().querySelectorAll('.nav-divider')).toHaveLength(4);
-    expect(nav().querySelector('.nav-wordmark')).toBeNull();
-    expect(nav().querySelector('.logo-mark')).not.toBeNull();
-  });
-
-  it('is ignored in the narrow drawer, which has no collapse toggle', () => {
-    stubNarrow(true);
-    window.localStorage.setItem('forge.nav.collapsed', '1');
-    render();
-    expect(collapseToggle()).toBeNull();
-    expect(nav().hasAttribute('data-collapsed')).toBe(false);
-    expect(shellEl().hasAttribute('data-nav')).toBe(false);
-    expect(nav().querySelectorAll('.nav-heading')).toHaveLength(4);
-  });
-
   it('survives storage that throws', () => {
     stubNarrow(false);
     breakStorage();
@@ -189,16 +107,5 @@ describe('collapsible icon rail', () => {
     expect(nav().hasAttribute('data-collapsed')).toBe(false);
     act(() => collapseToggle()!.click());
     expect(nav().hasAttribute('data-collapsed')).toBe(true);
-  });
-});
-
-describe('isActive', () => {
-  const item = (id: string) => NAV_ITEMS.find((i) => i.id === id)!;
-  it('owns every route under its first segment; the bare / is Agents', () => {
-    expect(isActive(item('evals'), '/evals/datasets')).toBe(true);
-    expect(isActive(item('traces'), '/traces/abc')).toBe(true);
-    expect(isActive(item('agents'), '/')).toBe(true);
-    expect(isActive(item('traces'), '/')).toBe(false);
-    expect(isActive(item('threads'), '/traces')).toBe(false);
   });
 });

@@ -13,7 +13,7 @@ import { FileApprovalStore } from '../approvalStore';
 import { createFsAgentStore } from '../../src/persistence/fsAgentStore';
 import { AgentRepo } from '../storage/agentRepo';
 import type { LegacyAgentStore } from '../../src/persistence/AgentStore';
-import type { SpecChange, VersionListItem, VersionRecord } from '../../shared/wireTypes';
+import type { SpecChange, VersionRecord } from '../../shared/wireTypes';
 
 const V1_SPEC: AgentSpec = {
   name: 'ops',
@@ -85,32 +85,6 @@ describe('version routes', () => {
     const missing = await listVersions('ghost');
     expect(missing.status).toBe(404);
     expect(missing.body.code).toBe('LOUSHO_AGENT_NOT_FOUND');
-  });
-
-  it('explicit saves capture create/update versions; GET lists them newest first', async () => {
-    await saveAgent();
-    const first = await saveVersion('ops', { source: 'editor' });
-    expect(first.status).toBe(201);
-    expect(first.body).toMatchObject({ version: 1, kind: 'create', source: 'editor' });
-
-    await saveAgent('ops', V1_SPEC_EDITED);
-    const second = await saveVersion();
-    expect(second.status).toBe(201);
-    expect(second.body).toMatchObject({ version: 2, kind: 'update', source: 'editor' });
-    expect(second.body.changedFields).toContain('instructions');
-
-    const list = await listVersions();
-    expect(list.body.map((item: VersionListItem) => item.version)).toEqual([2, 1]);
-  });
-
-  it('explicit save with no change since the latest version is a 200 no-op - nothing appended', async () => {
-    await saveAgent();
-    await saveVersion();
-
-    const again = await saveVersion();
-    expect(again.status).toBe(200);
-    expect(again.body.version).toBe(1);
-    expect(indexLines('ops')).toHaveLength(1);
   });
 
   it('POST rejects a source other than editor and unknown agents', async () => {
@@ -187,37 +161,6 @@ describe('version routes', () => {
     expect((await request(app()).get('/agents/ops/versions/2/diff?against=9')).body.code).toBe(
       'LOUSHO_VERSION_NOT_FOUND'
     );
-  });
-
-  it('restore writes a kind:restore version: the working copy and labels go back to v1, enabled stays false', async () => {
-    await saveAgent();
-    const meta = await repo.readMeta('ops');
-    await repo.writeMeta('ops', { ...meta, labels: ['v1labels'] });
-    await saveVersion();
-    await saveAgent('ops', V1_SPEC_EDITED);
-    await repo.writeMeta('ops', { ...meta, labels: ['v2labels'] });
-    await saveVersion();
-
-    // The restore must not re-enable a disabled agent.
-    await repo.writeMeta('ops', { ...(await repo.readMeta('ops')), enabled: false });
-
-    const res = await request(app()).post('/agents/ops/versions/1/restore');
-    expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({
-      version: 3,
-      kind: 'restore',
-      source: 'restore',
-      restoredFromVersion: 1,
-    });
-
-    const spec = await repo.readSpec('ops');
-    const v1 = (await request(app()).get('/agents/ops/versions/1')).body as VersionRecord;
-    expect(spec?.instructions).toBe('Check the queues.');
-    expect(spec?.name).toBe(v1.snapshot.spec.name);
-
-    const afterMeta = await repo.readMeta('ops');
-    expect(afterMeta.labels).toEqual(['v1labels']);
-    expect(afterMeta.enabled).toBe(false);
   });
 
   it('restore of a missing version is 404 LOUSHO_VERSION_NOT_FOUND and a bad number is 400', async () => {

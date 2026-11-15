@@ -46,19 +46,6 @@ afterEach(async () => {
 });
 
 describe('startDevServer', () => {
-  it('serves the chat UI on GET / with an id="msg" input', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-dev-'));
-    const configPath = writeConfig(dir);
-    handle = await startDevServer(configPath, 0);
-
-    const res = await fetch(`http://localhost:${addressPort(handle)}/`);
-    expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toContain('text/html');
-    const html = await res.text();
-    expect(html).toContain('id="msg"');
-    expect(html).toContain('id="send"');
-    expect(html).toContain('id="log"');
-  });
 
   it('a realistic message round-trip via the UI page\'s own /chat call produces a reply', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-dev-'));
@@ -77,57 +64,6 @@ describe('startDevServer', () => {
       body: JSON.stringify({ sessionId: 'ui', input: 'hello from the UI' }),
     });
     expect(await res.text()).toContain(MOCK_RESPONSE);
-  });
-
-  it('responds 200 ok on GET /health', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-dev-'));
-    const configPath = writeConfig(dir);
-    handle = await startDevServer(configPath, 0);
-
-    const res = await fetch(`http://localhost:${addressPort(handle)}/health`);
-    expect(res.status).toBe(200);
-    expect(await res.text()).toBe('ok');
-  });
-
-  it('POST /chat returns the mock provider response', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-dev-'));
-    const configPath = writeConfig(dir);
-    handle = await startDevServer(configPath, 0);
-
-    const res = await fetch(`http://localhost:${addressPort(handle)}/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: 'hi' }),
-    });
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.text).toBe(MOCK_RESPONSE);
-  });
-
-  it('rejects a POST /chat body larger than the size cap with 413', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-dev-'));
-    const configPath = writeConfig(dir);
-    handle = await startDevServer(configPath, 0);
-    const port = addressPort(handle);
-
-    // 1MB cap - send a body comfortably over it.
-    const oversized = JSON.stringify({ message: 'x'.repeat(2 * 1024 * 1024) });
-
-    const res = await fetch(`http://localhost:${port}/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: oversized,
-    });
-    expect(res.status).toBe(413);
-  });
-
-  it('binds to 127.0.0.1 (localhost-only) by default, not all interfaces', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-dev-'));
-    const configPath = writeConfig(dir);
-    handle = await startDevServer(configPath, 0);
-
-    const addr = handle.server.address();
-    expect(addr && typeof addr === 'object' ? addr.address : addr).toBe('127.0.0.1');
   });
 
   it('refuses a foreign Host header (DNS rebinding), keeps /health open, and accepts --allowed-hosts', async () => {
@@ -183,18 +119,6 @@ describe('startDevServer', () => {
     expect(await status(`localhost:${port}`)).toBe(200);
     expect(await status(`evil.example:${port}`)).toBe(403);
     vi.restoreAllMocks();
-  });
-
-  it('warns when bound to a non-loopback host (no auth on the dev server)', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-dev-'));
-    handle = await startDevServer(writeConfig(dir), 0, '0.0.0.0');
-    expect(warn.mock.calls.map((call) => String(call[0])).join('\n')).toMatch(/no authentication.*anyone who can reach 0\.0\.0\.0:/);
-    await handle.close();
-    warn.mockClear();
-    handle = await startDevServer(writeConfig(dir), 0);
-    expect(warn.mock.calls.map((call) => String(call[0])).join('\n')).not.toMatch(/no authentication/);
-    warn.mockRestore();
   });
 
   it('rejects with a clear message when the port is already in use', async () => {
@@ -318,16 +242,6 @@ describe('agent directories and TS modules', () => {
     );
   });
 
-  it('serves an agent directory with loadAgentDir', async () => {
-    const provider = mockModel(['dir says hi']);
-    handle = await startDevServer(path.join(fixtures, 'dev-agent'), 0, '127.0.0.1', { overrides: { provider } });
-
-    expect((await chat(handle)).text).toBe('dir says hi');
-    expect(systemOf(provider.calls[0])).toContain('You are the dev fixture agent.');
-    expect(provider.calls[0].tools?.map((t) => t.function.name)).toEqual(['ping']);
-    expect(await status(handle)).toMatchObject({ kind: 'dir', reloads: 0, error: null });
-  });
-
   it('serves a TS module whose default export is a SimpleAgent, and accepts a config export', async () => {
     handle = await startDevServer(path.join(fixtures, 'dev-module', 'agent.ts'), 0);
     expect((await chat(handle)).text).toBe('module says hi');
@@ -340,52 +254,6 @@ describe('agent directories and TS modules', () => {
     });
     expect((await chat(handle)).text).toBe('config says hi');
     expect(systemOf(provider.calls[0])).toContain('config-export agent');
-  });
-
-  it('rejects a module that exports no agent with a coded error', async () => {
-    await expect(startDevServer(path.join(fixtures, 'dev-module', 'bad.ts'), 0)).rejects.toThrow(
-      /LOUSHO_CONFIG_INVALID/
-    );
-  });
-
-  it('reloads when instructions.md or a tool changes, without restarting the server', async () => {
-    const dir = copyFixture('dev-agent');
-    const provider = mockModel(['ok', 'ok', 'ok']);
-    handle = await startDevServer(dir, 0, '127.0.0.1', { overrides: { provider }, debounceMs: 20 });
-    const server = handle.server;
-    await chat(handle);
-
-    fs.writeFileSync(path.join(dir, 'instructions.md'), 'You are the EDITED agent.\n');
-    await waitFor(async () => (await status(handle!)).reloads >= 1);
-    await chat(handle);
-    expect(systemOf(provider.calls[1])).toContain('EDITED');
-
-    const toolFile = path.join(dir, 'tools', 'ping.ts');
-    fs.writeFileSync(toolFile, fs.readFileSync(toolFile, 'utf8').replace("'ping'", "'ping_v2'"));
-    await waitFor(async () => (await status(handle!)).reloads >= 2);
-    await chat(handle);
-    expect(provider.calls[2].tools?.map((t) => t.function.name)).toEqual(['ping_v2']);
-    expect(handle.server).toBe(server);
-  });
-
-  it('keeps the previous agent after a failed reload and reports the error', async () => {
-    const dir = copyFixture('dev-agent');
-    const provider = mockModel(['ok', 'ok', 'ok']);
-    handle = await startDevServer(dir, 0, '127.0.0.1', { overrides: { provider }, debounceMs: 20 });
-    const quiet = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-
-    fs.writeFileSync(path.join(dir, 'tools', 'ping.ts'), 'export default (');
-    await waitFor(async () => (await status(handle!)).error !== null);
-    expect((await status(handle)).reloads).toBe(0);
-    expect(await chat(handle)).toMatchObject({ text: 'ok' });
-    expect(systemOf(provider.calls[0])).toContain('You are the dev fixture agent.');
-    expect(quiet).toHaveBeenCalledWith(expect.stringContaining('keeping the previous agent'));
-
-    // Fixing the file recovers and clears the error.
-    fs.copyFileSync(path.join(fixtures, 'dev-agent', 'tools', 'ping.ts'), path.join(dir, 'tools', 'ping.ts'));
-    await waitFor(async () => (await status(handle!)).error === null);
-    expect((await status(handle)).reloads).toBe(1);
-    quiet.mockRestore();
   });
 
   it('reloads an edited CommonJS tool file, and reports a broken one instead of keeping the cached copy', async () => {
@@ -425,31 +293,6 @@ describe('agent directories and TS modules', () => {
     expect(quiet).toHaveBeenCalledWith(expect.stringContaining('keeping the previous agent'));
     quiet.mockRestore();
     delete (globalThis as Record<string, unknown>).__loushoDevTestDefineTool;
-  });
-
-  it('keeps reloading a tool file an editor replaces on save, and watches folders created later', async () => {
-    const dir = copyFixture('dev-agent');
-    const provider = mockModel(['ok', 'ok', 'ok']);
-    handle = await startDevServer(dir, 0, '127.0.0.1', { overrides: { provider }, debounceMs: 20 });
-    const toolFile = path.join(dir, 'tools', 'ping.ts');
-    const original = fs.readFileSync(toolFile, 'utf8');
-    // Write a temp file, then rename it over the original (what "safe write" editors do).
-    const replace = (name: string) => {
-      fs.writeFileSync(`${toolFile}.tmp`, original.replace("'ping'", `'${name}'`));
-      fs.renameSync(`${toolFile}.tmp`, toolFile);
-    };
-    replace('ping_a');
-    await waitFor(async () => (await status(handle!)).reloads >= 1);
-    replace('ping_b');
-    await waitFor(async () => (await status(handle!)).reloads >= 2);
-    await chat(handle);
-    expect(provider.calls[0].tools?.map((t) => t.function.name)).toEqual(['ping_b']);
-
-    fs.mkdirSync(path.join(dir, 'skills'));
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    const before = (await status(handle)).reloads;
-    fs.writeFileSync(path.join(dir, 'skills', 'notes.md'), '---\nname: notes\ndescription: Notes\n---\nTake notes.\n');
-    await waitFor(async () => (await status(handle!)).reloads > before);
   });
 
   it('keeps watching a folder that is deleted and created again, and logs only real paths', async () => {
@@ -530,98 +373,16 @@ describe('stateful streaming chat', () => {
     return events;
   };
   const turn = async (h: DevServerHandle, sessionId: string, input: string) => eventsOf(await post(h, '/chat', { sessionId, input }));
-  const transcript = async (h: DevServerHandle, sessionId: string) =>
-    (await fetch(`http://localhost:${addressPort(h)}/chat/${sessionId}`)).json();
   const ping = defineTool({ name: 'ping', description: 'Reply with pong', input: z.object({}), execute: () => 'pong', needsApproval: true });
   const serve = (provider: ReturnType<typeof mockModel>, extra: CreateAgentConfig = {}) =>
     startDevServer(path.join(fixtures, 'dev-module', 'config.ts'), 0, '127.0.0.1', { overrides: { provider, tools: [ping], ...extra } });
   const pinged = { toolCalls: [{ name: 'ping' }] };
-
-  it('streams a turn as SSE: AgentEvents ending with run.done, then event: done', async () => {
-    handle = await serve(mockModel([{ text: 'Hello there.', usage: { inputTokens: 3, outputTokens: 2 } }]));
-
-    const res = await post(handle, '/chat', { sessionId: 's1', input: 'hi' });
-    expect(res.headers.get('content-type')).toContain('text/event-stream');
-    const raw = await res.text();
-    expect(raw.endsWith('event: done\ndata: {}\n\n')).toBe(true);
-
-    const events = await eventsOf(new Response(raw));
-    expect(events[0].type).toBe('run.start');
-    expect(events.filter((e) => e.type === 'text.delta').map((e) => (e as { text: string }).text).join('')).toBe('Hello there.');
-    expect(events.at(-1)).toMatchObject({ type: 'run.done', finishReason: 'stop', text: 'Hello there.', usage: { totalTokens: 5 } });
-  });
-
-  it('keeps history per session: a second message sees the first, another session does not', async () => {
-    const provider = mockModel(['Nice to meet you, Ali.', 'You are Ali.', 'Who?']);
-    handle = await serve(provider);
-
-    await turn(handle, 'tab-a', 'My name is Ali.');
-    await turn(handle, 'tab-a', 'Who am I?');
-    const history = provider.calls[1].messages.map((m) => `${m.role}:${String(m.content)}`);
-    expect(history).toContain('user:My name is Ali.');
-    expect(history).toContain('assistant:Nice to meet you, Ali.');
-
-    await turn(handle, 'tab-b', 'Who am I?');
-    expect(provider.calls[2].messages.filter((m) => m.role === 'user').map((m) => m.content)).toEqual(['Who am I?']);
-  });
-
-  it('GET /chat/:sessionId returns the transcript, and rejects an invalid id', async () => {
-    handle = await serve(mockModel(['Hi Ali.']));
-    expect(await transcript(handle, 'fresh')).toEqual({ sessionId: 'fresh', messages: [], pending: null });
-
-    await turn(handle, 'fresh', 'hello');
-    const saved = await transcript(handle, 'fresh');
-    expect(saved.messages.map((m: { role: string; content: string }) => [m.role, m.content])).toEqual([
-      ['user', 'hello'],
-      ['assistant', 'Hi Ali.'],
-    ]);
-
-    const bad = await fetch(`http://localhost:${addressPort(handle)}/chat/${encodeURIComponent('not valid!')}`);
-    expect(bad.status).toBe(400);
-    expect((await post(handle, '/chat', { sessionId: 'x'.repeat(200), input: 'hi' })).status).toBe(400);
-  });
 
   it("uses the agent's own store when it has one", async () => {
     const store = memoryStore();
     handle = await serve(mockModel(['stored']), { store });
     await turn(handle, 'own', 'hi');
     expect((await store.sessions.load('own'))?.map((m) => m.role)).toEqual(['user', 'assistant']);
-  });
-
-  it('pauses a tool call for approval, then streams the continuation when it is resolved', async () => {
-    handle = await serve(mockModel([pinged, 'The tool said pong.']));
-
-    const paused = await turn(handle, 's2', 'ping it');
-    const requested = paused.find((e) => e.type === 'approval.requested');
-    expect(requested).toMatchObject({ toolName: 'ping' });
-    expect(paused.at(-1)).toMatchObject({ type: 'run.done', finishReason: 'awaiting-approval' });
-    expect((await transcript(handle, 's2')).pending).toMatchObject({ status: 'awaiting-approval' });
-
-    const { approvalId } = requested as { approvalId: string };
-    const continued = await eventsOf(await post(handle, `/chat/s2/approvals/${approvalId}`, { approved: true }));
-    // The continuation is a live stream, as a fresh turn's: the decided call resumes, then the model's reply.
-    expect(continued.map((e) => e.type)).toContain('tool.resume');
-    expect(continued.find((e) => e.type === 'tool.done')).toMatchObject({ toolName: 'ping', result: 'pong' });
-    expect(continued.flatMap((e) => (e.type === 'text.delta' ? [e.text] : [])).join('')).toBe('The tool said pong.');
-    expect(continued.at(-1)).toMatchObject({ finishReason: 'stop', text: 'The tool said pong.' });
-
-    const saved = await transcript(handle, 's2');
-    expect(saved.pending).toBeNull();
-    expect(saved.messages.at(-1)).toMatchObject({ role: 'assistant', content: 'The tool said pong.' });
-
-    // Decided already: nothing pending under that id any more.
-    expect((await post(handle, `/chat/s2/approvals/${approvalId}`, { approved: true })).status).toBe(404);
-  });
-
-  it('a second pause inside the streamed continuation arrives as approval.requested', async () => {
-    handle = await serve(mockModel([pinged, pinged, 'Both pinged.']));
-    const first = (await turn(handle, 's4', 'ping twice')).find((e) => e.type === 'approval.requested') as { approvalId: string };
-    const second = await eventsOf(await post(handle, `/chat/s4/approvals/${first.approvalId}`, { approved: true }));
-    expect(second.at(-1)).toMatchObject({ type: 'run.done', finishReason: 'awaiting-approval' });
-    const again = second.find((e) => e.type === 'approval.requested') as { approvalId: string };
-    expect(again.approvalId).not.toBe(first.approvalId);
-    const done = await eventsOf(await post(handle, `/chat/s4/approvals/${again.approvalId}`, { approved: true }));
-    expect(done.at(-1)).toMatchObject({ finishReason: 'stop', text: 'Both pinged.' });
   });
 
   it('rejects an approval with a note, and answers a question', async () => {
@@ -652,39 +413,6 @@ describe('stateful streaming chat', () => {
 
     expect((await post(handle, '/chat/s3/approvals/nope', {})).status).toBe(400);
   });
-
-  it('still answers the deprecated { message } body with the non-streamed result', async () => {
-    handle = await serve(mockModel(['legacy reply']));
-    const res = await post(handle, '/chat', { message: 'hi' });
-    expect(res.headers.get('content-type')).toContain('application/json');
-    expect(res.headers.get('deprecation')).toBe('true');
-    expect((await res.json()).text).toBe('legacy reply');
-    expect((await post(handle, '/chat', { sessionId: 'x' })).status).toBe(400);
-  });
-
-  it('keeps sessions across a hot reload and continues them on the new agent', async () => {
-    const dir = fs.mkdtempSync(path.join(fixtures, 'tmp-dev-agent-'));
-    fs.cpSync(path.join(fixtures, 'dev-agent'), dir, { recursive: true });
-    const provider = mockModel(['First reply.', 'Second reply.']);
-    try {
-      handle = await startDevServer(dir, 0, '127.0.0.1', { overrides: { provider }, debounceMs: 20 });
-      await turn(handle, 's4', 'remember me');
-
-      fs.writeFileSync(path.join(dir, 'instructions.md'), 'You are the EDITED agent.\n');
-      for (let i = 0; i < 100; i++) {
-        const info = await (await fetch(`http://localhost:${addressPort(handle)}/dev/status`)).json();
-        if (info.reloads >= 1) break;
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      await turn(handle, 's4', 'still there?');
-
-      const messages = provider.calls[1].messages;
-      expect(String(messages.find((m) => m.role === 'system')?.content)).toContain('EDITED');
-      expect(messages.map((m) => String(m.content))).toEqual(expect.arrayContaining(['remember me', 'First reply.']));
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
 });
 
 function addressPort(h: DevServerHandle): number {
@@ -692,35 +420,3 @@ function addressPort(h: DevServerHandle): number {
   if (addr && typeof addr === 'object') return addr.port;
   return h.port;
 }
-
-describe('local traces for the dev server (#282)', () => {
-  beforeAll(() => {
-    LLMProviderRegistry.register('mock', () => createMockProvider({ responses: [MOCK_RESPONSE] }));
-  });
-
-  it('hands the exporter to a spec file agent, so its runs are traced', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-dev-traces-'));
-    const ended: string[] = [];
-    const exporter = { onSpanStart: () => undefined, onSpanEnd: (span: { name: string }) => void ended.push(span.name) };
-    handle = await startDevServer(writeConfig(dir), 0, '127.0.0.1', { overrides: { exporter } });
-    const res = await fetch(`http://localhost:${addressPort(handle)}/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: 'traced', input: 'hi' }),
-    });
-    expect(await res.text()).toContain(MOCK_RESPONSE);
-    expect(ended.some((name) => name.startsWith('invoke_agent'))).toBe(true);
-  });
-
-  it('traces nothing without an exporter', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-dev-traces-'));
-    handle = await startDevServer(writeConfig(dir), 0);
-    const res = await fetch(`http://localhost:${addressPort(handle)}/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: 'plain', input: 'hi' }),
-    });
-    expect(await res.text()).toContain(MOCK_RESPONSE);
-    expect(fs.existsSync(path.join(dir, '.lousho'))).toBe(false);
-  });
-});

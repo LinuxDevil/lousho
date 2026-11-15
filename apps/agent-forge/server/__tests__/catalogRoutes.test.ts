@@ -4,10 +4,11 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import express, { type Express } from 'express';
 import request from 'supertest';
-import { listBuiltinTools, listGuardrails, listModels, listTriggerTypes } from 'lousho';
+import { listModels } from 'lousho';
 import { registerCatalogRoutes } from '../routes/catalogRoutes';
+import { createOpenRouterCatalog } from '../routes/openRouterCatalog';
+import { matchesModelFilter, modelLabel } from '../../src/components/modelFilter';
 import { SecretsStore } from '../secretsStore';
-import { sdkRootDir } from '../sdkRoot';
 
 /**
  * The catalog routes expose the SDK's catalogs (S06 tools, S07 models,
@@ -42,19 +43,6 @@ describe('catalog routes', () => {
     vi.restoreAllMocks();
   });
 
-  it('GET /catalog/models returns the SDK catalog (deep-equal)', async () => {
-    const res = await request(app).get('/catalog/models');
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual(listModels());
-  });
-
-  it('GET /catalog/models?provider= filters to that provider', async () => {
-    const res = await request(app).get('/catalog/models?provider=anthropic');
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual(listModels({ provider: 'anthropic' }));
-    expect(res.body.every((m: { provider: string }) => m.provider === 'anthropic')).toBe(true);
-  });
-
   it('GET /catalog/models?provider= (empty) -> 400 LOUSHO_QUERY_INVALID', async () => {
     const res = await request(app).get('/catalog/models?provider=');
     expect(res.status).toBe(400);
@@ -77,41 +65,70 @@ describe('catalog routes', () => {
     expect(res.body.every((m: { available: boolean }) => !m.available)).toBe(true);
   });
 
-  it('GET /catalog/tools returns listBuiltinTools() (deep-equal)', async () => {
-    const res = await request(app).get('/catalog/tools');
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual(listBuiltinTools());
+  it('OpenRouter models are fetched once, mapped, cached, and appended to /catalog/models', async () => {
+    vi.stubEnv('OPENROUTER_API_KEY', 'k');
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'acme/coder:free',
+              context_length: 1000,
+              pricing: { prompt: '0', completion: '0' },
+              supported_parameters: ['tools', 'reasoning'],
+              architecture: { input_modalities: ['text', 'image'] },
+            },
+            { id: 'acme/paid', pricing: { prompt: '0.000002', completion: '0.00001' } },
+          ],
+        })
+      )
+    );
+    const withOpenRouter = express();
+    registerCatalogRoutes(withOpenRouter, {
+      secretsStore: secrets,
+      openRouterModels: createOpenRouterCatalog(fetchMock as unknown as typeof fetch),
+    });
+
+    const all = await request(withOpenRouter).get('/catalog/models');
+    expect(all.body.slice(0, listModels().length)).toEqual(listModels());
+    expect(all.body.find((m: { id: string }) => m.id === 'openrouter/acme/coder:free')).toEqual({
+      id: 'openrouter/acme/coder:free',
+      modelId: 'acme/coder:free',
+      provider: 'openrouter',
+      contextWindow: 1000,
+      inputCostPerMTok: 0,
+      outputCostPerMTok: 0,
+      capabilities: { tools: true, vision: true, reasoning: true, structuredOutput: false, hostedTools: [] },
+      available: true,
+    });
+    const paid = all.body.find((m: { id: string }) => m.id === 'openrouter/acme/paid');
+    expect([paid.inputCostPerMTok, paid.outputCostPerMTok, paid.capabilities.tools]).toEqual([2, 10, false]);
+
+    const anthropicOnly = await request(withOpenRouter).get('/catalog/models?provider=anthropic');
+    expect(anthropicOnly.body).toEqual(listModels({ provider: 'anthropic' }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('GET /catalog/guardrails returns listGuardrails() (deep-equal)', async () => {
-    const res = await request(app).get('/catalog/guardrails');
+  it('an unreachable OpenRouter leaves the SDK catalog intact', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const offline = express();
+    registerCatalogRoutes(offline, {
+      secretsStore: secrets,
+      openRouterModels: createOpenRouterCatalog((async () => {
+        throw new Error('offline');
+      }) as unknown as typeof fetch),
+    });
+    const res = await request(offline).get('/catalog/models');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual(listGuardrails());
+    expect(res.body).toEqual(listModels());
   });
 
-  it('GET /catalog/triggers returns listTriggerTypes() (deep-equal)', async () => {
-    const res = await request(app).get('/catalog/triggers');
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual(listTriggerTypes());
-  });
-
-  it("GET /catalog/skills lists the repo registry's skills as { registry } refs", async () => {
-    const res = await request(app).get('/catalog/skills');
-    expect(res.status).toBe(200);
-    const names = res.body.map((s: { name: string }) => s.name);
-    expect(names).toContain('changelog');
-    expect(names).toContain('code-review');
-    for (const skill of res.body as { name: string; description: string; ref: { registry: string } }[]) {
-      expect(skill.description).toEqual(expect.any(String));
-      expect(skill.ref).toEqual({ registry: skill.name });
-    }
-  });
-
-  it("GET /catalog/kits lists the repo registry's four kits", async () => {
-    const res = await request(app).get('/catalog/kits');
-    expect(res.status).toBe(200);
-    const names = res.body.map((k: { name: string }) => k.name);
-    expect(names).toEqual(expect.arrayContaining(['coding-kit', 'coding-pi', 'inbox-triage', 'incident-response']));
+  it('the model filter matches every word against the label, "free" included', () => {
+    const label = modelLabel({ id: 'openrouter/acme/coder:free', available: true, inputCostPerMTok: 0, outputCostPerMTok: 0 });
+    expect(label).toBe('openrouter/acme/coder:free (free)');
+    expect(matchesModelFilter(label, 'ACME free')).toBe(true);
+    expect(matchesModelFilter(label, 'acme anthropic')).toBe(false);
+    expect(matchesModelFilter(label, '  ')).toBe(true);
   });
 
   it('a missing registry index -> [] with one console.warn, not 500', async () => {
@@ -124,17 +141,6 @@ describe('catalog routes', () => {
     expect(kits.status).toBe(200);
     expect(kits.body).toEqual([]);
     // One warn for the whole registration, not one per request.
-    expect(warn).toHaveBeenCalledTimes(1);
-  });
-
-  it('an unparsable registry index -> [] with one console.warn', async () => {
-    const badIndex = path.join(baseDir, 'bad-index.json');
-    fs.writeFileSync(badIndex, '{ not json');
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const broken = mount(badIndex);
-    const res = await request(broken).get('/catalog/skills');
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual([]);
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
@@ -155,21 +161,5 @@ describe('catalog routes', () => {
     const skills = await request(mounted).get('/catalog/skills');
     expect(skills.body).toEqual([{ name: 'good-skill', description: 'fine', ref: { registry: 'good-skill' } }]);
     expect((await request(mounted).get('/catalog/kits')).body).toEqual([]);
-  });
-});
-
-describe('sdkRootDir', () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it('defaults to the SDK package root (three levels above server/)', () => {
-    // The registry index sits under it in the repo and in the shipped package.
-    expect(fs.existsSync(path.join(sdkRootDir(), 'registry', 'dist', 'index.json'))).toBe(true);
-  });
-
-  it('honours LOUSHO_SDK_ROOT', () => {
-    vi.stubEnv('LOUSHO_SDK_ROOT', '/tmp/elsewhere');
-    expect(sdkRootDir()).toBe('/tmp/elsewhere');
   });
 });

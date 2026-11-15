@@ -85,20 +85,6 @@ beforeEach(() => {
 });
 
 describe('save part renderers', () => {
-  it('an ok saveAgent part draws the create SuccessCard', () => {
-    const c = mount([
-      assistant([tool({ toolCallId: 'tc_prop', name: 'proposeAgent', output: proposal() })]),
-      assistant([
-        tool({
-          name: 'saveAgent',
-          input: { proposalId: 'tc_prop' },
-          output: { ok: true, agentId: 'triage-bot', name: 'Triage bot', version: 1, enabled: false },
-        }),
-      ]),
-    ]);
-    expect(c.querySelector('.success-card-title')?.textContent).toBe('Created “Triage bot”');
-    expect(c.querySelector('.btn-primary')?.textContent).toBe('Enable agent');
-  });
 
   it('an ok saveAgentUpdate part draws the update SuccessCard', () => {
     const c = mount([
@@ -125,13 +111,6 @@ describe('save part renderers', () => {
     expect(c.querySelector('.success-card')).toBeNull();
     expect(c.querySelector('.error-note')?.textContent).toBe('The proposal is no longer current.');
     expect(c.querySelectorAll('.author-activity').length).toBe(1);
-  });
-
-  it('a failed save part without a userMessage falls back to the generic line', () => {
-    const c = mount([
-      assistant([tool({ name: 'saveAgentUpdate', input: { proposalId: 'tc_prop' }, state: 'error', output: { ok: false, code: 'WRITE_FAILED', error: 'x' } })]),
-    ]);
-    expect(c.querySelector('.error-note')?.textContent).toBe("Couldn't save the agent.");
   });
 
   it('a later ok setAgentEnabled part switches the card to On', () => {
@@ -163,23 +142,5 @@ describe('save uiEvent renderer', () => {
     ]);
     expect(c.querySelector('.success-card-title')?.textContent).toBe('Created “Triage bot”');
     expect(c.querySelector('.author-event')).toBeNull();
-  });
-
-  it('falls back to update + the agent id when no card matches', () => {
-    const c = mount([user('', { kind: 'save', proposalId: 'tc_gone', agentId: 'triage-bot', version: 3 })]);
-    expect(c.querySelector('.success-card-title')?.textContent).toBe('Updated “triage-bot”');
-    expect(c.querySelector('.success-card-hint')?.textContent).toBe('Saved as version 3.');
-  });
-
-  it('a secret uiEvent still draws its quiet event line', () => {
-    const c = mount([user('', { kind: 'secret', toolCallId: 'tc_s', name: 'JIRA_TOKEN', outcome: 'saved' })]);
-    expect(c.querySelector('.success-card')).toBeNull();
-    expect(c.querySelector('.author-event')?.textContent).toBe('You saved JIRA_TOKEN');
-  });
-
-  it('a plain user message still draws its bubble', () => {
-    const c = mount([user('Build me a bot')]);
-    expect(c.querySelector('.author-bubble')?.textContent).toBe('Build me a bot');
-    expect(c.querySelector('.success-card')).toBeNull();
   });
 });

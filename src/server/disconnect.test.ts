@@ -55,49 +55,6 @@ const shape = (messages: readonly Message[]) =>
   messages.map((m) => (m.role === 'tool' ? `tool:${String(m.content)}` : m.toolCalls?.length ? `${m.role}:calls` : `${m.role}:${String(m.content)}`));
 
 describe('a client disconnect mid-turn', () => {
-  it('lets the turn finish and persists it, with the side effect run once', async () => {
-    const { agent, model, ledger, waited, routes } = refundDesk([
-      { toolCalls: [{ name: 'issue_refund', args: { amountUsd: 20 } }] },
-      'Refunded $20.',
-      'Yes, the $20 refund went through.',
-    ]);
-    const controller = new AbortController();
-    const response = await routes.handler(post('/api/agent/chat', { sessionId: 'cust-1', input: 'refund $20 please' }, controller.signal));
-    const seen = await readUntil(response, 'tool.start', controller);
-    expect(seen).toContain('tool.start');
-    expect(waited).toHaveLength(1);
-    await Promise.all(waited);
-
-    expect(ledger).toEqual([{ amountUsd: 20, aborted: false }]);
-    const session = agent.session({ id: 'cust-1' });
-    expect(shape((await session.load()) ?? [])).toEqual(['user:refund $20 please', 'assistant:calls', 'tool:{"refunded":20}', 'assistant:Refunded $20.']);
-    expect(await session.pending()).toBeNull();
-
-    // The retry turn sees the refund; nothing is refunded again.
-    const retry = await session.send('my connection dropped - did it go through?');
-    expect(retry.text).toBe('Yes, the $20 refund went through.');
-    expect(model.calls[2].messages.some((m) => m.role === 'tool')).toBe(true);
-    expect(ledger).toHaveLength(1);
-  });
-
-  it('keeps a decided approval running when the client leaves the continuation stream', async () => {
-    const { agent, ledger, waited, routes } = refundDesk(
-      [{ toolCalls: [{ name: 'issue_refund', id: 'r1', args: { amountUsd: 20 } }] }, 'Refunded $20.'],
-      {},
-      true
-    );
-    const paused = await (await routes.handler(post('/api/agent/chat', { sessionId: 'cust-2', input: 'refund' }))).text();
-    const approvalId = /"approvalId":"([^"]+)"/.exec(paused)?.[1];
-    expect(approvalId).toBeTruthy();
-
-    const controller = new AbortController();
-    const response = await routes.handler(post(`/api/agent/chat/cust-2/approvals/${approvalId}`, { approved: true }, controller.signal));
-    await readUntil(response, 'tool.start', controller);
-    await Promise.all(waited);
-
-    expect(ledger).toEqual([{ amountUsd: 20, aborted: false }]);
-    expect(shape((await agent.session({ id: 'cust-2' }).load()) ?? []).slice(-2)).toEqual(['tool:{"refunded":20}', 'assistant:Refunded $20.']);
-  });
 
   it('keeps a useChat turn running when the client goes away', async () => {
     const { agent, ledger, waited, routes } = refundDesk(

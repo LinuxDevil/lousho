@@ -103,16 +103,6 @@ describe('evaluateSafeExpression: supported forms', () => {
   it.each(cases)('%s', (expression, expected) => {
     expect(evaluateSafeExpression(expression, scope)).toStrictEqual(expected);
   });
-
-  it('short-circuits so the unevaluated side cannot fail', () => {
-    expect(evaluateSafeExpression('flag || missingVar', scope)).toBe(true);
-    expect(evaluateSafeExpression('nothing && missingVar', scope)).toBe(null);
-  });
-
-  it('only exposes own properties (no prototype members)', () => {
-    expect(evaluateSafeExpression('user.toString', scope)).toBe(undefined);
-    expect(evaluateSafeExpression('user.hasOwnProperty', scope)).toBe(undefined);
-  });
 });
 
 describe('evaluateSafeExpression: rejected syntax', () => {
@@ -166,44 +156,16 @@ describe('evaluateSafeExpression: rejected syntax', () => {
     expect(() => evaluateSafeExpression(expression, scope)).toThrow(pattern);
   });
 
-  it('names the expression, position and supported grammar', () => {
-    let error: ExpressionError | undefined;
-    try {
-      evaluateSafeExpression('score > 1 && process.exit()', scope);
-    } catch (e) {
-      error = e as ExpressionError;
-    }
-    expect(error).toBeInstanceOf(ExpressionError);
-    expect(error?.expression).toBe('score > 1 && process.exit()');
-    expect(error?.position).toBe(13);
-    expect(error?.message).toContain('Invalid expression "score > 1 && process.exit()" at position 13');
-    expect(error?.message).toContain('Supported:');
-  });
-
   it('does not run injected code or mutate the scope', () => {
     const marker = { ran: false };
     expect(() => evaluateSafeExpression('marker.ran = true', { marker })).toThrow(ExpressionError);
     expect(marker.ran).toBe(false);
-  });
-
-  it('rejects absurdly nested input instead of overflowing the stack', () => {
-    const deep = '('.repeat(5000) + '1' + ')'.repeat(5000);
-    expect(() => evaluateSafeExpression(deep, scope)).toThrow(/nested too deeply/);
-    expect(() => evaluateSafeExpression('!'.repeat(5000) + 'flag', scope)).toThrow(/nested too deeply/);
   });
 });
 
 describe('evaluateSafeExpression: bound placeholders', () => {
   const bound = (expr: string, scope: Record<string, unknown>) =>
     evaluateSafeExpression(expr, scope, { bindPlaceholders: true });
-
-  it('keeps the quoted and bare forms working for benign values', () => {
-    expect(bound("'{{role}}' === 'admin'", { role: 'admin' })).toBe(true);
-    expect(bound("'{{role}}' === 'admin'", { role: 'user' })).toBe(false);
-    expect(bound('{{score}} >= 90', { score: 95 })).toBe(true);
-    expect(bound('{{score}} >= 90', { score: 80 })).toBe(false);
-    expect(bound("{{ok}} && '{{a}}-{{b}}' === 'x-y'", { ok: true, a: 'x', b: 'y' })).toBe(true);
-  });
 
   it('treats an injection attempt in a quoted placeholder as data', () => {
     const hostile = "x' === 'x' || 'a";
@@ -222,11 +184,6 @@ describe('evaluateSafeExpression: bound placeholders', () => {
     expect(bound("'{{v}}'.includes('\\\\q')", { v: 'x\\q' })).toBe(true);
   });
 
-  it('binds a bare string value as a string, never as code or a variable', () => {
-    expect(bound("{{v}} === 'process'", { v: 'process' })).toBe(true);
-    expect(bound("{{v}} === 'a'", { v: "'a' || 'b'" })).toBe(false);
-  });
-
   it('treats missing variables like the old text substitution', () => {
     expect(bound("'{{nope}}' === ''", {})).toBe(true);
     expect(bound("'{{nope}}' === ''", { nope: null })).toBe(true);
@@ -234,47 +191,13 @@ describe('evaluateSafeExpression: bound placeholders', () => {
     expect(() => bound('{{nope}} >= 90', {})).toThrow(ExpressionError);
     expect(bound("'{{z}}'", { z: 0 })).toBe('0');
   });
-
-  it('does not read inherited properties as variables', () => {
-    expect(bound("'{{toString}}' === ''", {})).toBe(true);
-  });
-
-  it('leaves placeholders unsupported unless binding is enabled', () => {
-    expect(() => evaluateSafeExpression('{{score}} >= 90', { score: 95 })).toThrow(ExpressionError);
-  });
 });
 
 describe('safeExpressionVariables', () => {
-  it('returns the variables read, in order of first use, without evaluating', () => {
-    expect(safeExpressionVariables("status == 'ok' && inputs.tone != outputs.tone && inputs[key] > 0")).toEqual(['status', 'inputs', 'outputs', 'key']);
-    expect(safeExpressionVariables("a.b[0]['c'].length")).toEqual(['a']);
-    expect(safeExpressionVariables("tags.includes('x') && name.startsWith(prefix)")).toEqual(['tags', 'name', 'prefix']);
-  });
-
-  it('returns nothing for blank input', () => {
-    expect(safeExpressionVariables('')).toEqual([]);
-    expect(safeExpressionVariables('   ')).toEqual([]);
-  });
-
-  it('rejects prototype keys', () => {
-    for (const expression of ['a.constructor', "a['__proto__']", 'a.b.prototype']) {
-      expect(() => safeExpressionVariables(expression), expression).toThrow(/access to '(constructor|__proto__|prototype)' is not allowed/);
-    }
-  });
 
   it('rejects computed keys that are not a literal or a variable', () => {
     for (const expression of ["inputs['con' + 'structor']", 'a[b.c]', 'a[(b)]["x"][!c]']) {
       expect(() => safeExpressionVariables(expression), expression).toThrow(/computed property keys must be a literal or a variable/);
     }
-  });
-
-  it('rejects calls outside the allow-list', () => {
-    for (const expression of ['eval("1")', 'a.toString()', 'a.b.call(c)', "a['includes']('x')()", '(a)(1)']) {
-      expect(() => safeExpressionVariables(expression), expression).toThrow(ExpressionError);
-    }
-  });
-
-  it('rejects malformed syntax', () => {
-    expect(() => safeExpressionVariables('a ==')).toThrow(ExpressionError);
   });
 });

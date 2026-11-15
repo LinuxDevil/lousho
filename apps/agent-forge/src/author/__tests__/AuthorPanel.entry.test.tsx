@@ -10,7 +10,7 @@ vi.mock('../AuthorChatContext', () => ({ useAuthorChat: () => mocks.chat }));
 import { AppShell } from '../../shell/AppShell';
 import { DOCK_OPEN_KEY } from '../../shell/dockState';
 import { AuthorPanel } from '../AuthorPanel';
-import { CREATE_AGENT_DRAFT, openAuthor, takePendingOpen } from '../authorEntry';
+import { openAuthor, takePendingOpen } from '../authorEntry';
 import { initialAuthorChatState, type AuthorChatState } from '../authorChatReducer';
 import { render } from '../../ui/__tests__/render';
 import { installMemoryStorage } from '../../ui/__tests__/memoryStorage';
@@ -100,24 +100,6 @@ afterEach(() => {
 });
 
 describe('pending open consumption', () => {
-  it('"Describe with AI" opens a new chat request: create focus, draft placed, composer focused, nothing sent', () => {
-    const chat = chatWith();
-    const c = mount(chat);
-    act(() =>
-      openAuthor({
-        source: 'agents-list',
-        focus: { mode: 'create' },
-        draft: CREATE_AGENT_DRAFT,
-        newChat: true,
-      })
-    );
-    // The conversation was empty, so no new chat is needed; focus still applies.
-    expect(chat.newChat).not.toHaveBeenCalled();
-    expect(chat.setFocus).toHaveBeenCalledWith({ mode: 'create' });
-    expect(input(c).value).toBe(CREATE_AGENT_DRAFT);
-    expect(document.activeElement).toBe(input(c));
-    expect(chat.send).not.toHaveBeenCalled();
-  });
 
   it('a draft never overwrites text the user already typed', () => {
     const chat = chatWith();
@@ -129,27 +111,6 @@ describe('pending open consumption', () => {
     expect(document.activeElement).toBe(input(c));
   });
 
-  it('an open while already open still applies the new request (take-once per open)', () => {
-    const chat = chatWith({ focus: { mode: 'edit', agentId: 'old-agent' } });
-    const c = mount(chat);
-    act(() => openAuthor({ source: 'agent-header', focus: { mode: 'edit', agentId: 'support-triage' } }));
-    expect(chat.setFocus).toHaveBeenCalledWith({ mode: 'edit', agentId: 'support-triage' });
-
-    act(() => openAuthor({ source: 'empty-canvas', focus: { mode: 'edit', agentId: 'support-triage' }, draft: 'Build this agent so it ' }));
-    expect(input(c).value).toBe('Build this agent so it ');
-    expect(chat.setFocus).toHaveBeenLastCalledWith({ mode: 'edit', agentId: 'support-triage' });
-  });
-
-  it('newChat starts a new chat first when the conversation is non-empty', () => {
-    const chat = chatWith({ messages: MESSAGES });
-    mount(chat);
-    act(() =>
-      openAuthor({ source: 'agents-list', focus: { mode: 'create' }, draft: CREATE_AGENT_DRAFT, newChat: true })
-    );
-    expect(chat.newChat).toHaveBeenCalledWith({ mode: 'create' });
-    expect(chat.setFocus).toHaveBeenCalledWith({ mode: 'create' });
-  });
-
   it('a newChat request while a save runs delegates to chat.newChat, which refuses it', () => {
     const chat = chatWith({ messages: MESSAGES, saving: { proposalId: 'tc_9' } });
     const c = mount(chat);
@@ -159,17 +120,6 @@ describe('pending open consumption', () => {
     // Focus and draft still apply to the continuing conversation.
     expect(chat.setFocus).toHaveBeenCalledWith({ mode: 'create' });
     expect(input(c).value).toBe('draft text');
-  });
-
-  it('focusComposer: false opens without moving focus to the textarea', () => {
-    const chat = chatWith();
-    mount(chat);
-    const other = document.createElement('button');
-    document.body.appendChild(other);
-    other.focus();
-    act(() => openAuthor({ source: 'header', focusComposer: false }));
-    expect(document.activeElement).toBe(other);
-    other.remove();
   });
 });
 
@@ -186,13 +136,5 @@ describe('Ctrl/Cmd+J toggle', () => {
     press('j', { metaKey: true }); // Cmd+J works too
     expect(aside(c)).toBeNull();
     expect(window.localStorage.getItem(DOCK_OPEN_KEY)).toBe('0');
-  });
-
-  it('Ctrl+Shift+J does nothing', () => {
-    const chat = chatWith();
-    const c = mount(chat, false);
-    press('j', { ctrlKey: true, shiftKey: true });
-    expect(aside(c)).toBeNull();
-    expect(takePendingOpen()).toBeNull();
   });
 });

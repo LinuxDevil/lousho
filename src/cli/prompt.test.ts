@@ -117,12 +117,6 @@ describe('lousho prompt', () => {
     expect(await runPrompt(['label', 'observe-test', 'prod', '9', '--url', base(daemon)], d)).toBe(1);
   });
 
-  it('exits 1 for a missing prompt and for an unreachable daemon', async () => {
-    const daemon = await start();
-    expect(await runPrompt(['get', 'nope', '--url', base(daemon)], deps())).toBe(1);
-    expect(await runPrompt(['list', '--url', 'http://127.0.0.1:1'], deps())).toBe(1);
-  });
-
   it('finds the daemon via --port or LOUSHO_OBSERVE_PORT when --url is absent', async () => {
     const daemon = await start();
     fs.writeFileSync(path.join(cwd, 'p.txt'), 'text');

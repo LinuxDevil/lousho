@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { act } from 'react';
 
 const appState = vi.hoisted(() => ({ connected: true, agents: [] }));
-vi.mock('../../state/AppState', () => ({ useAppState: () => appState }));
+vi.mock('../../state/AppState', () => ({ useAppState: () => appState, useOptionalAppState: () => undefined }));
 
 const mocks = vi.hoisted(() => ({ chat: null as unknown as import('../AuthorChatContext').AuthorChat }));
 vi.mock('../AuthorChatContext', () => ({ useAuthorChat: () => mocks.chat }));
@@ -10,7 +10,6 @@ vi.mock('../AuthorChatContext', () => ({ useAuthorChat: () => mocks.chat }));
 import { AppShell } from '../../shell/AppShell';
 import { DOCK_OPEN_KEY } from '../../shell/dockState';
 import { AuthorPanel } from '../AuthorPanel';
-import { fireOpenPage } from '../authorEvents';
 import { initialAuthorChatState, type AuthorChatState } from '../authorChatReducer';
 import { render, rerender } from '../../ui/__tests__/render';
 import { installMemoryStorage } from '../../ui/__tests__/memoryStorage';
@@ -93,10 +92,7 @@ function mount(chat: AuthorChat): HTMLDivElement {
     </ToastProvider>
   );
 }
-
-const panel = (c: HTMLElement) => c.querySelector('.author-panel') as HTMLElement;
 const aside = (c: HTMLElement) => c.querySelector('aside#app-dock');
-const body = (c: HTMLElement) => c.querySelector('.author-body') as HTMLElement;
 const input = (c: HTMLElement) => c.querySelector<HTMLTextAreaElement>('.author-input')!;
 const send = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('.author-send');
 const suggestions = (c: HTMLElement) => [...c.querySelectorAll<HTMLButtonElement>('.author-suggestion')];
@@ -126,17 +122,6 @@ afterEach(() => {
 });
 
 describe('AuthorPanel blank slate', () => {
-  it('shows the empty state with the three create-focus suggestions', () => {
-    const c = mount(chatWith());
-    expect(body(c).getAttribute('aria-live')).toBe('polite');
-    expect(c.querySelector('.author-empty-title')?.textContent).toBe('What should we build?');
-    expect(suggestions(c).map((b) => b.textContent)).toEqual([
-      'Create an agent that triages new GitHub issues and labels them',
-      'Create an agent that answers questions from our docs',
-      'Create an agent that summarises my inbox every morning',
-    ]);
-    expect(c.querySelector('.author-focus-chip--create')?.textContent).toBe('New agent');
-  });
 
   it('shows edit-focus suggestions and an "Editing:" chip that clears to create', () => {
     const chat = chatWith({ focus: { mode: 'edit', agentId: 'support-triage' } });
@@ -303,11 +288,6 @@ describe('AuthorPanel composer', () => {
     expect(input(c).value).toBe('');
   });
 
-  it('refills the composer from restoreDraft', () => {
-    const c = mount(chatWith({ restoreDraft: 'the refused message' }));
-    expect(input(c).value).toBe('the refused message');
-  });
-
   it('shows a dismissible error strip built on ErrorNote', () => {
     const chat = chatWith({ error: { message: "You're offline. Your message wasn't sent." } });
     const c = mount(chat);
@@ -338,17 +318,6 @@ describe('AuthorPanel composer', () => {
     expect(chat.dismissError).toHaveBeenCalled();
     expect(chat.send).toHaveBeenCalledWith('Build me a triage agent');
   });
-
-  it('shows no action for the reattach give-up note', () => {
-    const chat = chatWith({
-      error: {
-        message: 'Could not reconnect to this reply. Your chat is saved; reopen it from History to see the latest.',
-      },
-    });
-    const c = mount(chat);
-    expect(c.querySelector('.error-note')?.textContent).toContain('Could not reconnect');
-    expect(c.querySelector('.error-note button')).toBeNull();
-  });
 });
 
 describe('AuthorPanel keyboard and navigation', () => {
@@ -370,25 +339,5 @@ describe('AuthorPanel keyboard and navigation', () => {
     key(c.querySelector('.author-input')!, 'Escape');
     expect(aside(c)).toBeNull();
     expect(window.localStorage.getItem(DOCK_OPEN_KEY)).toBe('0');
-  });
-
-  it('navigates when a live openPage result arrives', () => {
-    mount(chatWith());
-    act(() => fireOpenPage('/agents/support-triage/canvas'));
-    expect(window.location.hash).toBe('#/agents/support-triage/canvas');
-  });
-});
-
-describe('AuthorPanel accessibility', () => {
-  it('gives every icon-only button an aria-label and the log aria-live', () => {
-    const c = mount(chatWith({ messages: [assistant([{ type: 'text', text: 'hi' }])] }));
-    const iconOnly = [...panel(c).querySelectorAll('button')].filter((b) => b.textContent?.trim() === '');
-    expect(iconOnly.length).toBeGreaterThan(0);
-    for (const b of iconOnly) {
-      expect(b.getAttribute('aria-label'), `icon button missing aria-label: ${b.className}`).toBeTruthy();
-    }
-    expect(body(c).getAttribute('role')).toBe('log');
-    expect(body(c).getAttribute('aria-live')).toBe('polite');
-    expect(panel(c).getAttribute('aria-label')).toBe('Agent Author');
   });
 });

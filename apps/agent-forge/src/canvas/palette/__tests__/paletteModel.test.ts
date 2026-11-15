@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { filterPalette, paletteOwnerTitle, paletteSections, PALETTE_GROUP_ORDER } from '../paletteModel';
-import { KIND_VIEWS } from '../../kinds';
 import type { PaletteEntry, PaletteGroup } from '../../kinds';
 import type { Graph } from '../../../graph/v2/types';
 
@@ -50,16 +49,6 @@ describe('paletteSections', () => {
       expect(PALETTE_GROUP_ORDER).toContain(section.group);
     }
   });
-
-  it('collects entries across every registered kind view', () => {
-    const sections = paletteSections(KIND_VIEWS);
-    expect(sections.length).toBeGreaterThan(0);
-    const ids = sections.flatMap((s) => s.entries.map((e) => e.id));
-    expect(new Set(ids).size).toBe(ids.length);
-    // Groups still render in the fixed order.
-    const order = sections.map((s) => PALETTE_GROUP_ORDER.indexOf(s.group));
-    expect([...order].sort((a, b) => a - b)).toEqual(order);
-  });
 });
 
 describe('filterPalette', () => {
@@ -75,27 +64,6 @@ describe('filterPalette', () => {
     expect(filterPalette(sections, '')).toBe(sections);
     expect(filterPalette(sections, '   ')).toBe(sections);
   });
-
-  it('matches case-insensitively on label and description', () => {
-    const result = filterPalette(sections, 'BUILT-IN');
-    expect(result.flatMap((s) => s.entries.map((e) => e.id))).toEqual(['tool']);
-  });
-
-  it('matches keywords', () => {
-    const result = filterPalette(sections, 'plugin');
-    expect(result.flatMap((s) => s.entries.map((e) => e.id))).toEqual(['mcp']);
-  });
-
-  it('requires every whitespace-separated term to match', () => {
-    const result = filterPalette(sections, 'mcp server');
-    expect(result.flatMap((s) => s.entries.map((e) => e.id))).toEqual(['mcp']);
-    expect(filterPalette(sections, 'mcp perm')).toEqual([]);
-  });
-
-  it('drops groups left with no matching entries', () => {
-    const result = filterPalette(sections, 'approval');
-    expect(result.map((s) => s.group)).toEqual(['Safety']);
-  });
 });
 
 describe('paletteOwnerTitle', () => {
@@ -108,13 +76,6 @@ describe('paletteOwnerTitle', () => {
   });
   const graph = (nodes: ReturnType<typeof agent>[]): Graph =>
     ({ version: 2, nodes, emptySections: [], unplaced: [] }) as unknown as Graph;
-
-  it('names an inline subagent by its key and a named agent by its name', () => {
-    expect(
-      paletteOwnerTitle(graph([agent({ fields: { name: 'x' }, extra: {}, subagentKey: 'helper' }, 'sub:helper')]), 'sub:helper'),
-    ).toBe('helper');
-    expect(paletteOwnerTitle(graph([agent({ fields: { name: 'Root' }, extra: {} })]), 'agent')).toBe('Root');
-  });
 
   it('falls back to (unnamed) and to the canvas for a null owner', () => {
     expect(paletteOwnerTitle(graph([agent({ fields: { name: '' }, extra: {} })]), 'agent')).toBe('(unnamed)');

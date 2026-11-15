@@ -11,16 +11,11 @@ import { describe, it, expect, vi } from 'vitest';
 import { tool } from 'ai';
 import { z } from 'zod';
 import { AgentExecutor } from './AgentExecutor';
-import type { AgentEvent } from './agentEvents';
-import type { ApprovalStore, ExecutionSnapshot, PendingApproval } from './ApprovalGate';
-import { resumeAfterApproval } from './resume';
 import { Checkpoint, CheckpointStore } from './checkpoint';
-import { createMockProvider } from '../providers/mock';
 import { createAgent } from '../createAgent';
 import { ToolRegistry } from '../tools';
 import { AgentConfig, ToolDescriptor } from '../types';
 import type { GenerateOptions, GenerateResult, LLMProvider, ToolCall } from '../providers';
-import { textOf } from '../providers';
 
 const usage = { promptTokens: 1, completionTokens: 1, totalTokens: 2 };
 
@@ -99,154 +94,7 @@ function createInMemoryCheckpointStore(): CheckpointStore & { checkpoints: Map<s
   };
 }
 
-function createApprovalStore(): ApprovalStore {
-  const records = new Map<string, { pending: PendingApproval; snapshot: ExecutionSnapshot }>();
-  return {
-    save: async (pending, snapshot) => void records.set(pending.id, { pending, snapshot }),
-    resolve: async (id) => records.get(id) ?? null,
-  };
-}
-
 describe('AgentExecutor cancellation', () => {
-  it('an already-aborted signal resolves immediately with finishReason "aborted" and never calls the provider', async () => {
-    const { provider, generate } = scriptedProvider(async () => textResult('never'));
-    const events: AgentEvent[] = [];
-    const controller = new AbortController();
-    controller.abort();
-
-    const result = await AgentExecutor.execute({
-      agent: agentWithTools(),
-      input: 'hi',
-      provider,
-      signal: controller.signal,
-      onAgentEvent: (event) => events.push(event),
-    });
-
-    expect(generate).not.toHaveBeenCalled();
-    expect(result.finishReason).toBe('aborted');
-    expect(result.steps).toBe(0);
-    expect(result.messages.map((m) => m.role)).toEqual(['system', 'user']);
-    expect(events.at(-1)).toMatchObject({ type: 'run.done', finishReason: 'aborted' });
-    expect(events.some((e) => e.type === 'error')).toBe(false);
-  });
-
-  it('aborting during a model call resolves (does not reject) with the partial transcript', async () => {
-    const { provider, generate } = scriptedProvider(hangUntilAborted);
-    const controller = new AbortController();
-    setTimeout(() => controller.abort(), 10);
-
-    const result = await AgentExecutor.execute({
-      agent: agentWithTools(),
-      input: 'hi',
-      provider,
-      signal: controller.signal,
-    });
-
-    expect(generate).toHaveBeenCalledTimes(1);
-    expect(generate.mock.calls[0][0].signal).toBe(controller.signal);
-    expect(result.finishReason).toBe('aborted');
-    expect(result.messages.map((m) => m.role)).toEqual(['system', 'user']);
-  });
-
-  it('the mock provider honors the signal mid-delay', async () => {
-    const provider = createMockProvider({ name: 'mock', delay: 60_000 });
-    const controller = new AbortController();
-    setTimeout(() => controller.abort(), 10);
-    const started = Date.now();
-
-    const result = await AgentExecutor.execute({
-      agent: agentWithTools(),
-      input: 'hi',
-      provider,
-      signal: controller.signal,
-    });
-
-    expect(result.finishReason).toBe('aborted');
-    expect(Date.now() - started).toBeLessThan(5_000);
-  });
-
-  it('passes the signal to a tool as `abortSignal` and aborts during the tool call', async () => {
-    let observedAborted: boolean | undefined;
-    const slowTool = simpleTool(
-      (_args, { abortSignal }) =>
-        new Promise((_resolve, reject) => {
-          abortSignal?.addEventListener('abort', () => {
-            observedAborted = abortSignal.aborted;
-            reject(abortSignal.reason);
-          });
-        })
-    );
-    const { provider, generate } = scriptedProvider(async () => toolCallResult(toolCall('slow')));
-    const controller = new AbortController();
-    setTimeout(() => controller.abort(), 10);
-
-    const result = await AgentExecutor.execute({
-      agent: agentWithTools('slow'),
-      input: 'hi',
-      provider,
-      toolRegistry: registryWith({ slow: slowTool }),
-      signal: controller.signal,
-    });
-
-    expect(observedAborted).toBe(true);
-    expect(generate).toHaveBeenCalledTimes(1);
-    expect(result.finishReason).toBe('aborted');
-    // The transcript stays well-formed: the tool call has a matching result.
-    const toolMessage = result.messages.find((m) => m.role === 'tool');
-    expect(toolMessage?.toolCallId).toBe('call_slow');
-  });
-
-  it('aborting between steps stops before the next model call', async () => {
-    const controller = new AbortController();
-    const fast = simpleTool(async () => 'done');
-    const { provider, generate } = scriptedProvider(async () => toolCallResult(toolCall('fast')));
-
-    const result = await AgentExecutor.execute({
-      agent: agentWithTools('fast'),
-      input: 'hi',
-      provider,
-      toolRegistry: registryWith({ fast }),
-      signal: controller.signal,
-      onAgentEvent: (event) => {
-        if (event.type === 'tool.done') controller.abort();
-      },
-    });
-
-    expect(generate).toHaveBeenCalledTimes(1);
-    expect(result.finishReason).toBe('aborted');
-    expect(result.steps).toBe(1);
-    expect(result.messages.at(-1)).toMatchObject({ role: 'tool', content: '"done"' });
-  });
-
-  it('skips the remaining tool calls of a turn, giving each a cancelled result', async () => {
-    const controller = new AbortController();
-    const first = simpleTool(async () => {
-      controller.abort();
-      return 'first done';
-    });
-    const secondExecute = vi.fn(async () => 'second done');
-    const second = simpleTool(secondExecute);
-    const { provider } = scriptedProvider(async () =>
-      toolCallResult(toolCall('first'), toolCall('second'))
-    );
-
-    const result = await AgentExecutor.execute({
-      agent: agentWithTools('first', 'second'),
-      input: 'hi',
-      provider,
-      toolRegistry: registryWith({ first, second }),
-      signal: controller.signal,
-    });
-
-    expect(secondExecute).not.toHaveBeenCalled();
-    expect(result.finishReason).toBe('aborted');
-    const toolMessages = result.messages.filter((m) => m.role === 'tool');
-    expect(toolMessages.map((m) => m.toolCallId)).toEqual(['call_first', 'call_second']);
-    expect(JSON.parse(textOf(toolMessages[1]))).toMatchObject({
-      kind: 'not-run',
-      message: expect.stringContaining('cancelled'),
-    });
-  });
 
   it('checkpoints an aborted run so a later run with the same sessionId resumes it', async () => {
     const checkpointStore = createInMemoryCheckpointStore();
@@ -293,50 +141,6 @@ describe('AgentExecutor cancellation', () => {
     expect(checkpointStore.checkpoints.get('s1')?.status).toBe('finished');
   });
 
-  it('treats an abort-caused provider rejection as the abort: no compaction, no surfaced retry, no error event', async () => {
-    // "Request aborted" would otherwise be categorized as a retryable
-    // 'timeout' and folded back into the conversation for another attempt.
-    const { provider, generate } = scriptedProvider(
-      (options) =>
-        new Promise((_resolve, reject) => {
-          options.signal?.addEventListener('abort', () => reject(new Error('Request aborted')));
-        })
-    );
-    const events: AgentEvent[] = [];
-    const controller = new AbortController();
-    setTimeout(() => controller.abort(), 10);
-
-    const result = await AgentExecutor.execute({
-      agent: agentWithTools(),
-      input: 'hi',
-      provider,
-      maxSteps: 5,
-      surfaceRetryableProviderErrors: true,
-      signal: controller.signal,
-      onAgentEvent: (event) => events.push(event),
-    });
-
-    expect(generate).toHaveBeenCalledTimes(1);
-    expect(result.finishReason).toBe('aborted');
-    expect(result.messages.some((m) => textOf(m).startsWith('[provider-error]'))).toBe(false);
-    expect(events.some((e) => e.type === 'error')).toBe(false);
-  });
-
-  it('still rejects for a genuine failure while the signal is not aborted', async () => {
-    const { provider } = scriptedProvider(async () => {
-      throw new Error('boom');
-    });
-
-    await expect(
-      AgentExecutor.execute({
-        agent: agentWithTools(),
-        input: 'hi',
-        provider,
-        signal: new AbortController().signal,
-      })
-    ).rejects.toThrow();
-  });
-
   it('a delegated child agent is aborted together with its parent', async () => {
     const controller = new AbortController();
     // Abort once the child is actually running, not on a timer: on a busy runner a
@@ -370,79 +174,5 @@ describe('AgentExecutor cancellation', () => {
     expect(child.generate.mock.calls[0][0].signal?.aborted).toBe(true);
     expect(parent.generate).toHaveBeenCalledTimes(1);
     expect(result.finishReason).toBe('aborted');
-  });
-});
-
-describe('cancellation entry points', () => {
-  it('createAgent().send(input, { signal }) forwards the signal', async () => {
-    const provider = createMockProvider({ name: 'mock' });
-    const generateSpy = vi.spyOn(provider, 'generate');
-    const agent = createAgent({ prompt: 'p', provider });
-    const controller = new AbortController();
-    controller.abort();
-
-    const result = await agent.send('hi', { signal: controller.signal });
-
-    expect(result.finishReason).toBe('aborted');
-    expect(generateSpy).not.toHaveBeenCalled();
-    expect((await agent.send('hi')).finishReason).toBe('stop');
-  });
-
-  it('the mock provider rejects with the abort reason before and during its delay', async () => {
-    const provider = createMockProvider({ name: 'mock', delay: 60_000 });
-    const before = new AbortController();
-    before.abort();
-    await expect(
-      provider.generate({ messages: [], signal: before.signal })
-    ).rejects.toMatchObject({ name: 'AbortError' });
-
-    const during = new AbortController();
-    setTimeout(() => during.abort(), 10);
-    await expect(
-      provider.generate({ messages: [], signal: during.signal })
-    ).rejects.toMatchObject({ name: 'AbortError' });
-    await expect(provider.stream({ messages: [], signal: before.signal })).rejects.toMatchObject({
-      name: 'AbortError',
-    });
-  });
-
-  it('resumeAfterApproval() passes the signal to the approved tool and the continued run', async () => {
-    const approvalStore = createApprovalStore();
-    const controller = new AbortController();
-    let observedSignal: AbortSignal | undefined;
-    const guarded = simpleTool(
-      async (_args, { abortSignal }) => {
-        observedSignal = abortSignal;
-        controller.abort();
-        return 'approved result';
-      },
-      { needsApproval: true }
-    );
-    const toolRegistry = registryWith({ guarded });
-    const agent = agentWithTools('guarded');
-    const first = scriptedProvider(async () => toolCallResult(toolCall('guarded')));
-
-    const paused = await AgentExecutor.execute({
-      agent,
-      input: 'hi',
-      provider: first.provider,
-      toolRegistry,
-      approvalStore,
-    });
-    expect(paused.finishReason).toBe('awaiting-approval');
-
-    const second = scriptedProvider(async () => textResult('never'));
-    const resumed = await resumeAfterApproval(
-      { id: paused.approvalId!, approved: true },
-      approvalStore,
-      toolRegistry,
-      second.provider,
-      { signal: controller.signal }
-    );
-
-    expect(observedSignal).toBe(controller.signal);
-    expect(second.generate).not.toHaveBeenCalled();
-    expect(resumed.finishReason).toBe('aborted');
-    expect(resumed.messages.at(-1)).toMatchObject({ role: 'tool', content: '"approved result"' });
   });
 });

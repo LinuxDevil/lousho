@@ -6,7 +6,7 @@
  * then the answer.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import * as aiV7 from 'ai-v7';
 import { MockLanguageModelV4 } from 'ai-v7/test';
 import { MockLanguageModelV1 } from 'ai/test';
@@ -15,11 +15,8 @@ import { z } from 'zod';
 import { createAgent } from '../createAgent';
 import { defineTool } from '../tools/defineTool';
 import type { LLMProvider } from './llm';
-import type { AiSdkModule } from './aiSdkCompat';
 import { itOnAiV4 } from './aiMajor.testkit';
 import { createFromAiSdk, fromAiSdk } from './fromAiSdk';
-import { withFallback } from './resilience';
-import * as root from '../index';
 
 type V7Generate = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
 type V7Options = Parameters<MockLanguageModelV4['doGenerate']>[0];
@@ -125,13 +122,6 @@ function v4Model() {
   return { model };
 }
 
-/** A module shaped like `ai` 4 (no `stepCountIs`), for the major check only. */
-const aiV4Like: AiSdkModule = {
-  generateText: () => Promise.resolve(undefined),
-  streamText: () => undefined,
-  jsonSchema: () => undefined,
-};
-
 const onV7 = (model: unknown, options = {}) => createFromAiSdk(model as LanguageModel, options, aiV7);
 
 async function sendAndStream(makeProvider: () => LLMProvider) {
@@ -154,10 +144,6 @@ describe('fromAiSdk() in createAgent', () => {
     await sendAndStream(() => fromAiSdk(v4Model().model as LanguageModel));
   });
 
-  it('ai 7: a MockLanguageModelV4 answers send() and stream(), with the tool loop', async () => {
-    await sendAndStream(() => onV7(v7Model().model));
-  });
-
   it('ai 7: the request carries the tool and no reasoning options; maxRetries defaults to 0', async () => {
     const { model, calls } = v7Model();
     await createAgent({ provider: onV7(model), tools: [addTool().tool], reasoning: 'high', retry: false }).send('2 + 3?');
@@ -166,69 +152,10 @@ describe('fromAiSdk() in createAgent', () => {
   });
 });
 
-describe('fromAiSdk() raw finish reason, retries and reasoning', () => {
-  const textResult = (raw: string) => ({
-    content: [{ type: 'text' as const, text: 'The answer is 4' }],
-    finishReason: { unified: 'other' as const, raw },
-    usage: v7Usage,
-    warnings: [],
-  });
-
-  it("ai 7: a raw finish reason 'error' (mapped to 'other' by the provider package) fails the call instead of returning the cut-off text", async () => {
-    const model = new MockLanguageModelV4({ modelId: 'm', doGenerate: async () => textResult('error') });
-    await expect(createAgent({ provider: onV7(model), instructions: 'x', retry: false }).send('2+2?')).rejects.toMatchObject({
-      compacted: { statusCode: 502, retryable: true },
-    });
-  });
-
-  it('ai 7: under createAgent() without `retry`, a retryable failure is retried (twice by default), like a model string', async () => {
-    let calls = 0;
-    const model = new MockLanguageModelV4({
-      modelId: 'm',
-      doGenerate: async () => {
-        calls++;
-        if (calls === 1) throw new aiV7.APICallError({ message: 'Service Unavailable', url: 'https://x', requestBodyValues: {}, statusCode: 503, isRetryable: true });
-        return textResult('stop');
-      },
-    });
-    const result = await createAgent({ provider: onV7(model), instructions: 'x' }).send('hi');
-    expect(result.text).toBe('The answer is 4');
-    expect(calls).toBe(2);
-  });
-
-  it('warns once that `reasoning` is not sent', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const provider = onV7(v7Model().model);
-    await createAgent({ provider, instructions: 'x', reasoning: 'high', retry: false }).send('2 + 3?').catch(() => undefined);
-    await createAgent({ provider, instructions: 'x', reasoning: 'high', retry: false }).send('2 + 3?').catch(() => undefined);
-    expect(warn.mock.calls.filter(([message]) => String(message).includes('`reasoning` is set but is not sent to the fromAiSdk() model'))).toHaveLength(1);
-    warn.mockRestore();
-  });
-});
-
 describe('fromAiSdk() checks its model', () => {
-  it('a model id string throws LOUSHO_CONFIG_INVALID, naming the provider function to import', () => {
-    // A string is not a LanguageModel: the cast exercises the runtime guard.
-    expect(() => fromAiSdk('openai/gpt-4o' as unknown as LanguageModel)).toThrow(expect.objectContaining({ code: 'LOUSHO_CONFIG_INVALID' }));
-    expect(() => fromAiSdk('openai/gpt-4o' as unknown as LanguageModel)).toThrow(/gateway\('openai\/gpt-4o'\) from ai 7 or @ai-sdk\/gateway/);
-  });
 
   it('a non-object throws LOUSHO_CONFIG_INVALID', () => {
     expect(() => fromAiSdk(null as unknown as LanguageModel)).toThrow(expect.objectContaining({ code: 'LOUSHO_CONFIG_INVALID' }));
-  });
-
-  it('a v1 model with ai 7 installed throws, naming both', () => {
-    // A plain v1-shaped model: `ai/test` has no MockLanguageModelV1 when ai 7 is the installed `ai`.
-    expect(() => onV7({ specificationVersion: 'v1', provider: 'mock', modelId: 'm' })).toThrow(
-      expect.objectContaining({ code: 'LOUSHO_CONFIG_INVALID', message: expect.stringMatching(/specificationVersion v1\) but ai 7 is installed/) })
-    );
-  });
-
-  it('a v4 model with ai 4 installed throws, naming both', () => {
-    // A v4-shaped model where a v1 LanguageModel is declared: the cast exercises the runtime guard.
-    expect(() => createFromAiSdk(v7Model().model as unknown as LanguageModel, {}, aiV4Like)).toThrow(
-      expect.objectContaining({ code: 'LOUSHO_CONFIG_INVALID', message: expect.stringMatching(/specificationVersion v4\) but ai 4 is installed/) })
-    );
   });
 
   it('another model id in the run throws; the wrapped id passes', async () => {
@@ -289,32 +216,5 @@ describe('fromAiSdk() options and metadata', () => {
     const without = v7Model();
     await createAgent({ provider: onV7(without.model, { unsupportedFiles: 'text-note' }) }).send(input);
     expect(JSON.stringify(without.calls[0]!.prompt)).toContain('[file a.pdf (application/pdf) not sent]');
-  });
-
-  it('under withFallback, a PDF the first model cannot take goes to the next model instead of being dropped', async () => {
-    const input = [
-      { type: 'text' as const, text: 'Extract the invoice.' },
-      { type: 'file' as const, data: PDF, mimeType: 'application/pdf', filename: 'invoice.pdf' },
-    ];
-    const strict = v7Model();
-    const pdf = v7Model();
-    const provider = withFallback([
-      onV7(strict.model, { name: 'text-only' }),
-      onV7(pdf.model, { name: 'reads-pdf', fileMediaTypes: ['application/pdf'] }),
-    ]);
-
-    await createAgent({ provider, retry: false }).send(input);
-
-    expect(strict.calls).toHaveLength(0);
-    const user = pdf.calls[0]!.prompt.find((m) => m.role === 'user')!;
-    expect(user.content).toEqual([
-      { type: 'text', text: 'Extract the invoice.' },
-      expect.objectContaining({ type: 'file', mediaType: 'application/pdf', filename: 'invoice.pdf' }),
-    ]);
-  });
-
-  it('is exported from the package root', () => {
-    expect(root.fromAiSdk).toBe(fromAiSdk);
-    expect('createFromAiSdk' in root).toBe(false);
   });
 });

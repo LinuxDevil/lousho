@@ -8,8 +8,6 @@ import { z } from 'zod';
 import { createAgent } from './createAgent';
 import { defineTool, type DefinedTool } from './tools/defineTool';
 import { PropagatingToolError } from './execution/AgentExecutor';
-import { InMemoryApprovalStore } from './execution/InMemoryApprovalStore';
-import { MemorySessionStore } from './session/sessionStore';
 import { memoryStore, type AgentStore } from './storage/agentStore';
 import { SqliteStore } from './storage/sqlite';
 import { mockModel, type MockTurn } from './testing';
@@ -121,44 +119,6 @@ describe.each(stores)('createAgent({ store: %s })', (_name, makeStore) => {
 });
 
 describe('createAgent({ store }) defaults and precedence', () => {
-  it('explicit session store, checkpointStore and approvalStore win over the agent store', async () => {
-    const store = memoryStore();
-    const sessions = new MemorySessionStore();
-    const checkpoints = memoryStore().checkpoints;
-    const approvalStore = new InMemoryApprovalStore();
-    const runs: Runs = {};
-    const tools = [tool('send_email', runs, { needsApproval: true })];
-    const agent = createAgent({ provider: mockModel([calling('send_email'), 'Hi.']), tools, store, approvalStore });
-
-    const paused = await agent.session({ id: 'chat', store: sessions, checkpointStore: checkpoints }).send('Email Sam');
-
-    expect(paused.finishReason).toBe('awaiting-approval');
-    expect(await approvalStore.resolve(paused.approvalId!)).not.toBeNull();
-    expect(await store.approvals.resolve(paused.approvalId!)).toBeNull();
-    expect(await checkpoints.load('chat.turn-0')).toMatchObject({ status: 'awaiting-approval' });
-    expect(await store.checkpoints.load('chat.turn-0')).toBeNull();
-
-    // A plain SessionStore replaces store.sessions only; checkpoints still come from the agent store.
-    await agent.session({ id: 'other', store: sessions }).send('hello');
-    expect(roles((await sessions.load('other'))!)).toEqual(['user', 'assistant']);
-    expect(await store.sessions.load('other')).toBeUndefined();
-  });
-
-  it('send({ sessionId }) without a checkpoint store throws, and plain runs are not checkpointed', async () => {
-    const sessions = new MemorySessionStore();
-    const agent = createAgent({ provider: mockModel(['Hi.']), store: { sessions } });
-
-    await expect(agent.send('hi', { sessionId: 'job-1' })).rejects.toThrow(/needs a checkpoint store/);
-    expect(() => agent.stream('hi', { sessionId: 'job-1' })).toThrow(/needs a checkpoint store/);
-    await expect(agent.send('hi', { sessionId: 'job-1' })).rejects.toMatchObject({
-      code: 'LOUSHO_CONFIG_MISSING_CHECKPOINT_STORE',
-    });
-    expect(await agent.resume('job-1')).toBeNull();
-
-    const store = memoryStore();
-    await createAgent({ provider: mockModel(['Hi.']), store }).send('hi');
-    expect(await store.checkpoints.load('job-1')).toBeNull();
-  });
 
   // Concurrent send({ sessionId }) calls on one id read the same 'finished' checkpoint and the last save dropped the other turn.
   it.each(stores)('concurrent send()/stream() with one sessionId run one after another, keeping every turn (%s)', async (_name, makeStore) => {

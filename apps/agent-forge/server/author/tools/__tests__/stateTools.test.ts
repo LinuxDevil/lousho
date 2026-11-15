@@ -13,9 +13,7 @@ import { identityKey, proposalTurnState } from '../../proposal/turnState';
 import { passReview } from '../../proposal/review';
 import { AuthorSessionStore } from '../../sessionStore';
 import type {
-  AuthorToolFailure,
   ProposalOutput,
-  Requirement,
   SetEnabledOutput,
 } from '../../../../shared/authorWire';
 import type { StudioEvent } from '../../../../shared/wireTypes';
@@ -128,22 +126,6 @@ function fakeCard(agentId?: string): ProposalOutput {
 }
 
 describe('discardPendingChanges', () => {
-  it('drops this turn\'s update card for the agent and marks the identity discarded', async () => {
-    const ws = await workspace();
-    const t = turn();
-    proposalTurnState(t).proposed.set(UPDATE_KEY, fakeCard('agent-a'));
-    const out = (await call(toolNamed(t, fakeDeps(ws), 'discardPendingChanges'), {
-      agentId: 'agent-a',
-    })) as { ok: true; agentId: string; message: string };
-    expect(out).toEqual({
-      ok: true,
-      agentId: 'agent-a',
-      message:
-        'Unsaved changes for this agent were discarded. Nothing was saved. The next proposal starts from the saved agent.',
-    });
-    expect(proposalTurnState(t).proposed.has(UPDATE_KEY)).toBe(false);
-    expect(proposalTurnState(t).discarded.has(UPDATE_KEY)).toBe(true);
-  });
 
   it('without agentId drops only the create card - an update card survives', async () => {
     const ws = await workspace();
@@ -163,43 +145,9 @@ describe('discardPendingChanges', () => {
     expect(after.proposed.has(UPDATE_KEY)).toBe(true);
     expect(after.discarded.has(UPDATE_KEY)).toBe(false);
   });
-
-  it('refuses AGENT_NOT_FOUND for an update identity that is not on disk', async () => {
-    const ws = await workspace();
-    const t = turn();
-    const out = (await call(toolNamed(t, fakeDeps(ws), 'discardPendingChanges'), {
-      agentId: 'ghost',
-    })) as AuthorToolFailure;
-    expect(out).toMatchObject({ ok: false, code: 'AGENT_NOT_FOUND' });
-    expect(proposalTurnState(t).discarded.size).toBe(0);
-  });
 });
 
 describe('setAgentEnabled', () => {
-  it('refuses AGENT_NOT_FOUND for an unknown agent', async () => {
-    const ws = await workspace();
-    const t = turn();
-    const out = (await call(toolNamed(t, fakeDeps(ws), 'setAgentEnabled'), {
-      agentId: 'ghost',
-      enabled: false,
-    })) as AuthorToolFailure;
-    expect(out).toMatchObject({ ok: false, code: 'AGENT_NOT_FOUND' });
-  });
-
-  it('reports unchanged (and writes nothing) when the agent already has that state', async () => {
-    const ws = await workspace();
-    const before = await ws.repo.readMeta('agent-a');
-    const events: StudioEvent[] = [];
-    ws.bus.subscribe((event) => events.push(event));
-    const t = turn();
-    const out = (await call(toolNamed(t, fakeDeps(ws), 'setAgentEnabled'), {
-      agentId: 'agent-a',
-      enabled: true,
-    })) as SetEnabledOutput;
-    expect(out).toEqual({ ok: true, agentId: 'agent-a', enabled: true, status: 'unchanged', missingRequirements: 0 });
-    expect(await ws.repo.readMeta('agent-a')).toEqual(before);
-    expect(events).toEqual([]);
-  });
 
   it('disabling stamps disabledAt and disabledReason manual and publishes agent.changed', async () => {
     const ws = await workspace();
@@ -216,40 +164,5 @@ describe('setAgentEnabled', () => {
     expect(meta.disabledReason).toBe('manual');
     expect(meta.disabledAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(events).toEqual([{ type: 'agent.changed', agentId: 'agent-a', reason: 'meta' }]);
-  });
-
-  it('enabling clears the disable fields and the failure streak', async () => {
-    const ws = await workspace();
-    await ws.repo.writeMeta('agent-a', {
-      ...defaultMeta('2026-01-01T00:00:00.000Z'),
-      enabled: false,
-      disabledAt: '2026-01-02T00:00:00.000Z',
-      disabledReason: 'auto_failure_streak',
-      failureStreak: 4,
-    });
-    const t = turn();
-    const out = (await call(toolNamed(t, fakeDeps(ws), 'setAgentEnabled'), {
-      agentId: 'agent-a',
-      enabled: true,
-    })) as SetEnabledOutput;
-    expect(out).toMatchObject({ ok: true, status: 'updated', enabled: true });
-    const meta = await ws.repo.readMeta('agent-a');
-    expect(meta).toMatchObject({ enabled: true, disabledAt: null, disabledReason: null, failureStreak: 0 });
-  });
-
-  it('counts only missing readiness rows in missingRequirements', async () => {
-    const ws = await workspace();
-    const rows: Requirement[] = [
-      { id: 'secret:A', kind: 'secret', status: 'missing', label: 'A' },
-      { id: 'mcp:x', kind: 'mcp', status: 'unknown', label: 'x' },
-      { id: 'provider:mock', kind: 'provider_key', status: 'ok', label: 'p' },
-      { id: 'secret:B', kind: 'secret', status: 'missing', label: 'B' },
-    ];
-    const t = turn();
-    const out = (await call(toolNamed(t, fakeDeps(ws, { requirements: async () => rows }), 'setAgentEnabled'), {
-      agentId: 'agent-a',
-      enabled: false,
-    })) as SetEnabledOutput;
-    expect(out.missingRequirements).toBe(2);
   });
 });

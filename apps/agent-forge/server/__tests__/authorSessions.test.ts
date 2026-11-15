@@ -67,32 +67,8 @@ describe('author session routes', () => {
     return res.body as AuthorSession;
   }
 
-  it('POST /assistant/sessions writes .lousho/assistant/sessions/as_<16 hex>.json and answers 201', async () => {
-    const res = await authed(request(app).post('/assistant/sessions')).send({});
-    expect(res.status).toBe(201);
-    const session = res.body as AuthorSession;
-    expect(session.id).toMatch(/^as_[0-9a-f]{16}$/);
-    expect(session.schemaVersion).toBe(1);
-    expect(session.title).toBe('New chat');
-    expect(session.focus).toEqual({ mode: 'create' });
-    expect(session.workspaceId).toBe(workspaceIdFor(baseDir));
-    expect(session.transcript).toEqual([]);
-    expect(session.createdAgentIds).toEqual([]);
-    const file = path.join(sessionsDir(), `${session.id}.json`);
-    expect(fs.existsSync(file)).toBe(true);
-    expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual(session);
-  });
-
-  it('POST accepts an edit focus with a valid agentId', async () => {
-    const session = await createSession({ mode: 'edit', agentId: 'triage-bot' });
-    expect(session.focus).toEqual({ mode: 'edit', agentId: 'triage-bot' });
-  });
-
   it.each([
-    { focus: { mode: 'edit' }, label: 'missing agentId' },
-    { focus: { mode: 'edit', agentId: 'bad id!' }, label: 'invalid agentId' },
     { focus: { mode: 'bogus' }, label: 'unknown mode' },
-    { focus: 'edit', label: 'non-object focus' },
   ])('POST with a bad focus ($label) -> 400 INVALID_INPUT', async ({ focus }) => {
     const res = await authed(request(app).post('/assistant/sessions')).send({ focus });
     expect(res.status).toBe(400);

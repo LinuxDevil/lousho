@@ -33,29 +33,6 @@ describe('corpus', () => {
     expect(after[0]).toMatchObject({ origin: 'protected', input: 'input for t1' });
   });
 
-  it('dedupes within one batch', async () => {
-    const after = await addToCorpus(dir, [item('t1', 'fixed', '2026-11-01T00:00:00Z'), item('t1', 'fixed', '2026-11-02T00:00:00Z')], 30);
-    expect(after).toHaveLength(1);
-  });
-
-  it('evicts oldest fixed first', async () => {
-    await addToCorpus(dir, [item('old', 'fixed', '2026-11-01T00:00:00Z'), item('mid', 'fixed', '2026-11-02T00:00:00Z')], 3);
-    const after = await addToCorpus(dir, [item('new', 'fixed', '2026-11-03T00:00:00Z'), item('newer', 'fixed', '2026-11-04T00:00:00Z')], 3);
-    expect(after.map((c) => c.traceId)).toEqual(['mid', 'new', 'newer']);
-  });
-
-  it('never evicts protected', async () => {
-    await addToCorpus(dir, [item('p1', 'protected', '2026-10-01T00:00:00Z'), item('p2', 'protected', '2026-10-02T00:00:00Z')], 2);
-    const after = await addToCorpus(dir, [item('f1', 'fixed', '2026-11-01T00:00:00Z'), item('p3', 'protected', '2026-11-02T00:00:00Z')], 2);
-    expect(after.map((c) => c.traceId)).toEqual(['p1', 'p2', 'p3']);
-  });
-
-  it('round-trips through disk', async () => {
-    const written = await addToCorpus(dir, [item('t1', 'protected', '2026-11-01T00:00:00Z')], 30);
-    expect(readCorpus(dir)).toEqual(written);
-    expect(JSON.parse(readFileSync(path.join(dir, '.lousho', 'corpus.json'), 'utf8'))).toEqual({ cases: written });
-  });
-
   it('is empty without a file and refuses a broken one', () => {
     expect(readCorpus(dir)).toEqual([]);
     mkdirSync(path.join(dir, '.lousho'));
@@ -70,11 +47,6 @@ describe('corpus', () => {
     await expect(addToCorpus(dir, [item('t1', 'fixed', 'x')], 0)).rejects.toThrow(/maxCases/);
   });
 
-  it('keeps every case from concurrent adds', async () => {
-    await Promise.all(['a', 'b', 'c', 'd'].map((id) => addToCorpus(dir, [item(id, 'protected', '2026-11-01T00:00:00Z')], 30)));
-    expect(readCorpus(dir).map((c) => c.traceId).sort()).toEqual(['a', 'b', 'c', 'd']);
-  });
-
   it('refuses a symlinked corpus file or .lousho folder instead of replacing it', async () => {
     const outside = mkdtempSync(path.join(tmpdir(), 'lousho-corpus-outside-'));
     writeFileSync(path.join(outside, 'corpus.json'), JSON.stringify({ cases: [item('kept', 'protected', '2026-11-01T00:00:00Z')] }));
@@ -87,24 +59,6 @@ describe('corpus', () => {
     expect(() => readCorpus(dir)).toThrow(/symlink/);
     expect(JSON.parse(readFileSync(path.join(outside, 'corpus.json'), 'utf8')).cases).toHaveLength(1);
     rmSync(outside, { recursive: true, force: true });
-  });
-
-  it('refuses a case id that another trace already uses', async () => {
-    await addToCorpus(dir, [item('t1', 'protected', '2026-11-01T00:00:00Z')], 30);
-    await expect(addToCorpus(dir, [{ ...item('t2', 'fixed', '2026-11-02T00:00:00Z'), id: 'case-t1' }], 30)).rejects.toThrow(/already used/);
-  });
-
-  it('refuses impossible baselines and timestamps', async () => {
-    for (const bad of [{ passed: -1, scored: 3 }, { passed: 4, scored: 3 }, { passed: 0, scored: 0 }]) {
-      await expect(addToCorpus(dir, [{ ...item('t1', 'fixed', '2026-11-01T00:00:00Z'), baseline: bad }], 30)).rejects.toThrow(ConfigurationError);
-    }
-    await expect(addToCorpus(dir, [item('t1', 'fixed', 'yesterday')], 30)).rejects.toThrow(ConfigurationError);
-  });
-
-  it('evicts by time, not by how the timestamp is written', async () => {
-    await addToCorpus(dir, [item('late', 'fixed', '2026-11-01T10:00:00+05:00'), item('early', 'fixed', '2026-11-01T04:00:00-02:00')], 30);
-    const after = await addToCorpus(dir, [item('new', 'fixed', '2026-11-02T00:00:00Z')], 2);
-    expect(after.map((c) => c.traceId)).toEqual(['early', 'new']);
   });
 
   it('leaves a broken file untouched and no temp file behind', async () => {

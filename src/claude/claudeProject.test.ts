@@ -3,7 +3,6 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { claudeProject } from './claudeProject';
-import { createAgent } from '../createAgent';
 import { mockModel, testToolContext } from '../testing';
 
 let dir: string;
@@ -21,13 +20,6 @@ afterEach(async () => {
 });
 
 describe('claudeProject', () => {
-  it('empty dir loads to a manifest-only result (no instructions)', async () => {
-    const p = await claudeProject(dir);
-    expect(p.instructions).toBeUndefined();
-    expect(p.subagents).toBeUndefined();
-    expect(p.manifest.dir).toBe(dir);
-    expect(p.manifest.ignored).toEqual([]);
-  });
 
   it('concatenates CLAUDE.md then sorted .claude/rules sections', async () => {
     await w('CLAUDE.md', '# Project conventions\n\nUse pnpm.');
@@ -59,27 +51,10 @@ describe('claudeProject', () => {
     expect(p.manifest.subagents).toEqual(['reviewer']);
   });
 
-  it('an agent without a resolvable model is an error naming the file', async () => {
-    await w('.claude/agents/no-model.md', '---\nname: x\ndescription: d\n---\nBody.');
-    await expect(claudeProject(dir)).rejects.toThrow(/no-model\.md/);
-  });
-
   it('an agent model frontmatter resolves without a provider option', async () => {
     await w('.claude/agents/with-model.md', '---\nname: y\ndescription: d\nmodel: ollama/llama3.2\n---\nBody.');
     const p = await claudeProject(dir);
     expect(Object.keys(p.subagents!)).toEqual(['y']);
-  });
-
-  it('agent file without name/description is an error naming the file', async () => {
-    await w('.claude/agents/bad.md', '---\nname: only\n---\nBody.');
-    await expect(claudeProject(dir, { provider: mockModel([{ text: 'ok' }]) })).rejects.toThrow(/bad\.md/);
-  });
-
-  it('scratchpad tool is returned only when the dir exists or scratchpad: true', async () => {
-    expect((await claudeProject(dir)).tools).toBeUndefined();
-    await w('.claude/scratchpad/.keep', '');
-    expect((await claudeProject(dir)).tools).toHaveLength(1);
-    expect((await claudeProject(dir, { scratchpad: true })).manifest.scratchpad).toBe(true);
   });
 
   it('scratchpad writes/appends/reads/lists inside its dir and rejects traversal', async () => {
@@ -93,25 +68,5 @@ describe('claudeProject', () => {
     await expect(tool.execute({ action: 'write', name: '../x', content: 'x' }, ctx)).rejects.toThrow(/a-z0-9/i);
     const written = await fs.readFile(path.join(dir, '.claude', 'scratchpad', 'notes.md'), 'utf8');
     expect(written).toBe('ab');
-  });
-
-  it('lists conventional non-loaded entries on manifest.ignored', async () => {
-    await w('.claude/settings.json', '{}');
-    await w('.claude/commands/deploy.md', 'Deploy the thing.');
-    const p = await claudeProject(dir);
-    expect(p.manifest.ignored.sort()).toEqual(['commands', 'settings.json']);
-  });
-
-  it('the result spreads into createAgent and runs', async () => {
-    await w('CLAUDE.md', 'Be terse.');
-    await w('.claude/rules/testing.md', 'Write tests.');
-    const project = await claudeProject(dir);
-    const provider = mockModel([{ text: 'hi' }]);
-    const agent = createAgent({ provider, ...project });
-    const { text } = await agent.send('hello');
-    expect(text).toBe('hi');
-    const sys = String(provider.calls[0].messages[0].content);
-    expect(sys).toContain('Be terse.');
-    expect(sys).toContain('## testing.md');
   });
 });

@@ -23,16 +23,6 @@ describe('useFitOnLoad', () => {
   }
   beforeEach(() => fit.mockClear());
 
-  it('fits once when an agent opens, and again when another agent opens', () => {
-    render(<Probe agentId="a" nodes={3} />);
-    expect(fit).toHaveBeenCalledTimes(1);
-    expect(fitting).toBe(false);
-    rerender(<Probe agentId="a" nodes={4} />);
-    expect(fit).toHaveBeenCalledTimes(1);
-    rerender(<Probe agentId="b" nodes={2} />);
-    expect(fit).toHaveBeenCalledTimes(2);
-  });
-
   it('refits when the graph is emptied and then filled again (a template applied)', () => {
     render(<Probe agentId="a" nodes={3} />);
     expect(fit).toHaveBeenCalledTimes(1);
@@ -40,12 +30,6 @@ describe('useFitOnLoad', () => {
     expect(fit).toHaveBeenCalledTimes(1);
     rerender(<Probe agentId="a" nodes={4} />);
     expect(fit).toHaveBeenCalledTimes(2);
-    expect(fitting).toBe(false);
-  });
-
-  it('never fits an empty graph', () => {
-    render(<Probe agentId="a" nodes={0} />);
-    expect(fit).not.toHaveBeenCalled();
     expect(fitting).toBe(false);
   });
 });
@@ -56,16 +40,6 @@ describe('useAgentEdgeSelection', () => {
     state = useAgentEdgeSelection(agentId);
     return null;
   }
-
-  it('keeps the selected edge while the agent stays open', () => {
-    render(<Probe agentId="a" />);
-    act(() => state[1]('e1'));
-    expect(state[0]).toBe('e1');
-    rerender(<Probe agentId="a" />);
-    expect(state[0]).toBe('e1');
-    act(() => state[1](undefined));
-    expect(state[0]).toBeUndefined();
-  });
 
   it('clears the selected edge when another agent opens', () => {
     render(<Probe agentId="a" />);

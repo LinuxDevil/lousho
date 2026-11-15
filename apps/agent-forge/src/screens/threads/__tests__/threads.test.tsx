@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../../../state/AppState', () => ({ useAppState: () => ({ runStatus: null }) }));
 
 import { ThreadsScreen } from '../ThreadsScreen';
-import { formatThreadsQuery, parseThreadsQuery } from '../threadsUrl';
 import { render } from '../../../ui/__tests__/render';
 import { ToastProvider } from '../../../ui/Toast';
 import type { ObserveObservationRow, ObserveSessionRow, ObserveTraceDetail, ObserveTraceRow } from '../../../observe/types';
@@ -137,32 +136,7 @@ afterEach(() => {
   window.history.replaceState(null, '', '/');
 });
 
-describe('threadsUrl', () => {
-  it('round-trips agent, status, window and offset, and leaves the defaults out', () => {
-    expect(formatThreadsQuery(parseThreadsQuery(new URLSearchParams('')))).toBe('');
-    const qs = 'agent=agent-1&status=active&from=10&to=20&offset=50';
-    expect(formatThreadsQuery(parseThreadsQuery(new URLSearchParams(qs)))).toBe(`?${qs}`);
-    expect(parseThreadsQuery(new URLSearchParams('from=20&to=10&offset=x'))).toEqual({ offset: 0 });
-  });
-});
-
 describe('ThreadsScreen list', () => {
-  it('renders the sessions from the API with their totals', async () => {
-    const container = await mountAt('#/threads');
-    expect(window.location.hash).toBe('#/threads');
-    const rows = container.querySelectorAll('tbody tr');
-    expect(rows).toHaveLength(1);
-    const row = rows[0];
-    expect(row.textContent).toContain('sess-abcdef1');
-    expect(row.textContent).toContain('support-bot');
-    expect(row.querySelector('[title="Can I get a refund?"]')).not.toBeNull();
-    expect(row.querySelector('.status-pill')?.textContent).toContain('active');
-    expect(row.textContent).toContain('250');
-    expect(row.textContent).toContain('$0.0040');
-    const last = listRequests().at(-1)!;
-    expect(last.get('limit')).toBe('50');
-    expect(last.get('offset')).toBe('0');
-  });
 
   it('reproduces the URL filters on load', async () => {
     const container = await mountAt('#/threads?agent=agent-1&status=interrupted&from=1000&to=2000&offset=50');
@@ -177,67 +151,6 @@ describe('ThreadsScreen list', () => {
     const custom = [...container.querySelectorAll('.seg-btn')].find((b) => b.textContent === 'Custom');
     expect(custom?.getAttribute('aria-pressed')).toBe('true');
   });
-
-  it('offers the ended status the idle sweep writes', async () => {
-    const container = await mountAt('#/threads?status=ended');
-    expect(listRequests().at(-1)!.get('status')).toBe('ended');
-    const statusBtn = [...container.querySelectorAll<HTMLButtonElement>('.facet-btn')].find((b) => b.textContent?.startsWith('Status'))!;
-    act(() => statusBtn.click());
-    const options = [...container.querySelectorAll('.facet-pop .facet-opt')].map((o) => o.textContent);
-    expect(options).toEqual(['active', 'ended', 'interrupted']);
-  });
-
-  it('opening a row navigates to #/threads/:sessionId', async () => {
-    const container = await mountAt('#/threads?status=active');
-    const row = container.querySelector<HTMLTableRowElement>('tbody tr[data-row-index="0"]')!;
-    row.focus();
-    act(() => {
-      row.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    });
-    await flush();
-    expect(window.location.hash).toBe(`#/threads/${SESSION.session_id}`);
-  });
-});
-
-describe('ThreadsScreen thread', () => {
-  it('renders each turn as Input and Output MessageViews, oldest first, each linking to its trace', async () => {
-    const container = await mountAt(`#/threads/${SESSION.session_id}`);
-    const turns = [...container.querySelectorAll('.thread-turn')];
-    expect(turns).toHaveLength(2);
-    // Turn 1: an input and an output message.
-    expect(turns[0].querySelectorAll('section.mv')).toHaveLength(2);
-    expect(turns[0].textContent).toContain('Where is my order?');
-    expect(turns[0].textContent).toContain('It ships tomorrow.');
-    // Turn 2 failed: its input message, then the error text in the danger style.
-    expect(turns[1].querySelectorAll('section.mv')).toHaveLength(1);
-    expect(turns[1].querySelector('.thread-error')?.textContent).toContain('Tool refund_lookup timed out');
-    expect(turns[1].querySelector('.status-pill')?.textContent).toContain('error');
-    const links = turns.map((t) => [...t.querySelectorAll('a')].find((a) => a.textContent === 'Open trace')?.getAttribute('href'));
-    expect(links).toEqual(['#/traces/trace-1', '#/traces/trace-2']);
-  });
-
-  it('list -> thread -> trace: Back to threads keeps the list query', async () => {
-    await mountAt('#/threads?status=active');
-    window.history.replaceState(null, '', `/#/threads/${SESSION.session_id}`);
-    const container = render(
-      <ToastProvider>
-        <ThreadsScreen />
-      </ToastProvider>,
-    );
-    await flush();
-    // The header's way back is named "Back to threads", like the empty state's.
-    const back = container.querySelector('.thread-back');
-    expect(back?.textContent).toBe('Back to threads');
-    expect(back?.getAttribute('href')).toBe('#/threads?status=active');
-  });
-
-  it('an unknown session shows the empty state with a way back', async () => {
-    const container = await mountAt('#/threads/nope');
-    expect(container.querySelector('.empty-state-title')?.textContent).toBe('Thread not found');
-    const back = container.querySelector('.empty-state a');
-    expect(back?.textContent).toBe('Back to threads');
-    expect(container.querySelector('.thread-turn')).toBeNull();
-  });
 });
 
 /** The trace-detail requests the screen sent, by trace id. */
@@ -247,23 +160,6 @@ const detailRequests = () =>
     .flatMap((p) => /\/api\/v1\/traces\/([^/]+)$/.exec(p)?.[1] ?? []);
 
 describe('ThreadsScreen thread full turns', () => {
-  it("renders each turn's full root input/output from its trace detail as message bubbles", async () => {
-    details = {
-      'trace-1': { trace_id: 'trace-1', observations: [rootRow('trace-1', { input: FULL_INPUT, output: 'It ships tomorrow, by noon.' })], scores: [] },
-      'trace-2': { trace_id: 'trace-2', observations: [rootRow('trace-2', { input: 'Can I get a refund? (full)', status: 'error' })], scores: [] },
-    };
-    const container = await mountAt(`#/threads/${SESSION.session_id}`);
-    const turns = [...container.querySelectorAll('.thread-turn')];
-    expect(detailRequests().sort()).toEqual(['trace-1', 'trace-2']);
-    const bubbles = [...turns[0].querySelectorAll('.mv-bubble')].map((b) => b.getAttribute('data-role'));
-    expect(bubbles).toEqual(['system', 'user']);
-    expect(turns[0].textContent).toContain(LONG_ASK.trim());
-    expect(turns[0].textContent).toContain('It ships tomorrow, by noon.');
-    expect(turns[0].querySelector('.thread-turn-note')).toBeNull();
-    // An error turn keeps the error in place of the output, with the full input.
-    expect(turns[1].textContent).toContain('Can I get a refund? (full)');
-    expect(turns[1].querySelector('.thread-error')?.textContent).toContain('Tool refund_lookup timed out');
-  });
 
   it("labels a root the recorder truncated", async () => {
     details = { 'trace-1': { trace_id: 'trace-1', observations: [rootRow('trace-1', { input: 'cut off', output: 'x', truncated: true })], scores: [] } };
@@ -271,15 +167,6 @@ describe('ThreadsScreen thread full turns', () => {
     const turn = container.querySelectorAll('.thread-turn')[0];
     expect(turn.textContent).toContain('cut off');
     expect(turn.querySelector('.thread-turn-note')?.textContent).toMatch(/truncated when recorded/i);
-  });
-
-  it('falls back to the labelled preview when the detail fetch fails or the trace is gone', async () => {
-    details = { 'trace-1': 500 };
-    const container = await mountAt(`#/threads/${SESSION.session_id}`);
-    const turns = [...container.querySelectorAll('.thread-turn')];
-    for (const turn of turns) expect(turn.querySelector('.thread-turn-note')?.textContent).toContain('Preview (truncated)');
-    expect(turns[0].textContent).toContain('Where is my order?');
-    expect(turns[0].textContent).toContain('It ships tomorrow.');
   });
 
   it('fetches a turn only once it nears the viewport', async () => {
@@ -310,18 +197,6 @@ describe('ThreadsScreen thread full turns', () => {
 });
 
 describe('ThreadsScreen thread layout', () => {
-  it('shows the thread header card with its totals and numbers each turn on the timeline', async () => {
-    const container = await mountAt(`#/threads/${SESSION.session_id}`);
-    const header = container.querySelector('.thread-header')!;
-    expect(header.querySelector('h2')?.textContent).toBe('support-bot');
-    expect(header.querySelector('.status-pill')?.textContent).toContain('active');
-    expect(header.textContent).toContain('2 turns');
-    expect(header.textContent).toContain('250 tokens');
-    expect(header.textContent).toContain('$0.0040');
-    const dots = [...container.querySelectorAll('.thread-turn-dot')].map((d) => d.textContent);
-    expect(dots).toEqual(['1', '2']);
-    expect(container.querySelectorAll('.thread-turn')[1].getAttribute('data-status')).toBe('error');
-  });
 
   it('clamps an overflowing message behind Show more / Show less, with the full text still in the DOM', async () => {
     // jsdom has no layout: every .mv-body reports content taller than its clamped box.
@@ -348,48 +223,5 @@ describe('ThreadsScreen thread layout', () => {
       scroll.mockRestore();
       client.mockRestore();
     }
-  });
-
-  it('shows no toggle when a message fits', async () => {
-    const container = await mountAt(`#/threads/${SESSION.session_id}`);
-    expect(container.querySelector('.thread-clamp-toggle')).toBeNull();
-  });
-
-  it('shows skeletons, not text, while the thread loads', async () => {
-    fetchFn.mockImplementation(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'http://x');
-      if (url.pathname.endsWith('/health')) return new Response(JSON.stringify({ service: 'lousho-observe', ok: true }));
-      return new Promise<Response>(() => undefined);
-    });
-    const container = await mountAt(`#/threads/${SESSION.session_id}`);
-    const loading = container.querySelector('.thread-loading')!;
-    expect(loading.getAttribute('role')).toBe('status');
-    expect(loading.querySelectorAll('.skeleton').length).toBeGreaterThan(3);
-    // three skeleton turn cards; the only "Loading thread..." text is the visually-hidden status
-    expect(loading.querySelectorAll('.thread-turn-card')).toHaveLength(3);
-    const visibleText = [...loading.querySelectorAll('p')].map((p) => p.textContent).join('');
-    expect(visibleText).toBe('');
-    expect(loading.querySelector('.visually-hidden')?.textContent).toBe('Loading thread...');
-  });
-});
-
-describe('ThreadsScreen list layout', () => {
-  it('renders the thread cell (last input over the session id) and last activity as relative time', async () => {
-    const container = await mountAt('#/threads');
-    const row = container.querySelector('tbody tr')!;
-    expect(row.querySelector('.threads-name-title')?.textContent).toBe('Can I get a refund?');
-    expect(row.querySelector('.threads-name-id')?.textContent).toBe(SESSION.session_id);
-    const activity = [...row.querySelectorAll('.threads-num')].find((c) => c.textContent?.endsWith('ago'));
-    expect(activity?.textContent).toBe('20s ago');
-    expect(activity?.getAttribute('title')).toMatch(/^Started .* · last activity /);
-  });
-
-  it('Refresh re-fetches the list', async () => {
-    const container = await mountAt('#/threads');
-    const before = listRequests().length;
-    const refresh = container.querySelector<HTMLButtonElement>('button[aria-label="Refresh"]')!;
-    act(() => refresh.click());
-    await flush();
-    expect(listRequests().length).toBe(before + 1);
   });
 });

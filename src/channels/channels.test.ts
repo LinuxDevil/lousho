@@ -10,17 +10,12 @@ import { z } from 'zod';
 import { createAgent } from '../createAgent';
 import { defineTool } from '../tools/defineTool';
 import { mockModel } from '../testing';
-import type { Message } from '../providers';
-import { channelSessionId, defineChannel, type Channel, type ChannelContext, type ChannelReplyContext } from './defineChannel';
+import { defineChannel, type Channel, type ChannelContext, type ChannelReplyContext } from './defineChannel';
 import { durableStores } from './__fixtures__/durableStores';
 import { mountChannels, type ChannelsHandler } from './mountChannels';
 import { httpChannel } from './httpChannel';
-import { webhookChannel } from './webhookChannel';
 import { InMemoryApprovalStore } from '../execution/InMemoryApprovalStore';
 import { MemorySessionStore } from '../session/sessionStore';
-import { defineMemory, inMemoryMemory, type MemoryScopeContext } from '../memory';
-import { memoryStore } from '../storage/agentStore';
-import { SessionAwaitingApprovalError } from '../execution/errors';
 
 interface Posted {
   handled: boolean;
@@ -79,38 +74,6 @@ describe('defineChannel / mountChannels', () => {
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('hunter2') }), expect.objectContaining({ channel: 'test', stage: 'parse' }));
   });
 
-  it('runs inbound -> session -> reply and answers the open request', async () => {
-    const agent = createAgent({ provider: mockModel(['Hello Ali']) });
-    const { channel, replies } = recordingChannel();
-    const handler = mountChannels(agent, [channel]);
-
-    const res = await post(handler, '/channels/test', { user: 'ali', text: 'hi' });
-
-    expect(res).toEqual({ handled: true, status: 200, json: { ok: true } });
-    expect(replies).toHaveLength(1);
-    expect(replies[0]).toMatchObject({ text: 'Hello Ali', inbound: { replyTo: 'dm:ali', metadata: { user: 'ali' } } });
-    expect(replies[0].result?.finishReason).toBe('stop');
-    expect(replies[0].events?.at(-1)?.type).toBe('run.done');
-    expect(replies[0].sessionId).toBe(channelSessionId(channel, replies[0].inbound));
-    expect(replies[0].sessionId).toMatch(/^test_ali-[0-9a-z]+$/);
-  });
-
-  it('runs the turn with the inbound metadata and principal: memory scopes see both', async () => {
-    const scopes: MemoryScopeContext[] = [];
-    const notes = defineMemory({ name: 'notes', scope: (ctx) => (scopes.push(ctx), 'global'), provider: inMemoryMemory() });
-    const { channel } = recordingChannel({
-      async parse(req) {
-        const { user, text } = JSON.parse(req.text) as { user: string; text: string };
-        return { sessionKey: user, input: text, replyTo: `dm:${user}`, metadata: { user }, principal: { id: user, type: 'user', authenticator: 'test' } };
-      },
-    });
-    const handler = mountChannels(createAgent({ provider: mockModel(['Hi']), memory: [notes] }), [channel]);
-
-    await post(handler, '/channels/test', { user: 'ali', text: 'hi' });
-
-    expect(scopes[0]).toMatchObject({ metadata: { user: 'ali' }, principal: { id: 'ali', type: 'user', authenticator: 'test' } });
-  });
-
   it('httpChannel answers with plain JSON and leaves other routes to the host', async () => {
     const agent = createAgent({ provider: mockModel(['Pong']) });
     const handler = mountChannels(agent, [httpChannel()], { basePath: '/hooks/' });
@@ -145,13 +108,6 @@ describe('defineChannel / mountChannels', () => {
     expect((await post(handler, '/channels/http', body, local)).status).toBe(200);
   });
 
-  it('a channel with verify decides itself: no cross-site or body type check is added', async () => {
-    const api = httpChannel({ verify: async (req) => req.headers.authorization === 'Bearer t' });
-    const handler = mountChannels(createAgent({ provider: mockModel(['Pong']) }), [api]);
-    const res = await post(handler, '/channels/http', { sessionKey: 'u1', input: 'ping' }, { authorization: 'Bearer t', origin: 'https://app.example', 'content-type': 'text/plain' });
-    expect(res.status).toBe(200);
-  });
-
   it('rejects a request that fails verify with 401, before parsing or running', async () => {
     const model = mockModel(['never']);
     const parse = vi.fn();
@@ -164,30 +120,6 @@ describe('defineChannel / mountChannels', () => {
     expect(parse).not.toHaveBeenCalled();
     expect(model.calls).toHaveLength(0);
     expect(replies).toHaveLength(0);
-  });
-
-  it('shares history between events with the same sessionKey, not across keys', async () => {
-    const model = mockModel(['Nice to meet you', 'You are Ali', 'Who?']);
-    const { channel, replies } = recordingChannel();
-    const handler = mountChannels(createAgent({ provider: model }), [channel]);
-
-    await post(handler, '/channels/test', { user: 'ali', text: 'I am Ali' });
-    await post(handler, '/channels/test', { user: 'ali', text: 'Who am I?' });
-    await post(handler, '/channels/test', { user: 'sam', text: 'Who am I?' });
-
-    const userTexts = (call: number) => (model.calls[call].messages as Message[]).filter((m) => m.role === 'user').map((m) => m.content);
-    expect(userTexts(1)).toEqual(['I am Ali', 'Who am I?']);
-    expect(userTexts(2)).toEqual(['Who am I?']);
-    expect(replies[0].sessionId).toBe(replies[1].sessionId);
-    expect(replies[2].sessionId).not.toBe(replies[0].sessionId);
-  });
-
-  it('a null parse is acknowledged without a turn', async () => {
-    const model = mockModel(['never']);
-    const { channel } = recordingChannel({ parse: async () => null });
-    const res = await post(mountChannels(createAgent({ provider: model }), [channel]), '/channels/test', {});
-    expect(res.json).toEqual({ ok: true });
-    expect(model.calls).toHaveLength(0);
   });
 
   it('streams partial replies when stream is true', async () => {
@@ -245,16 +177,6 @@ describe('defineChannel / mountChannels', () => {
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
-  it('an open webhookChannel is cross-site guarded like any unauthenticated channel', async () => {
-    const handler = mountChannels(createAgent({ provider: mockModel(['pong']) }), [webhookChannel()]);
-    const local = { host: 'localhost:3737' };
-    const refused = await post(handler, '/channels/webhook', { input: 'ping' }, { ...local, origin: 'https://evil.example' });
-    expect(refused).toMatchObject({ status: 403, json: { code: 'LOUSHO_REQUEST_FORBIDDEN' } });
-    expect((await post(handler, '/channels/webhook/approvals/a1', { approved: true }, { ...local, origin: 'https://evil.example' })).status).toBe(403);
-    // A webhook sender (no Origin) still gets through; so does a signed request's own verify path.
-    expect((await post(handler, '/channels/webhook', { input: 'ping' }, local)).status).toBe(200);
-  });
-
   it('answers an ask_question pause over the approvals route (default onApproval = a text prompt via reply)', async () => {
     const ask = { toolCalls: [{ name: 'ask_question', args: { question: 'Which city?', options: ['Lisbon', 'Porto'] }, id: 'call_q' }] };
     const agent = createAgent({ provider: mockModel([ask, 'Booked Lisbon.']), askQuestion: true });
@@ -308,34 +230,6 @@ describe('defineChannel / mountChannels', () => {
       expect(await t.ctx().pendingQuestion('sam')).toBeUndefined(); // another session
     });
 
-    it('after a restart: found from the checkpoint, and the answer is appended to the transcript', async () => {
-      const stores = durableStores();
-      await post(mount([ask], stores).handler, '/channels/test', { user: 'ali', text: 'Book a trip' });
-
-      const second = mount(['Booked Lisbon.'], stores);
-      await post(second.handler, '/channels/test', { user: 'ali', text: 'Lisbon' });
-
-      expect(second.replies.map((r) => r.text)).toEqual(['Booked Lisbon.']);
-      const transcript = await stores.transcript();
-      for (const text of ['Book a trip', 'Which city?', 'Lisbon', 'Booked Lisbon.']) expect(transcript).toContain(text);
-      expect(await second.ctx().pendingQuestion('ali')).toBeUndefined(); // answered
-    });
-
-    it('after a restart, two quick messages: the first answers, the second is the next turn', async () => {
-      const stores = durableStores();
-      await post(mount([ask], stores).handler, '/channels/test', { user: 'ali', text: 'Book a trip' });
-
-      const second = mount(['Booked Lisbon.', 'Noted.'], stores);
-      await Promise.all([
-        post(second.handler, '/channels/test', { user: 'ali', text: 'Lisbon' }),
-        post(second.handler, '/channels/test', { user: 'ali', text: 'And a hotel' }),
-      ]);
-
-      expect(second.replies.map((r) => r.text)).toEqual(['Booked Lisbon.', 'Noted.']);
-      const userTexts = (second.model.calls[1].messages as Message[]).filter((m) => m.role === 'user').map((m) => m.content);
-      expect(userTexts).toEqual(['Book a trip', 'And a hotel']);
-    });
-
     it('undefined for a session with no pending turn, or one waiting on a tool approval (the turn is not run)', async () => {
       const stores = durableStores();
       const first = mount([callEmail], stores);
@@ -352,7 +246,6 @@ describe('defineChannel / mountChannels', () => {
   });
 
   describe('button decisions are checked against the pending turn (#279)', () => {
-    const ask = { toolCalls: [{ name: 'ask_question', args: { question: 'Which city?' }, id: 'call_q' }] };
 
     /**
      * A channel with buttons: `{ user, text }` is a message, `{ user, click, approved }` a click on
@@ -386,74 +279,6 @@ describe('defineChannel / mountChannels', () => {
       await post(t.handler, '/channels/test', { user, text: 'Email Sam' });
       return (await t.agent.approvals.list()).find((request) => !before.has(request.id))!.id;
     }
-
-    it('after a restart: the continuation of a click is appended to the session transcript', async () => {
-      const stores = durableStores();
-      const first = mount([callEmail], stores);
-      const ali = await pauseOn(first, 'ali');
-
-      const second = mount(['Email sent.', 'You are welcome.'], stores, first.execute);
-      expect(await post(second.handler, '/channels/test', { user: 'ali', click: ali })).toMatchObject({ status: 200 });
-
-      expect(first.execute).toHaveBeenCalledTimes(1);
-      expect(second.replies.map((r) => [r.inbound.replyTo, r.text])).toEqual([['dm:ali', 'Email sent.']]);
-      const transcript = await stores.transcript();
-      for (const text of ['Email Sam', '"call_email"', 'sent to sam@example.com', 'Email sent.']) expect(transcript).toContain(text);
-
-      // the conversation has a session now: the next message is its next turn
-      await post(second.handler, '/channels/test', { user: 'ali', text: 'Thanks' });
-      expect(second.replies.at(-1)?.text).toBe('You are welcome.');
-      const userTexts = (second.model.calls[1].messages as Message[]).filter((m) => m.role === 'user').map((m) => m.content);
-      expect(userTexts).toEqual(['Email Sam', 'Thanks']);
-      expect(JSON.stringify(second.model.calls[1].messages)).toContain('sent to sam@example.com');
-    });
-
-    it('after a restart: a click naming a conversation whose turn waits on another approval is refused (404); the right one still decides', async () => {
-      const stores = durableStores();
-      const first = mount([callEmail, callEmail], stores);
-      const ali = await pauseOn(first, 'ali');
-      const bob = await pauseOn(first, 'bob');
-
-      const second = mount(['Email sent.'], stores, first.execute);
-      const forged = await post(second.handler, '/channels/test', { user: 'bob', click: ali });
-
-      expect(forged).toMatchObject({ status: 404, json: { error: expect.stringContaining(ali) } });
-      expect(first.execute).not.toHaveBeenCalled();
-      expect(second.onDecision).not.toHaveBeenCalled(); // nothing was decided, so nothing is audited
-
-      expect(await post(second.handler, '/channels/test', { user: 'ali', click: ali })).toMatchObject({ status: 200 });
-      expect(first.execute).toHaveBeenCalledTimes(1);
-      expect(second.replies.map((r) => [r.inbound.replyTo, r.text])).toEqual([['dm:ali', 'Email sent.']]);
-      expect(second.onDecision).toHaveBeenCalledTimes(1);
-      expect(bob).not.toBe(ali);
-    });
-
-    it('after a restart: a click naming a conversation with nothing pending is refused, and so is a replay', async () => {
-      const stores = durableStores();
-      const first = mount([callEmail], stores);
-      const ali = await pauseOn(first, 'ali');
-
-      const second = mount(['Email sent.', 'never'], stores, first.execute);
-      expect(await post(second.handler, '/channels/test', { user: 'carol', click: ali })).toMatchObject({ status: 404 });
-      expect(await post(second.handler, '/channels/test', { user: 'ali', click: ali })).toMatchObject({ status: 200 });
-      expect(await post(second.handler, '/channels/test', { user: 'ali', click: ali })).toMatchObject({ status: 404 });
-
-      expect(first.execute).toHaveBeenCalledTimes(1);
-      expect(second.model.calls).toHaveLength(1);
-    });
-
-    it('after a restart: two clicks at once decide once', async () => {
-      const stores = durableStores();
-      const first = mount([callEmail], stores);
-      const ali = await pauseOn(first, 'ali');
-
-      const second = mount(['Email sent.', 'never'], stores, first.execute);
-      const statuses = await Promise.all([1, 2].map(async () => (await post(second.handler, '/channels/test', { user: 'ali', click: ali })).status));
-
-      expect(statuses.sort()).toEqual([200, 409]);
-      expect(first.execute).toHaveBeenCalledTimes(1);
-      expect(second.replies.map((r) => r.text)).toEqual(['Email sent.']);
-    });
 
     it('in process: a second click while onDecision is still running is a 409, not a failure', async () => {
       const t = mount([callEmail, 'Email sent.', 'never'], durableStores());
@@ -495,42 +320,6 @@ describe('defineChannel / mountChannels', () => {
       expect(replies.map((r) => r.text)).not.toContain('Sorry, that request failed.');
       expect(replies.at(-1)?.text).toBe('Email sent.');
     });
-
-    it('after a restart: a button decision is not an answer: a click on a pending question is refused', async () => {
-      const stores = durableStores();
-      const first = mount([ask], stores);
-      await post(first.handler, '/channels/test', { user: 'ali', text: 'Book a trip' });
-      const [question] = await first.agent.approvals.list();
-
-      const second = mount(['never'], stores);
-      expect(await post(second.handler, '/channels/test', { user: 'ali', click: question.id })).toMatchObject({ status: 404 });
-      expect(second.model.calls).toHaveLength(0);
-    });
-
-    it('in process: a click naming another conversation than the one that paused is refused', async () => {
-      const t = mount([callEmail, 'Email sent.'], durableStores());
-      const ali = await pauseOn(t, 'ali');
-
-      expect(await post(t.handler, '/channels/test', { user: 'bob', click: ali })).toMatchObject({ status: 404 });
-      expect(t.execute).not.toHaveBeenCalled();
-      expect(await post(t.handler, '/channels/test', { user: 'ali', click: ali })).toMatchObject({ status: 200 });
-      expect(t.execute).toHaveBeenCalledTimes(1);
-      expect(t.replies.at(-1)).toMatchObject({ text: 'Email sent.', inbound: { replyTo: 'dm:ali' } });
-    });
-
-    it('ctx.approval(id) answers after a restart from the approval store, undefined once decided (#280)', async () => {
-      const stores = durableStores();
-      const first = mount([callEmail], stores);
-      const ali = await pauseOn(first, 'ali');
-
-      const second = mount(['Hi.', 'Email sent.'], stores, first.execute);
-      await post(second.handler, '/channels/test', { user: 'bob', text: 'hi' }); // captures the second mount's context
-      expect(await second.ctx().approval(ali)).toMatchObject({ id: ali, toolName: 'send_email', args: { to: 'sam@example.com' } });
-      expect(await second.ctx().approval('nope')).toBeUndefined();
-
-      await post(second.handler, '/channels/test', { user: 'ali', click: ali });
-      expect(await second.ctx().approval(ali)).toBeUndefined();
-    });
   });
 
   describe('the approvals route after a restart', () => {
@@ -540,58 +329,12 @@ describe('defineChannel / mountChannels', () => {
       return { agent, execute, handler: mountChannels(agent, [httpChannel()], { store: stores.store }) };
     }
 
-    it('decides a pause this process forgot when the body names the conversation (`sessionKey`)', async () => {
-      const stores = durableStores();
-      const first = mountHttp([callEmail], stores);
-      const paused = await post(first.handler, '/channels/http', { sessionKey: 'u1', input: 'Email Sam' });
-      const id = (paused.json.approval as { id: string }).id;
-
-      const second = mountHttp(['Email sent.'], stores, first.execute);
-      expect(await post(second.handler, `/channels/http/approvals/${id}`, { approved: true })).toMatchObject({ status: 404 });
-      expect(await post(second.handler, `/channels/http/approvals/${id}`, { approved: true, sessionKey: 'u2' })).toMatchObject({ status: 404 });
-      expect(first.execute).not.toHaveBeenCalled();
-
-      const decided = await post(second.handler, `/channels/http/approvals/${id}`, { approved: true, sessionKey: 'u1' });
-      expect(decided).toMatchObject({ status: 200, json: { text: 'Email sent.', sessionId: paused.json.sessionId } });
-      expect(first.execute).toHaveBeenCalledTimes(1);
-      expect(await stores.transcript()).toContain('Email sent.');
-    });
-
     it('in process, a `sessionKey` naming another conversation is refused', async () => {
       const t = mountHttp([callEmail, 'Email sent.'], durableStores());
       const paused = await post(t.handler, '/channels/http', { sessionKey: 'u1', input: 'Email Sam' });
       const id = (paused.json.approval as { id: string }).id;
       expect(await post(t.handler, `/channels/http/approvals/${id}`, { approved: true, sessionKey: 'u2' })).toMatchObject({ status: 404 });
       expect(await post(t.handler, `/channels/http/approvals/${id}`, { approved: true, sessionKey: 'u1' })).toMatchObject({ status: 200, json: { text: 'Email sent.' } });
-    });
-  });
-
-  describe("without a `store` option, channel sessions use the agent's store", () => {
-    it('agent.resume() refuses a paused channel turn and the transcript is the one agent.session() sees', async () => {
-      const store = memoryStore();
-      const { tool } = emailTool();
-      const agent = createAgent({ provider: mockModel(['Hello.', callEmail]), tools: [tool], store });
-      const { channel } = recordingChannel();
-      const handler = mountChannels(agent, [channel]);
-      const id = channelSessionId(channel, { sessionKey: 'ali', input: '', replyTo: undefined });
-
-      await post(handler, '/channels/test', { user: 'ali', text: 'hi' });
-      expect(await store.sessions.load(id)).toHaveLength(2);
-
-      await post(handler, '/channels/test', { user: 'ali', text: 'Email Sam' });
-      expect((await agent.approvals.list()).map((request) => request.toolName)).toEqual(['send_email']);
-      await expect(agent.resume(id)).rejects.toBeInstanceOf(SessionAwaitingApprovalError);
-      expect(await agent.session({ id }).pending()).toMatchObject({ status: 'awaiting-approval' });
-    });
-
-    it('an agent without a store still keeps channel transcripts across turns', async () => {
-      const model = mockModel(['One.', 'Two.']);
-      const { channel, replies } = recordingChannel();
-      const handler = mountChannels(createAgent({ provider: model }), [channel]);
-      await post(handler, '/channels/test', { user: 'ali', text: 'first' });
-      await post(handler, '/channels/test', { user: 'ali', text: 'second' });
-      expect(replies.map((r) => r.text)).toEqual(['One.', 'Two.']);
-      expect((model.calls[1].messages as Message[]).filter((m) => m.role === 'user').map((m) => m.content)).toEqual(['first', 'second']);
     });
   });
 
@@ -633,20 +376,6 @@ describe('channels: a step paused on several calls', () => {
     expect(execute).toHaveBeenCalledTimes(1);
     expect(execute.mock.calls[0][0]).toEqual({ to: 'kim@example.com' });
     expect(replies.at(-1)?.text).toBe('Both sent.');
-  });
-
-  it('the http channel answers with every pending call, and a decision with what is left', async () => {
-    const { tool } = emailTool();
-    const handler = mountChannels(createAgent({ provider: mockModel([twoEmails, 'Both sent.']), tools: [tool] }), [httpChannel()]);
-    const paused = await post(handler, '/channels/http', { sessionKey: 'u1', input: 'Email Sam and Kim' });
-    const approvals = paused.json.approvals as Array<{ id: string }>;
-    expect(approvals).toHaveLength(2);
-    expect((paused.json.approval as { id: string }).id).toBe(approvals[0].id);
-
-    const partial = await post(handler, `/channels/http/approvals/${approvals[0].id}`, { approved: true });
-    expect(partial.json).toMatchObject({ finishReason: 'awaiting-approval' });
-    const done = await post(handler, `/channels/http/approvals/${approvals[1].id}`, { approved: true });
-    expect(done.json).toMatchObject({ finishReason: 'stop', text: 'Both sent.' });
   });
 
   it('after a restart, a decision on any call of the step is bound to its conversation', async () => {

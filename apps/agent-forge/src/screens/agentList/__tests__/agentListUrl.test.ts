@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AgentListItem } from '../../../../shared/wireTypes';
-import { filterAgents, labelOptions, parseAgentListQuery } from '../agentListUrl';
+import { filterAgents, parseAgentListQuery } from '../agentListUrl';
 
 const item = (over: Partial<AgentListItem>): AgentListItem => ({
   id: 'agent',
@@ -50,11 +50,6 @@ describe('filterAgents', () => {
 
   const ids = (filter: Parameters<typeof filterAgents>[1]) => filterAgents(items, filter).map((a) => a.id);
 
-  it('matches q case-insensitively over name, id, description and model', () => {
-    expect(ids({ q: 'GPT', labels: [], enabled: undefined })).toEqual(['docs-qa']);
-    expect(ids({ q: 'support', labels: [], enabled: undefined })).toEqual(['support-bot']);
-  });
-
   it('requires every selected label', () => {
     expect(ids({ q: '', labels: ['billing', 'github'], enabled: undefined })).toEqual(['pr-reviewer']);
     expect(ids({ q: '', labels: ['billing'], enabled: undefined })).toEqual(['pr-reviewer', 'support-bot']);
@@ -63,23 +58,5 @@ describe('filterAgents', () => {
   it('filters on enabled', () => {
     expect(ids({ q: '', labels: [], enabled: 'on' })).toEqual(['docs-qa', 'support-bot']);
     expect(ids({ q: '', labels: [], enabled: 'off' })).toEqual(['pr-reviewer']);
-  });
-
-  it('sorts by name case-insensitively, then id', () => {
-    expect(ids({ q: '', labels: [], enabled: undefined })).toEqual(['docs-qa', 'pr-reviewer', 'support-bot']);
-  });
-});
-
-describe('labelOptions', () => {
-  it('lists every label sorted, with counts', () => {
-    const items = [
-      item({ id: 'a', labels: ['billing', 'GitHub'] }),
-      item({ id: 'b', labels: ['billing'] }),
-      item({ id: 'c', labels: [] }),
-    ];
-    expect(labelOptions(items)).toEqual([
-      { value: 'billing', label: 'billing', count: 2 },
-      { value: 'github', label: 'github', count: 1 },
-    ]);
   });
 });

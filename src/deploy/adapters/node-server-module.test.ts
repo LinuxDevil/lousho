@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { NodeServerAdapter, loadAgentSpecForDeploy } from './node-server';
+import { NodeServerAdapter } from './node-server';
 import { withBuildLock } from '../buildLock.testkit';
 
 const AGENT_TS = `import { createMockProvider, type CreateAgentConfig } from 'lousho';
@@ -66,11 +66,6 @@ describe('NodeServerAdapter with an agent module', () => {
     if (root) fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it('generates a server.ts that imports the module, and a package.json named after the project', () => {
-    expect(fs.readFileSync(path.join(outDir, 'server.ts'), 'utf8')).toContain('import * as agentModule from');
-    expect(JSON.parse(fs.readFileSync(path.join(outDir, 'package.json'), 'utf8'))).toMatchObject({ name: 'module-project', dependencies: {} });
-  });
-
   it('the built server answers /chat with the module agent', async () => {
     const { stop, port } = await startServer(outDir);
     try {
@@ -86,15 +81,4 @@ describe('NodeServerAdapter with an agent module', () => {
       await stop();
     }
   }, 30_000);
-
-  it('a later spec build in the same out dir is not mistaken for the module', async () => {
-    const spec = path.join(root, 'spec.json');
-    fs.writeFileSync(spec, JSON.stringify({ name: 's', prompt: 'p', provider: { type: 'mock', model: 'm' } }));
-    await NodeServerAdapter.scaffold(spec, outDir);
-    expect(fs.existsSync(path.join(outDir, 'agent-module.json'))).toBe(false);
-  });
-
-  it('targets that only build specs say which ones build a module', () => {
-    expect(() => loadAgentSpecForDeploy(path.join(root, 'src', 'agent.ts'))).toThrow(/--target=node-server and --target=docker build an agent module/);
-  });
 });

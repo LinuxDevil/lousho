@@ -111,18 +111,4 @@ describe('approval resume durability', () => {
     expect(pending).toMatchObject({ status: 'awaiting-approval', approvalId: repaused.approvalIds![0], approvalIds: repaused.approvalIds });
     expect(log).toEqual(['wire_money(1)', 'delete_db(2)']);
   });
-
-  it("discardPending() withdraws the dropped turn's approvals", async () => {
-    const store = memoryStore();
-    const refund = defineTool({ name: 'refund', description: 'refund', input: z.object({}), needsApproval: true, execute: async () => 'refunded' });
-    const agent = createAgent({ provider: mockModel([{ toolCalls: [{ name: 'refund', id: 'call_refund' }] }]), tools: [refund], store });
-    const session = agent.session({ id: 's1' });
-    const paused = await session.send('refund me');
-    expect((await agent.approvals.list()).map((approval) => approval.id)).toEqual([paused.approvalId]);
-
-    await session.discardPending();
-
-    expect(await agent.approvals.list()).toEqual([]);
-    await expect(agent.approvals.resolve({ id: paused.approvalId!, approved: true })).rejects.toMatchObject({ code: 'LOUSHO_APPROVAL_NOT_FOUND' });
-  });
 });

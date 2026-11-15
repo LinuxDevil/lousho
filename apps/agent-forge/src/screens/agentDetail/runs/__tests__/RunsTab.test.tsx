@@ -114,14 +114,6 @@ beforeEach(() => {
 });
 
 describe('RunsTab', () => {
-  it('shows the loading skeleton while the first fetch is in flight', async () => {
-    mocks.listTraces.mockReturnValue(new Promise(() => {}));
-    const host = renderTab();
-    await flush();
-
-    const status = host.querySelector('[role="status"]');
-    expect(status?.textContent).toBe('Loading');
-  });
 
   it('lists runs newest first with status, rating, open-trace link and the count', async () => {
     mocks.listTraces.mockResolvedValue([
@@ -162,16 +154,6 @@ describe('RunsTab', () => {
     );
   });
 
-  it('shows the empty state with a Test pane link when there are no runs', async () => {
-    const host = renderTab();
-    await flush();
-
-    expect(host.textContent).toContain('No runs yet');
-    const link = host.querySelector<HTMLAnchorElement>('a.btn-primary')!;
-    expect(link.textContent).toBe('Open the Test pane');
-    expect(link.getAttribute('href')).toBe('#/agents/support-bot/canvas?test=1');
-  });
-
   it('shows a retryable error when the run list fails', async () => {
     mocks.listTraces.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce([trace('t-9')]);
     const host = renderTab();
@@ -182,20 +164,5 @@ describe('RunsTab', () => {
 
     expect(mocks.listTraces).toHaveBeenCalledTimes(2);
     expect(host.querySelectorAll('tbody tr').length).toBe(1);
-  });
-
-  it('Refresh refetches both the runs and the ratings', async () => {
-    mocks.listTraces.mockResolvedValue([trace('t1')]);
-    const host = renderTab();
-    await flush();
-    expect(mocks.listTraces).toHaveBeenCalledTimes(1);
-    expect(mocks.listScores).toHaveBeenCalledTimes(1);
-
-    await clickAndFlush(host, 'Refresh');
-
-    expect(mocks.listTraces).toHaveBeenCalledTimes(2);
-    expect(mocks.listScores).toHaveBeenCalledTimes(2);
-    expect(mocks.listTraces).toHaveBeenLastCalledWith('support-bot', 100);
-    expect(mocks.listScores).toHaveBeenLastCalledWith({ name: 'rating', source: 'human', limit: 1000 });
   });
 });

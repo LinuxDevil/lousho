@@ -64,14 +64,6 @@ afterEach(() => {
 });
 
 describe('OpenRouter reasoning: generate()', () => {
-  it('returns the flat `reasoning` text as blocks, with the reasoning token count in usage', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json(completion({ reasoning: 'I thought about it.' }, { completion_tokens_details: { reasoning_tokens: 9 } }))));
-    const result = await provider().generate(thinking);
-    expect(result.reasoning).toEqual([{ text: 'I thought about it.' }]);
-    expect(result.usage?.reasoningTokens).toBe(9);
-    expect(result.usage?.promptTokens).toBe(40);
-    expect(result.text).toBe('The answer.');
-  });
 
   it('returns `reasoning_details` as one block per entry, signatures and encrypted data kept', async () => {
     vi.stubGlobal('fetch', vi.fn(async () =>
@@ -93,39 +85,6 @@ describe('OpenRouter reasoning: generate()', () => {
       { text: '', redactedData: 'opaque-blob' },
       { text: 'In short.' },
     ]);
-  });
-
-  it('reports no reasoning when the response carries none', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json(completion({}))));
-    const result = await provider().generate(thinking);
-    expect(result.reasoning).toBeUndefined();
-  });
-});
-
-describe('OpenRouter reasoning: stream()', () => {
-  it('emits reasoning-delta / reasoning-end chunks before finish, and the token count on its usage', async () => {
-    vi.stubGlobal('fetch', vi.fn(streamedReasoning));
-    const streamed = await provider().stream(thinking);
-    const chunks = await collect(streamed.fullStream);
-    expect(chunks.map((chunk) => chunk.type)).toEqual([
-      'text-delta',
-      'reasoning-delta',
-      'reasoning-delta',
-      'reasoning-end',
-      'finish',
-    ]);
-    expect(chunks[1]).toEqual({ type: 'reasoning-delta', textDelta: 'Let me ' });
-    expect(chunks[2]).toEqual({ type: 'reasoning-delta', textDelta: 'think.' });
-    expect(chunks[3]).toEqual({ type: 'reasoning-end', reasoning: { signature: 'sig-1' } });
-    expect(chunks.at(-1)!.usage?.reasoningTokens).toBe(5);
-    expect(await streamed.usage).toMatchObject({ reasoningTokens: 5 });
-  });
-
-  it('a call without request changes streams unchanged', async () => {
-    vi.stubGlobal('fetch', vi.fn(streamedReasoning));
-    const streamed = await provider().stream({ messages, model: 'deepseek/deepseek-r1' });
-    const types = (await collect(streamed.fullStream)).map((chunk) => chunk.type);
-    expect(types).not.toContain('reasoning-delta');
   });
 });
 

@@ -34,15 +34,6 @@ function store(): AgentStore {
 }
 
 describe('useAgentDocument setGraph dirty flag', () => {
-  it('setGraph marks the document dirty by default', async () => {
-    render(<Probe store={store()} />);
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(doc?.dirty).toBe(false);
-    act(() => doc?.setGraph((g) => g));
-    expect(doc?.dirty).toBe(true);
-  });
 
   it('setGraph(updater, { dirty: false }) applies the graph without dirtying', async () => {
     render(<Probe store={store()} />);

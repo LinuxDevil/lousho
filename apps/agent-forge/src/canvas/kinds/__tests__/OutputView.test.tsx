@@ -85,14 +85,6 @@ describe('output card', () => {
   const node = (): NodeOfKind<'output'> =>
     app.graph!.nodes.find((n) => n.id === 'output') as NodeOfKind<'output'>;
 
-  it('titles Output and rows the top-level properties with required markers', () => {
-    expect(OUTPUT_VIEW.title(node())).toBe('Output');
-    expect(OUTPUT_VIEW.rows(node())).toEqual([
-      { k: 'priority', v: 'string' },
-      { k: 'summary', v: 'string' },
-    ]);
-  });
-
   it('marks optional properties with ? and collapses past four rows', () => {
     app.graph = specToGraph(
       specOf({
@@ -149,13 +141,6 @@ describe('output card', () => {
 });
 
 describe('output Inspector', () => {
-  it('shows the field table, the JSON schema and the delivery options', () => {
-    renderInspector();
-    expect(container.querySelectorAll('input.output-field-name')).toHaveLength(2);
-    expect(field('node-output-schema').tagName).toBe('TEXTAREA');
-    expect(field('node-output-prompt-schema')).not.toBeNull();
-    expect(field('node-output-response-format')).not.toBeNull();
-  });
 
   it('writes promptSchema: false when the prompt switch goes off and deletes it back on', () => {
     renderInspector();

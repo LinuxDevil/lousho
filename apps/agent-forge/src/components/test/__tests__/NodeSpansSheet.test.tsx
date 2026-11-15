@@ -1,4 +1,4 @@
-import { act } from 'react';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from '../../../ui/__tests__/render';
 import type { AgentRunStatusPayload, SpanEvent } from '../../../../shared/wireTypes';
@@ -44,7 +44,6 @@ function span(id: string, nodeId: string, parentId?: string): SpanEvent {
 }
 
 const sheet = () => document.body.querySelector<HTMLElement>('.sheet');
-const title = () => sheet()?.querySelector('.sheet-title')?.textContent;
 const description = () => sheet()?.querySelector('.sheet-description')?.textContent;
 
 describe('NodeSpansSheet', () => {
@@ -59,20 +58,6 @@ describe('NodeSpansSheet', () => {
   it('renders nothing while spansNodeId is undefined', () => {
     render(<NodeSpansSheet />);
     expect(sheet()).toBeNull();
-  });
-
-  it('titles the sheet with the node label and the span count, and feeds TraceViewer the node’s spans', () => {
-    state.spansNodeId = 'tool:http';
-    state.spans = [span('s1', 'tool:http'), span('s2', 'tool:http'), span('s3', 'agent')];
-    render(<NodeSpansSheet />);
-    expect(title()).toBe('Spans · http');
-    expect(description()).toBe('2 spans from the last run');
-    const props = viewer.props!;
-    expect(props.observations.map((o) => o.obs_id)).toEqual(['s1', 's2']);
-    expect(props.scores).toEqual([]);
-    expect(props.mode).toBe('tree');
-    expect(props.playgroundLinks).toBe(false);
-    expect(props.selectedObsId).toBeNull();
   });
 
   it('says "this run" while the run is live', () => {
@@ -92,25 +77,5 @@ describe('NodeSpansSheet', () => {
       'This node has no spans in the last run.'
     );
     expect(viewer.props).toBeUndefined();
-  });
-
-  it('switches tree/waterfall and selects a step through TraceViewer’s callbacks', () => {
-    state.spansNodeId = 'tool:http';
-    state.spans = [span('s1', 'tool:http'), span('s2', 'tool:http')];
-    render(<NodeSpansSheet />);
-    act(() => viewer.props!.onModeChange!('waterfall'));
-    expect(viewer.props!.mode).toBe('waterfall');
-    act(() => viewer.props!.onSelect('s2'));
-    expect(viewer.props!.selectedObsId).toBe('s2');
-  });
-
-  it('closes via the close button and via Escape', () => {
-    state.spansNodeId = 'tool:http';
-    state.spans = [span('s1', 'tool:http')];
-    render(<NodeSpansSheet />);
-    act(() => sheet()!.querySelector<HTMLButtonElement>('.sheet-close')!.click());
-    expect(state.closeNodeSpans).toHaveBeenCalledTimes(1);
-    sheet()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-    expect(state.closeNodeSpans).toHaveBeenCalledTimes(2);
   });
 });

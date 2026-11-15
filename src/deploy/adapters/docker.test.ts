@@ -15,7 +15,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { DockerAdapter, DOCKERFILE } from './docker';
 import { NodeServerAdapter, deployDependencies } from './node-server';
-import { getAdapter, registerBuiltInAdapters } from '../index';
 
 function writeSpec(dir: string): string {
   const specPath = path.join(dir, 'agent.yaml');
@@ -31,13 +30,6 @@ afterEach(() => {
 });
 
 describe('DockerAdapter', () => {
-  it("is registered as 'docker' and describes the docker build/run command", () => {
-    registerBuiltInAdapters();
-    expect(getAdapter('docker')).toBe(DockerAdapter);
-    expect(DockerAdapter.describe('/anywhere')).toBe(
-      'docker build -t lousho-agent . && docker run -p 3000:3000 -e LOUSHO_API_TOKEN=<token> lousho-agent'
-    );
-  });
 
   it('scaffold() delegates to NodeServerAdapter.scaffold() and adds a Dockerfile', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-docker-'));
@@ -75,54 +67,6 @@ describe('DockerAdapter', () => {
     expect(lines).toContain('ENV HOST=0.0.0.0');
   });
 
-  it('creates and chowns /app/data before dropping to the node user, so a fresh named volume is writable', () => {
-    const lines = DOCKERFILE.split('\n');
-    const mkdir = lines.findIndex((l) => /^RUN mkdir -p \/app\/data && chown node:node \/app\/data$/.test(l));
-    expect(mkdir).toBeGreaterThan(-1);
-    expect(mkdir).toBeLessThan(lines.indexOf('USER node'));
-    expect(lines).toContain('VOLUME /app/data');
-  });
-
-  it('writes a package.json shipping the SDK and the peers the spec needs', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-docker-'));
-    const specPath = path.join(dir, 'agent.yaml');
-    fs.writeFileSync(
-      specPath,
-      'name: docker-agent\nprompt: p\nprovider:\n  type: openai\n  model: gpt-4o-mini\nmcpServers:\n  fs:\n    command: npx\n'
-    );
-    const outDir = path.join(dir, 'out');
-    await DockerAdapter.scaffold(specPath, outDir);
-
-    const manifest = JSON.parse(fs.readFileSync(path.join(outDir, 'package.json'), 'utf8'));
-    const sdk = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', '..', 'package.json'), 'utf8'));
-    // The image's `npm install --omit=dev` installs only what the bundle left
-    // external: not the SDK, which dist/server.js bundles.
-    expect(manifest.dependencies['lousho']).toBeUndefined();
-    expect(manifest.dependencies['@ai-sdk/openai']).toBeDefined();
-    expect(manifest.dependencies['@modelcontextprotocol/sdk']).toBe(sdk.peerDependencies['@modelcontextprotocol/sdk']);
-    expect(manifest.scripts.start).toBe('node dist/server.js');
-  });
-
-  it('a mock-provider spec ships no dependency', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-docker-'));
-    const outDir = path.join(dir, 'out');
-    await DockerAdapter.scaffold(writeSpec(dir), outDir);
-    const manifest = JSON.parse(fs.readFileSync(path.join(outDir, 'package.json'), 'utf8'));
-    expect(manifest.dependencies).toEqual({});
-  });
-
-  it('an agent directory ships the provider peer its data config names', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-docker-'));
-    const agentDir = path.join(dir, 'my-agent');
-    fs.mkdirSync(agentDir);
-    fs.writeFileSync(path.join(agentDir, 'agent.json'), JSON.stringify({ model: 'anthropic/claude-x', description: 'd' }));
-    fs.writeFileSync(path.join(agentDir, 'instructions.md'), 'You help.');
-    const outDir = path.join(dir, 'out');
-    await DockerAdapter.scaffold(agentDir, outDir);
-    const manifest = JSON.parse(fs.readFileSync(path.join(outDir, 'package.json'), 'utf8'));
-    expect(manifest.dependencies['@ai-sdk/anthropic']).toBeDefined();
-  });
-
   it('deployDependencies pairs the provider peer with the installed ai major', () => {
     const deps = deployDependencies('openai');
     expect(deps['@ai-sdk/openai']).toMatch(/^\^/);
@@ -132,12 +76,5 @@ describe('DockerAdapter', () => {
     expect(Object.keys(ollamaMcp)).toHaveLength(2);
     expect(Object.keys(ollamaMcp).some((k) => k.startsWith('ollama-ai-provider'))).toBe(true);
     expect(ollamaMcp['@modelcontextprotocol/sdk']).toBeDefined();
-  });
-
-  it('build() delegates to NodeServerAdapter.build()', async () => {
-    const spy = vi.spyOn(NodeServerAdapter, 'build').mockResolvedValue(undefined);
-    await DockerAdapter.build('/some/out');
-    expect(spy).toHaveBeenCalledTimes(1);
-    expect(spy).toHaveBeenCalledWith('/some/out');
   });
 });

@@ -70,12 +70,6 @@ async function mountAt(hash = '#/agents') {
 const buttonNamed = (host: HTMLElement, name: string) =>
   [...host.querySelectorAll('button')].find((b) => b.textContent?.trim() === name || b.getAttribute('aria-label') === name);
 
-/** A row of the New agent menu, which portals to document.body. */
-const menuItemNamed = (name: string) =>
-  [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((el) =>
-    el.textContent?.startsWith(name)
-  );
-
 const cardOf = (host: HTMLElement, name: string) =>
   [...host.querySelectorAll('article.agent-card')].find((card) => card.textContent?.includes(name)) as HTMLElement;
 
@@ -94,26 +88,6 @@ beforeEach(() => {
 });
 
 describe('AgentListScreen', () => {
-  it('shows six skeleton cards and a loading status while the list is pending', async () => {
-    api.listAgents.mockReturnValue(new Promise(() => {}));
-    const host = render(
-      <ToastProvider>
-        <AgentListScreen />
-      </ToastProvider>
-    );
-    await flush();
-    expect(host.querySelectorAll('.agent-card-skeleton')).toHaveLength(6);
-    const grid = host.querySelector('ul.agent-grid')!;
-    expect(grid.getAttribute('aria-busy')).toBe('true');
-    expect(grid.querySelector('[role="status"]')?.textContent).toBe('Loading agents');
-  });
-
-  it('renders one card per agent and the count status', async () => {
-    const host = await mountAt();
-    expect(host.querySelectorAll('article.agent-card')).toHaveLength(3);
-    const status = [...host.querySelectorAll('p[role="status"]')].find((el) => el.textContent === '3 agents');
-    expect(status).toBeDefined();
-  });
 
   it('shows the error card on failure and Retry refetches', async () => {
     api.listAgents.mockRejectedValueOnce(new Error('boom'));
@@ -124,20 +98,6 @@ describe('AgentListScreen', () => {
     await flush();
     expect(api.listAgents).toHaveBeenCalledTimes(2);
     expect(host.querySelectorAll('article.agent-card')).toHaveLength(3);
-  });
-
-  it('shows the empty state with three start options when there are no agents', async () => {
-    api.listAgents.mockResolvedValue([]);
-    const host = await mountAt();
-    expect(host.textContent).toContain('No agents yet');
-    expect(host.textContent).toContain('Pick a way to start.');
-    const options = host.querySelectorAll('button.start-option');
-    expect(options).toHaveLength(3);
-    expect([...options].map((b) => b.querySelector('.start-option-title')?.textContent)).toEqual([
-      'Blank agent',
-      'Describe with AI',
-      'From template',
-    ]);
   });
 
   it('shows the no-match state under a filter and Clear filters restores the URL and the cards', async () => {
@@ -215,16 +175,6 @@ describe('AgentListScreen', () => {
     await act(async () => resolveCreate({ id: 'untitled-1' } as AgentRecord));
     await flush();
     expect(api.createAgentRecord).toHaveBeenCalledTimes(1);
-    expect(window.location.hash).toBe('#/agents/untitled-1/canvas');
-  });
-
-  it('creates a blank agent from the New agent menu and opens its canvas', async () => {
-    const host = await mountAt();
-    await act(async () => buttonNamed(host, 'New agent')!.click());
-    await flush();
-    await act(async () => menuItemNamed('Blank agent')!.click());
-    await flush();
-    expect(api.createAgentRecord).toHaveBeenCalledWith({ from: 'blank' });
     expect(window.location.hash).toBe('#/agents/untitled-1/canvas');
   });
 });

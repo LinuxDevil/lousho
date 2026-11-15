@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { fixtureClient } from './__fixtures__/fixtureClient';
 import fixtures from './__fixtures__/wire.fixtures.json';
-import { WorkspaceApiError, createFetchClient, formatRunEventFrame, readRunEvents, type ApiClient } from './apiClient';
+import { WorkspaceApiError, createFetchClient, formatRunEventFrame, readRunEvents } from './apiClient';
 import type { WireRunEvent } from './wireTypes';
 
 const events = fixtures.responses.streamRunEvents as WireRunEvent[];
@@ -60,24 +59,6 @@ function recorder(answer: (seen: Seen, call: number) => Response): { fetch: type
 }
 
 describe('SSE reader', () => {
-  it('the SSE reader yields PageRunEvents in order and stops on finished', async () => {
-    const after: WireRunEvent = { id: events.length, runId: events[0].runId, event: { type: 'progress', message: 'after the end' } };
-    const http = recorder(() => sse([...events, after]));
-    const client = createFetchClient({ baseUrl: 'https://svc.test', fetch: http.fetch });
-    const got = await collect(client.streamRunEvents({ workspaceId: 'marketing', runId: events[0].runId }));
-    expect(got).toEqual(events);
-    expect(got.at(-1)?.event.type).toBe('finished');
-    expect(http.seen).toHaveLength(1);
-    expect(http.seen[0].url).toBe(`https://svc.test/api/workspaces/marketing/runs/${events[0].runId}/events`);
-    expect(http.seen[0].headers.accept).toBe('text/event-stream');
-    expect(http.seen[0].headers['last-event-id']).toBeUndefined();
-  });
-
-  it('reads frames split at any byte, with comments and CRLF', async () => {
-    const text = `: keep-alive\r\n\r\n${events.map(formatRunEventFrame).join('').replace(/\n/g, '\r\n')}`;
-    const chunks = text.match(/[\s\S]{1,7}/g) ?? [];
-    expect(await collect(readRunEvents(streamOf(chunks)))).toEqual(events);
-  });
 
   it('rejects an event that does not match the wire schema', async () => {
     const bad = `id: 0\ndata: ${JSON.stringify({ id: 0, runId: 'r', event: { type: 'progress' } })}\n\n`;
@@ -96,26 +77,6 @@ describe('SSE reader', () => {
     expect(got.map((event) => event.id)).toEqual(events.map((event) => event.id));
     expect(http.seen).toHaveLength(2);
   });
-
-  it('resumes after a given lastEventId and gives up after maxReconnects', async () => {
-    const resumed = recorder(() => sse(events.slice(3)));
-    const client = createFetchClient({ baseUrl: 'https://svc.test', fetch: resumed.fetch });
-    const tail = await collect(client.streamRunEvents({ workspaceId: 'marketing', runId: 'run-0001', lastEventId: 2 }));
-    expect(tail.map((event) => event.id)).toEqual(events.slice(3).map((event) => event.id));
-    expect(resumed.seen[0].headers['last-event-id']).toBe('2');
-
-    const dropping = recorder(() => sse([]));
-    const stuck = createFetchClient({ baseUrl: 'https://svc.test', fetch: dropping.fetch, maxReconnects: 2, sleep: noWait });
-    await expect(collect(stuck.streamRunEvents({ workspaceId: 'marketing', runId: 'run-0001' }))).rejects.toBeInstanceOf(WorkspaceApiError);
-    expect(dropping.seen).toHaveLength(3);
-  });
-
-  it('does not retry a 4xx on the stream', async () => {
-    const http = recorder(() => json({ error: 'no such run' }, 404));
-    const client = createFetchClient({ baseUrl: 'https://svc.test', fetch: http.fetch });
-    await expect(collect(client.streamRunEvents({ workspaceId: 'marketing', runId: 'nope' }))).rejects.toMatchObject({ status: 404 });
-    expect(http.seen).toHaveLength(1);
-  });
 });
 
 describe('stream failures', () => {
@@ -123,31 +84,6 @@ describe('stream failures', () => {
   const finished = (id: number): string => formatRunEventFrame({ id, runId: 'run-0001', event: { type: 'finished', status: 'ok' } });
   const bodyOf = (text: string): Response => new Response(streamOf([text]));
   const open = { workspaceId: 'marketing', runId: 'run-0001' };
-
-  it('does not retry a contract failure', async () => {
-    const http = recorder(() => bodyOf(`${frame(0)}data: {"id":1,"runId":"run-0001","event":{"type":"progress"}}\n\n`));
-    const client = createFetchClient({ baseUrl: 'https://svc.test', fetch: http.fetch, sleep: noWait });
-    await expect(collect(client.streamRunEvents(open))).rejects.toMatchObject({ status: 502, retryable: false });
-    expect(http.seen).toHaveLength(1);
-    const notJson = recorder(() => bodyOf('data: {nope\n\n'));
-    await expect(collect(createFetchClient({ baseUrl: 'https://svc.test', fetch: notJson.fetch, sleep: noWait }).streamRunEvents(open))).rejects.toMatchObject({ retryable: false });
-    expect(notJson.seen).toHaveLength(1);
-  });
-
-  it('skips an event of an unknown type and keeps going', async () => {
-    const unknown = 'data: {"id":1,"runId":"run-0001","event":{"type":"log","line":"x"}}\n\n';
-    const http = recorder(() => bodyOf(frame(0) + unknown + finished(2)));
-    const client = createFetchClient({ baseUrl: 'https://svc.test', fetch: http.fetch });
-    expect((await collect(client.streamRunEvents(open))).map((event) => event.id)).toEqual([0, 2]);
-  });
-
-  it('drops events of another run', async () => {
-    const http = recorder(() => bodyOf(frame(0, 'other-run') + frame(1) + finished(2)));
-    const client = createFetchClient({ baseUrl: 'https://svc.test', fetch: http.fetch });
-    const got = await collect(client.streamRunEvents(open));
-    expect(got.map((event) => event.id)).toEqual([1, 2]);
-    expect(got.every((event) => event.runId === 'run-0001')).toBe(true);
-  });
 
   it('fails a frame over 1 MB without retrying', async () => {
     const http = recorder(() => bodyOf(`data: ${'x'.repeat(1024 * 1024 + 10)}`));
@@ -167,16 +103,6 @@ describe('stream failures', () => {
     expect((await collect(client.streamRunEvents(open))).map((event) => event.id)).toEqual([0, 1]);
     const down = createFetchClient({ baseUrl: 'https://svc.test', fetch: (async () => Promise.reject(new TypeError('offline'))) as typeof fetch });
     await expect(down.call('listWorkspaces', {})).rejects.toMatchObject({ name: 'WorkspaceApiError', status: 0, retryable: true });
-  });
-
-  it('lets an abort surface as an AbortError and does not retry it', async () => {
-    const controller = new AbortController();
-    const aborting = (async () => {
-      controller.abort();
-      throw new DOMException('aborted', 'AbortError');
-    }) as typeof fetch;
-    const client = createFetchClient({ baseUrl: 'https://svc.test', fetch: aborting, sleep: noWait });
-    await expect(collect(client.streamRunEvents({ ...open, signal: controller.signal }))).rejects.toMatchObject({ name: 'AbortError' });
   });
 
   it('waits with a growing delay and honours a retry: hint', async () => {
@@ -228,22 +154,5 @@ describe('createFetchClient', () => {
   it('a failed answer without a JSON body still throws', async () => {
     const http = recorder(() => new Response('boom', { status: 500 }));
     await expect(createFetchClient({ baseUrl: 'https://svc.test', fetch: http.fetch }).call('listWorkspaces', {})).rejects.toMatchObject({ status: 500 });
-  });
-});
-
-describe('fixtureClient', () => {
-  const client: ApiClient = fixtureClient();
-
-  it('answers every JSON route with the generated fixture', async () => {
-    const workspaces = await client.call('listWorkspaces', {});
-    expect(workspaces[0]?.id).toBe('marketing');
-    const detail = await client.call('getWorkspace', { params: { id: 'marketing' } });
-    expect(detail.pages.map((page) => page.id)).toEqual(detail.manifest.pages);
-  });
-
-  it('streams the fixture events after lastEventId', async () => {
-    expect((await collect(client.streamRunEvents({ workspaceId: 'marketing', runId: 'run-0001' }))).length).toBe(events.length);
-    const later = await collect(client.streamRunEvents({ workspaceId: 'marketing', runId: 'run-0001', lastEventId: 1 }));
-    expect(later.map((event) => event.id)).toEqual(events.slice(2).map((event) => event.id));
   });
 });

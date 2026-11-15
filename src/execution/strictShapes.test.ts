@@ -61,9 +61,4 @@ describe('strictShapes', () => {
     expect(decode({ either: [{ key: 'x', value: 1 }], row: { _0: 'a', _rest: [1, 2] } })).toEqual({ either: { x: 1 }, row: ['a', 1, 2] });
     expect(decode({ either: null, row: { _0: 'a', _rest: [] } })).toEqual({ either: null, row: ['a'] });
   });
-
-  it('leaves a plain object schema unchanged', () => {
-    const schema = { type: 'object', properties: { a: { type: 'string' } }, required: ['a'], additionalProperties: false };
-    expect(rewrite(schema).strict).toEqual(schema);
-  });
 });

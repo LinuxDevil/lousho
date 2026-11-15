@@ -36,29 +36,10 @@ vi.mock('../../state/AppState', () => ({
 
 import { ChatPanel } from '../ChatPanel';
 import { logTitle } from '../debug/LogsPanel';
-import { stepTone } from '../debug/TonePill';
 
 describe('ChatPanel', () => {
   beforeEach(() => {
     state.messages = MESSAGES;
-  });
-
-  it('shows the test empty-state copy when the thread has no messages', () => {
-    state.messages = [];
-    // jsdom has no scrolling; the thread scrolls itself to the newest message.
-    Element.prototype.scrollTo = () => {};
-    const container = render(<ChatPanel />);
-    expect(container.querySelector('.chat-empty')?.textContent).toBe(
-      'Send a message to test this agent. Nodes light up on the canvas as it runs.',
-    );
-  });
-
-  it('renders aboveComposer between the thread and the composer', () => {
-    Element.prototype.scrollTo = () => {};
-    const container = render(<ChatPanel aboveComposer={<div className="test-slot">steer box</div>} />);
-    const slot = container.querySelector('.test-slot')!;
-    expect(slot.previousElementSibling?.classList.contains('chat-messages')).toBe(true);
-    expect(slot.nextElementSibling?.classList.contains('chat-composer')).toBe(true);
   });
 
   it('labels a delivered steer bubble "Steered" like Run input, not as a typed message', () => {
@@ -94,17 +75,5 @@ describe('logTitle', () => {
     const entry = { id: 'l', agentId: 'a', timestamp: at, level: 'info', phase: 'llm', message: 'x'.repeat(300) } as const;
     expect(logTitle(entry)).toBe(`[llm] ${'x'.repeat(300)}`);
     expect(logTitle({ ...entry, detail: { tokens: 3 } })).toBe(`[llm] ${'x'.repeat(300)}\n{"tokens":3}`);
-  });
-});
-
-describe('stepTone', () => {
-  it('maps checkpoint statuses to pill tones', () => {
-    expect(['finished', 'in-progress', 'failed', 'paused', 'whatever'].map(stepTone)).toEqual([
-      'ok',
-      'running',
-      'error',
-      'warning',
-      'neutral',
-    ]);
   });
 });

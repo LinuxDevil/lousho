@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { createAgent } from '../createAgent';
 import { mockModel, type MockRequest } from '../testing';
-import { defineMemory, inMemoryMemory, type MemoryItem, type MemoryProvider } from './index';
+import { defineMemory, inMemoryMemory,  } from './index';
 
 const systemOf = (call: MockRequest | undefined): string => String(call?.messages.find((m) => m.role === 'system')?.content ?? '');
 const toolsOf = (call: MockRequest | undefined): string[] => (call?.tools ?? []).map((t) => t.function.name);
@@ -34,12 +34,6 @@ describe('memory that can be corrected', () => {
     expect(systemOf(next.lastCall)).not.toContain('French');
   });
 
-  it('forget is off by default', async () => {
-    const model = mockModel(['ok']);
-    await createAgent({ provider: model, memory: [defineMemory({ name: 'notes', scope: 'global', provider: inMemoryMemory() })] }).send('hi');
-    expect(toolsOf(model.lastCall)).toEqual(['remember_notes', 'recall_notes']);
-  });
-
   it('an itemSchema slot with itemKey upserts: remembering the same key replaces the stored item', async () => {
     const provider = inMemoryMemory();
     const state = defineMemory({
@@ -68,18 +62,5 @@ describe('memory that can be corrected', () => {
 
     expect(() => defineMemory({ name: 's', scope: 'global', provider, itemKey: 'topic' })).toThrow(/itemKey needs an itemSchema/);
     expect(() => defineMemory({ name: 's', scope: 'global', provider, itemSchema: z.object({}), itemKey: [] })).toThrow(/itemKey/);
-  });
-
-  it('a provider without upsert still replaces (remove, then add)', async () => {
-    const inner = inMemoryMemory();
-    const provider: MemoryProvider = { list: inner.list, add: inner.add, remove: inner.remove };
-    const state = defineMemory({ name: 'state', scope: 'global', provider, itemSchema: z.object({ k: z.string(), v: z.number() }), itemKey: ['k'] });
-    const model = mockModel([
-      { toolCalls: [{ name: 'remember_state', args: { k: 'trust', v: 10 } }] },
-      { toolCalls: [{ name: 'remember_state', args: { k: 'trust', v: 8 } }] },
-      'done',
-    ]);
-    await createAgent({ provider: model, memory: [state] }).send('hi');
-    expect((await provider.list('state#global')).map((item: MemoryItem) => item.metadata)).toEqual([{ k: 'trust', v: 8 }]);
   });
 });

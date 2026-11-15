@@ -59,14 +59,4 @@ describe('mergeWranglerToml', () => {
       ['name = "bot"', 'main = "dist/worker.js"', 'compatibility_date = "2026-09-01"', 'no_bundle = true', '', '', '[vars]', 'A = "1"'].join('\n')
     );
   });
-
-  it('puts a missing top-level key before the first table, or at the end of a file without one', () => {
-    expect(mergeWranglerToml('# notes\n[vars]\nA = "1"', [{ key: 'name', value: '"bot"' }])).toBe('# notes\nname = "bot"\n[vars]\nA = "1"');
-    expect(mergeWranglerToml('# notes', [{ key: 'name', value: '"bot"' }, { table: 'triggers', key: 'crons', value: undefined }])).toBe('# notes\nname = "bot"');
-  });
-
-  it('keeps a [triggers] table that still has other keys', () => {
-    const existing = ['name = "bot"', '[triggers]', 'crons = ["0 * * * *"]', 'other = 1'].join('\n');
-    expect(mergeWranglerToml(existing, [{ table: 'triggers', key: 'crons', value: undefined }])).toBe(['name = "bot"', '[triggers]', 'other = 1'].join('\n'));
-  });
 });

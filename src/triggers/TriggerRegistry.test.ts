@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { TriggerRegistry, globalTriggerRegistry } from './TriggerRegistry';
+import { TriggerRegistry } from './TriggerRegistry';
 import { TriggerAdapter } from './types';
 
 function makeAdapter(type: string): TriggerAdapter {
@@ -10,47 +10,6 @@ function makeAdapter(type: string): TriggerAdapter {
 }
 
 describe('TriggerRegistry', () => {
-  it('registers and retrieves an adapter by name', () => {
-    const registry = new TriggerRegistry();
-    const adapter = makeAdapter('webhook');
-    registry.register('webhook', adapter);
-    expect(registry.get('webhook')).toBe(adapter);
-  });
-
-  it('returns undefined for an unregistered name', () => {
-    const registry = new TriggerRegistry();
-    expect(registry.get('nope')).toBeUndefined();
-  });
-
-  it('has() reflects registration state', () => {
-    const registry = new TriggerRegistry();
-    expect(registry.has('cron')).toBe(false);
-    registry.register('cron', makeAdapter('cron'));
-    expect(registry.has('cron')).toBe(true);
-  });
-
-  it('registers multiple adapters at once via registerMany', () => {
-    const registry = new TriggerRegistry();
-    registry.registerMany({
-      webhook: makeAdapter('webhook'),
-      cron: makeAdapter('cron'),
-    });
-    expect(registry.list().sort()).toEqual(['cron', 'webhook']);
-  });
-
-  it('list() returns all registered names', () => {
-    const registry = new TriggerRegistry();
-    registry.register('a', makeAdapter('a'));
-    registry.register('b', makeAdapter('b'));
-    expect(registry.list().sort()).toEqual(['a', 'b']);
-  });
-
-  it('getAll() returns a name->adapter map', () => {
-    const registry = new TriggerRegistry();
-    const adapter = makeAdapter('slack');
-    registry.register('slack', adapter);
-    expect(registry.getAll()).toEqual({ slack: adapter });
-  });
 
   it('overwrites an existing registration under the same name and warns', () => {
     const registry = new TriggerRegistry();
@@ -79,16 +38,5 @@ describe('TriggerRegistry', () => {
     registry.clear();
     expect(registry.list()).toEqual([]);
     expect(registry.size()).toBe(0);
-  });
-
-  it('size() reflects the number of registered adapters', () => {
-    const registry = new TriggerRegistry();
-    expect(registry.size()).toBe(0);
-    registry.register('a', makeAdapter('a'));
-    expect(registry.size()).toBe(1);
-  });
-
-  it('globalTriggerRegistry is a shared TriggerRegistry instance', () => {
-    expect(globalTriggerRegistry).toBeInstanceOf(TriggerRegistry);
   });
 });

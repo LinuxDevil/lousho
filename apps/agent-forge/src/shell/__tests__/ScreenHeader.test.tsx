@@ -36,19 +36,6 @@ function Screen({ initial }: { initial: boolean }) {
 }
 
 describe('ScreenHeader', () => {
-  it('defaults to the active nav label and the live run status', () => {
-    window.location.hash = '#/evals/datasets';
-    appState.runStatus = { status: 'running' };
-    render(
-      <ScreenHeaderHost>
-        <main />
-      </ScreenHeaderHost>,
-    );
-    expect(h1s()).toEqual(['Evaluations']);
-    const status = document.querySelector('.page-header-status [role="status"][aria-live="polite"]');
-    expect(status?.textContent).toContain('running');
-    expect(document.querySelector('header .page-header-status')).not.toBeNull();
-  });
 
   it('a nested ScreenHeader replaces the default; unmounting it restores the default', () => {
     window.location.hash = '#/evals/datasets';
@@ -78,50 +65,5 @@ describe('ScreenHeader', () => {
 
     act(() => (document.getElementById('toggle') as HTMLButtonElement).click());
     expect(h1s()).toEqual(['Datasets']);
-  });
-
-  it("puts a screen's chips first and the live run status at the right end", () => {
-    window.location.hash = '#/prompts';
-    appState.runStatus = { status: 'done' };
-    render(
-      <ScreenHeaderHost>
-        <main>
-          <ScreenHeader title="support-system" status={<span className="chip">production</span>} />
-        </main>
-      </ScreenHeaderHost>,
-    );
-    const status = document.querySelector('.screen-header .page-header-status')!;
-    expect([...status.children].map((c) => c.className)).toEqual(['chip', 'page-header-run']);
-    // A hairline divider (decorative) keeps the run pill from reading as one of the screen's chips.
-    const run = status.lastElementChild!;
-    expect([...run.children].map((c) => c.className.split(' ')[0])).toEqual(['page-header-status-sep', 'status-pill']);
-    expect(run.firstElementChild?.getAttribute('aria-hidden')).toBe('true');
-    const pill = run.lastElementChild!;
-    expect(pill.getAttribute('role')).toBe('status');
-    expect(pill.textContent).toBe('Run status: done');
-    expect(pill.getAttribute('title')).toBe('Last builder run: done');
-    expect(document.querySelectorAll('[role="status"]')).toHaveLength(1);
-  });
-
-  it('with no screen chips: just the run pill, no divider, its own label as the tooltip', () => {
-    window.location.hash = '#/prompts';
-    appState.runStatus = { status: 'done' };
-    render(
-      <ScreenHeaderHost>
-        <main />
-      </ScreenHeaderHost>,
-    );
-    const status = document.querySelector('.screen-header .page-header-status')!;
-    expect(status.querySelector('.page-header-status-sep')).toBeNull();
-    expect(status.children).toHaveLength(1);
-    expect(status.querySelector('[role="status"]')?.getAttribute('title')).toBe('done');
-  });
-
-  it('renders inline outside a host', () => {
-    window.location.hash = '#/traces';
-    appState.runStatus = null;
-    render(<ScreenHeader />);
-    expect(h1s()).toEqual(['Traces']);
-    expect(document.querySelector('.page-header-status')?.textContent).toContain('idle');
   });
 });

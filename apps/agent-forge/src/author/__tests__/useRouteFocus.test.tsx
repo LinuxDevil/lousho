@@ -49,33 +49,24 @@ afterEach(() => {
 });
 
 describe('AuthorRouteFocus', () => {
-  it('sets edit focus for the agent on an /agents/:id/* route, on mount and on change', () => {
-    const chat = chatWith();
-    mocks.chat = chat;
-    window.location.hash = '#/agents/support-triage/canvas';
-    render(<AuthorRouteFocus />);
-    expect(chat.setFocus).toHaveBeenCalledWith({ mode: 'edit', agentId: 'support-triage' });
-    expect(chat.setFocus).toHaveBeenCalledTimes(1);
 
-    go('#/agents/beta/runs');
-    expect(chat.setFocus).toHaveBeenLastCalledWith({ mode: 'edit', agentId: 'beta' });
-    expect(chat.setFocus).toHaveBeenCalledTimes(2);
+  it('drops the route-set edit focus back to a new agent when leaving agent pages', () => {
+    const chat = chatWith({ mode: 'edit', agentId: 'alpha' });
+    mocks.chat = chat;
+    window.location.hash = '#/agents/alpha/canvas';
+    render(<AuthorRouteFocus />);
+    go('#/agents');
+    expect(chat.setFocus).toHaveBeenCalledWith({ mode: 'create' });
   });
 
-  it('leaves focus unchanged on non-agent routes', () => {
-    const chat = chatWith();
+  it('keeps an edit focus the route did not set when leaving agent pages', () => {
+    const chat = chatWith({ mode: 'edit', agentId: 'other' });
     mocks.chat = chat;
+    window.location.hash = '#/agents/alpha/canvas';
     render(<AuthorRouteFocus />);
+    vi.mocked(chat.setFocus).mockClear();
+    chat.state = { ...chat.state, focus: { mode: 'edit', agentId: 'other' } };
     go('#/traces');
-    go('#/agents'); // the bare list names no agent
-    expect(chat.setFocus).not.toHaveBeenCalled();
-  });
-
-  it('does not re-dispatch when the focus already names the route agent', () => {
-    const chat = chatWith({ mode: 'edit', agentId: 'support-triage' });
-    mocks.chat = chat;
-    window.location.hash = '#/agents/support-triage/canvas';
-    render(<AuthorRouteFocus />);
     expect(chat.setFocus).not.toHaveBeenCalled();
   });
 
@@ -91,18 +82,5 @@ describe('AuthorRouteFocus', () => {
     go('#/agents/support-triage/runs');
     go('#/agents/beta/canvas');
     expect(chat.setFocus).not.toHaveBeenCalled();
-  });
-
-  it('the next new chat re-arms route focus', () => {
-    const chat = chatWith();
-    mocks.chat = chat;
-    window.location.hash = '#/agents/support-triage/canvas';
-    render(<AuthorRouteFocus />);
-    markAuthorFocusCleared();
-    vi.mocked(chat.setFocus).mockClear();
-
-    resetAuthorFocusCleared(); // what AuthorChatContext.newChat calls
-    go('#/agents/beta/canvas');
-    expect(chat.setFocus).toHaveBeenCalledWith({ mode: 'edit', agentId: 'beta' });
   });
 });

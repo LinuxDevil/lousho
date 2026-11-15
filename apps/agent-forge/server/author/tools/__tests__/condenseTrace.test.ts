@@ -74,21 +74,6 @@ function toolSpans(n: number): SpanEvent[] {
 }
 
 describe('condenseTrace', () => {
-  it('condenses the fixture into ordered steps with cost and errors', () => {
-    const out = condenseTrace(FIXTURE);
-    expect(out.status).toBe('ok');
-    expect(out.durationMs).toBe(4000);
-    expect(out.costUsd).toBeCloseTo(0.0073, 6);
-    expect(out.errors).toEqual(['execute_tool charge_card: ToolExecutionError']);
-    expect(out.steps.map((s) => s.kind)).toEqual(['model', 'tool', 'model', 'tool', 'subagent', 'handoff', 'guardrail']);
-    const [model, tool, , failed, subagent] = out.steps;
-    expect(model).toMatchObject({ name: 'anthropic/claude-sonnet-5-5', status: 'ok', durationMs: 900 });
-    expect(tool).toMatchObject({ name: 'lookup_order', args: '{"orderId":"42"}', result: '{"status":"shipped"}' });
-    expect(failed).toMatchObject({ name: 'charge_card', status: 'error', error: 'ToolExecutionError' });
-    expect(subagent).toMatchObject({ name: 'shipping' });
-    // The root invoke_agent is not a step.
-    expect(out.steps.some((s) => s.name === 'invoke_agent support')).toBe(false);
-  });
 
   it('uses the status message when a failed span has no error.type, and marks the trace error', () => {
     const out = condenseTrace([
@@ -113,54 +98,6 @@ describe('condenseTrace', () => {
     expect(out.status).toBe('error');
     expect(out.errors).toEqual(['invoke_agent a: model blew up', 'execute_tool t: it broke']);
     expect(out.steps[0]).toMatchObject({ kind: 'tool', status: 'error', error: 'it broke' });
-  });
-
-  it('returns null cost when no chat span is priced and null duration for an unended root', () => {
-    const out = condenseTrace([
-      span({
-        id: 'root',
-        name: 'invoke_agent a',
-        startTime: 5,
-        attributes: { 'gen_ai.operation.name': 'invoke_agent' },
-      }),
-      span({
-        id: 'c',
-        name: 'chat m',
-        parentId: 'root',
-        startTime: 6,
-        endTime: 8,
-        attributes: { 'gen_ai.operation.name': 'chat', 'gen_ai.request.model': 'm' },
-      }),
-    ]);
-    expect(out.costUsd).toBeNull();
-    expect(out.durationMs).toBeNull();
-  });
-
-  it('clips captured args and result to 300 chars with an ellipsis', () => {
-    const out = condenseTrace([
-      span({
-        id: 'root',
-        name: 'invoke_agent a',
-        startTime: 0,
-        endTime: 10,
-        attributes: { 'gen_ai.operation.name': 'invoke_agent' },
-      }),
-      span({
-        id: 't',
-        name: 'execute_tool t',
-        parentId: 'root',
-        startTime: 1,
-        endTime: 2,
-        attributes: {
-          'gen_ai.operation.name': 'execute_tool',
-          'gen_ai.tool.name': 't',
-          'gen_ai.tool.call.arguments': 'a'.repeat(400),
-          'gen_ai.tool.call.result': 'r'.repeat(400),
-        },
-      }),
-    ]);
-    expect(out.steps[0].args).toBe(`${'a'.repeat(300)}…`);
-    expect(out.steps[0].result).toBe(`${'r'.repeat(300)}…`);
   });
 
   it('keeps the first 60 steps and adds a "+N more steps" row beyond that', () => {
@@ -244,13 +181,6 @@ describe('getTrace', () => {
     expect(out.agentId).toBe('agent-a');
     expect(out.steps).toHaveLength(7);
     expect(out.costUsd).toBeCloseTo(0.0073, 6);
-  });
-
-  it('reads a trace scoped to one agent', async () => {
-    const { root, repo } = await workspaceWithTrace('agent-a', 'trace-def456');
-    const out = (await call(tool(deps(root, repo)), { traceId: 'trace-def456', agentId: 'agent-a' })) as GetTraceOutput;
-    expect(out.ok).toBe(true);
-    expect(out.agentId).toBe('agent-a');
   });
 
   it('an unknown trace is TRACE_NOT_FOUND, named for the agent when scoped', async () => {

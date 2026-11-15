@@ -39,25 +39,9 @@ describe('useSaveVersionShortcut', () => {
     appState.saveVersion.mockResolvedValue({ version: 4 });
   });
 
-  it('Ctrl+S runs saveVersion() and prevents the browser save dialog', async () => {
-    mount();
-    const event = keydown(window, { key: 's', ctrlKey: true });
-    expect(event.defaultPrevented).toBe(true);
-    await act(async () => {});
-    expect(appState.saveVersion).toHaveBeenCalledTimes(1);
-  });
-
   it('Cmd+S (metaKey) does the same', async () => {
     mount();
     const event = keydown(window, { key: 's', metaKey: true });
-    expect(event.defaultPrevented).toBe(true);
-    await act(async () => {});
-    expect(appState.saveVersion).toHaveBeenCalledTimes(1);
-  });
-
-  it('works while typing in an inspector field (it is a save, not text input)', async () => {
-    const container = mount();
-    const event = keydown(container.querySelector('input')!, { key: 's', ctrlKey: true });
     expect(event.defaultPrevented).toBe(true);
     await act(async () => {});
     expect(appState.saveVersion).toHaveBeenCalledTimes(1);

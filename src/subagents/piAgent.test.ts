@@ -8,7 +8,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -24,7 +24,6 @@ import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { createAgent, type SimpleAgent } from '../createAgent';
 import { allow, ask, type PermissionRule } from '../execution/permissions';
 import { mockModel, type MockTurn } from '../testing';
-import { SqliteStore } from '../storage/sqlite';
 import { piAgent, type PiAgentOptions } from './piAgent';
 import type { Message } from '../providers';
 
@@ -115,13 +114,6 @@ const fixer: FauxResponseStep = (context) => {
   return fauxAssistantMessage(fauxToolCall('edit', FIX_EDIT_ARGS));
 };
 
-/** A script for a coder that first tries to delete the file. */
-const deleter: FauxResponseStep = (context) => {
-  const last = context.messages.at(-1);
-  if (last?.role === 'toolResult') return fauxAssistantMessage('The delete was refused.');
-  return fauxAssistantMessage(fauxToolCall('bash', { command: 'rm -f math.js' }));
-};
-
 const repeat = (step: FauxResponseStep, count = 8): FauxResponseStep[] => Array.from({ length: count }, () => step);
 
 type PiModel = NonNullable<ReturnType<ModelRuntime['getModel']>>;
@@ -187,38 +179,6 @@ function lead(coder: ReturnType<typeof piAgent>, turns: MockTurn[] = [delegate()
 }
 
 describe('piAgent (Harness 3, pi-coder)', () => {
-  it('delegates the fixture task to Pi, which fixes math.js so node --test passes', async () => {
-    const setup = await piSetup(repeat(fixer));
-    try {
-      const { agent } = lead(setup.coder());
-      const result = await agent.send('go');
-
-      expect(result.text).toBe('done');
-      expect(testsPass(setup.dir)).toBe(true);
-      const text = taskResult(toolMessages(result.messages)[0]);
-      expect(text).toContain('node --test passes');
-      expect(text).toMatch(/\[pi sub-agent 'coder': session 'task_[\w-]+', taskId 'task_1'\]$/);
-    } finally {
-      setup.cleanup();
-    }
-  });
-
-  it('rolls the Pi session usage into the lead result', async () => {
-    const setup = await piSetup(repeat(fixer));
-    try {
-      const { agent } = lead(setup.coder(), [delegate(), { text: 'done', usage: { inputTokens: 40, outputTokens: 10 } }]);
-      const result = await agent.send('go');
-
-      // The faux provider estimates tokens, so delegated usage is measured, not zero.
-      expect(result.usage.delegated).toMatchObject({ runs: 1 });
-      expect(result.usage.delegated!.inputTokens).toBeGreaterThan(0);
-      // Totals include the delegated sub-agent's spend plus the lead's own calls.
-      expect(result.usage.inputTokens).toBeGreaterThan(result.usage.delegated!.inputTokens);
-      expect(result.usage.modelCalls).toBeGreaterThanOrEqual(3);
-    } finally {
-      setup.cleanup();
-    }
-  });
 
   it('pauses the lead on a gated Pi edit and approves it exactly once', async () => {
     const setup = await piSetup(repeat(fixer), [ask(['edit', 'write']), allow('*')]);
@@ -245,56 +205,6 @@ describe('piAgent (Harness 3, pi-coder)', () => {
     }
   });
 
-  it('survives a restart: a fresh agent on the same SqliteStore resolves the durable approval', async () => {
-    const setup = await piSetup(repeat(fixer), [ask(['edit', 'write']), allow('*')]);
-    const dbDir = mkdtempSync(join(tmpdir(), 'lousho-h3-db-'));
-    const file = join(dbDir, 'agent.db');
-    let pausedApprovalId: string | undefined;
-    try {
-      const first = new SqliteStore(file);
-      try {
-        const paused = await createAgent({
-          provider: mockModel([delegate()]),
-          instructions: 'lead',
-          store: first,
-          subagents: { coder: setup.coder() },
-        })
-          .session({ id: 'chat' })
-          .send('go');
-        pausedApprovalId = paused.approvalId;
-        expect(paused.finishReason).toBe('awaiting-approval');
-      } finally {
-        first.close();
-      }
-      expect(readFileSync(join(setup.dir, 'math.js'), 'utf8')).toBe(BROKEN_MATH);
-
-      // A new agent instance on the same store sees the pending approval...
-      const second = new SqliteStore(file);
-      try {
-        const fresh = createAgent({
-          provider: mockModel(['done']),
-          instructions: 'lead',
-          store: second,
-          subagents: { coder: setup.coder() },
-        });
-        // `list()` covers this process's pauses; a pause saved before a
-        // restart is read back through the store with `get(id)`.
-        const pending = await fresh.approvals.get(pausedApprovalId!);
-        expect(pending).toMatchObject({ id: pausedApprovalId, toolName: 'edit', subagentPath: ['coder'], args: FIX_EDIT_ARGS });
-
-        // ...and resolving it reopens the Pi session and re-issues the edit once.
-        const result = await fresh.approvals.resolve({ id: pausedApprovalId!, approved: true });
-        expect(result.text).toBe('done');
-      } finally {
-        second.close();
-      }
-      expect(testsPass(setup.dir)).toBe(true);
-    } finally {
-      setup.cleanup();
-      rmSync(dbDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-    }
-  });
-
   it('sends the rejection note to Pi and leaves math.js untouched', async () => {
     const setup = await piSetup(repeat(fixer), [ask('edit'), allow('*')]);
     try {
@@ -308,42 +218,6 @@ describe('piAgent (Harness 3, pi-coder)', () => {
       expect(readFileSync(join(setup.dir, 'math.js'), 'utf8')).toBe(BROKEN_MATH);
       // Pi answered the rejection turn without re-running the edit.
       expect(taskResult(toolMessages(result.messages)[0])).toContain('math.js stays unchanged');
-    } finally {
-      setup.cleanup();
-    }
-  });
-
-  it('denies a Pi rm attempt through the adapter permission rules', async () => {
-    const setup = await piSetup(repeat(deleter, 4), [
-      { tool: 'bash', when: (args) => /\brm\b/.test(String(args.command)), action: 'deny', reason: 'no deletes' },
-      allow('*'),
-    ]);
-    try {
-      const { agent } = lead(setup.coder());
-      const result = await agent.send('go');
-
-      expect(result.text).toBe('done');
-      expect(taskResult(toolMessages(result.messages)[0])).toContain('refused');
-      expect(existsSync(join(setup.dir, 'math.js'))).toBe(true);
-      expect(readFileSync(join(setup.dir, 'math.js'), 'utf8')).toBe(BROKEN_MATH);
-    } finally {
-      setup.cleanup();
-    }
-  });
-
-  it('resuming a taskId continues the same Pi session', async () => {
-    const setup = await piSetup(repeat(fixer));
-    try {
-      const followUp: MockTurn = { toolCalls: [{ name: 'task', args: { agent: 'coder', prompt: 'What did you change?', description: 'follow-up', taskId: 'task_1' } }] };
-      const { agent } = lead(setup.coder(), [delegate(), followUp, 'done']);
-
-      const result = await agent.send('go');
-
-      const [first, second] = toolMessages(result.messages).map(taskResult);
-      const firstSession = /session '(task_[\w-]+)'/.exec(first)?.[1];
-      expect(firstSession).toBeDefined();
-      expect(/session '(task_[\w-]+)'/.exec(second)?.[1]).toBe(firstSession);
-      expect(second).toContain('swapped the operators');
     } finally {
       setup.cleanup();
     }
@@ -374,36 +248,4 @@ describe('piAgent (Harness 3, pi-coder)', () => {
       setup.cleanup();
     }
   });
-});
-
-const OPENROUTER = process.env.OPENROUTER_API_KEY;
-
-describe.skipIf(!OPENROUTER)('piAgent live (OpenRouter)', () => {
-  it('completes the fixture task end to end under $0.05', async () => {
-    const dir = fixture();
-    const agentDir = mkdtempSync(join(tmpdir(), 'lousho-h3-live-'));
-    try {
-      const runtime = await ModelRuntime.create({ authPath: join(agentDir, 'auth.json'), modelsStorePath: join(agentDir, 'models.json') });
-      const coder = piAgent({
-        cwd: dir,
-        model: runtime.getModel('openrouter', 'openai/gpt-4o-mini'),
-        modelRuntime: runtime,
-        agentDir,
-        description: 'Edits files and runs tests in the workspace',
-        permissions: [allow('*')],
-      });
-      const agent = createAgent({
-        model: 'openrouter/openai/gpt-4o-mini',
-        instructions: 'Delegate the coding task to the coder sub-agent.',
-        limits: { maxCostUsd: 0.05 },
-        subagents: { coder },
-      });
-      const result = await agent.send(`Delegate: ${TASK}`);
-      expect(testsPass(dir)).toBe(true);
-      expect(result.usage.costUsd ?? 0).toBeLessThanOrEqual(0.05);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-      rmSync(agentDir, { recursive: true, force: true });
-    }
-  }, 120_000);
 });

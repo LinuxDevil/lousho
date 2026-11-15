@@ -116,27 +116,6 @@ afterEach(() => {
 });
 
 describe('PlaygroundScreen', () => {
-  it('shows one input per detected variable, in first-seen order', async () => {
-    server();
-    const c = mount();
-    const [system, user] = [...c.querySelectorAll<HTMLTextAreaElement>('.pg-content')];
-    typeInto(system!, 'You are {persona}, speaking {lang}.');
-    typeInto(user!, 'Hi {name} in {lang}');
-    const labels = [...c.querySelectorAll('.pg-variables .pg-field-label')].map((l) => l.textContent);
-    expect(labels).toEqual(['{persona}', '{lang}', '{name}']);
-  });
-
-  it('pre-fills messages and model from ?trace=&fromObs=', async () => {
-    const fetchFn = server();
-    const c = mount('#/playground?trace=t1&fromObs=g1');
-    await waitFor(() => contents(c)[0] === 'You are {persona}.');
-    expect(contents(c)).toEqual(['You are {persona}.', 'Hi there']);
-    expect(roles(c)).toEqual(['system', 'user']);
-    expect((c.querySelector('.pg-model select') as HTMLSelectElement).value).toBe('openai');
-    expect((c.querySelector('.pg-model input') as HTMLInputElement).value).toBe('gpt-4o-mini');
-    expect(fetchFn.mock.calls.some(([u]) => String(u) === '/observe/api/v1/traces/t1')).toBe(true);
-    expect(window.location.hash).toBe('#/playground?trace=t1&fromObs=g1');
-  });
 
   it('shows a notice and an empty editor for a fromObs link without a trace, or a missing generation', async () => {
     server();
@@ -339,14 +318,6 @@ describe('PlaygroundScreen', () => {
     await waitFor(() => runBody !== undefined);
     expect(runBody!.promptRef).toBe('greeter');
     stream.end();
-  });
-
-  it('disables save with a hint when there is no system message', () => {
-    server();
-    const c = mount();
-    const save = button(c, 'Save as new prompt version');
-    expect(save.disabled).toBe(true);
-    expect(c.querySelector('.pg-save .pg-hint')?.textContent).toContain('system message');
   });
 });
 

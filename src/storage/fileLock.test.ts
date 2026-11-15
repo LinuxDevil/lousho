@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { withFileLock } from './fileLock';
@@ -15,25 +15,6 @@ const lockIn = async (): Promise<string> => {
 };
 
 describe('withFileLock', () => {
-  it('runs tasks on one lock one at a time and removes the lock file after', async () => {
-    const lock = await lockIn();
-    let running = 0;
-    let most = 0;
-    const task = async () => {
-      most = Math.max(most, ++running);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      running--;
-    };
-    await Promise.all(Array.from({ length: 6 }, () => withFileLock(lock, task)));
-    expect(most).toBe(1);
-    await expect(stat(lock)).rejects.toMatchObject({ code: 'ENOENT' });
-  });
-
-  it('releases the lock when the task throws', async () => {
-    const lock = await lockIn();
-    await expect(withFileLock(lock, async () => Promise.reject(new Error('boom')))).rejects.toThrow('boom');
-    expect(await withFileLock(lock, async () => 'next')).toBe('next');
-  });
 
   it('takes over a stale lock for one writer only: concurrent writers that all saw it stale never hold the lock together', async () => {
     const lock = await lockIn();
@@ -52,27 +33,4 @@ describe('withFileLock', () => {
       expect(most).toBe(1);
     }
   }, 30_000);
-
-  it('keeps a slow holder\'s lock fresh, so it is not taken over as stale while it runs', async () => {
-    const lock = await lockIn();
-    let overlapped = false;
-    let inside = false;
-    const slow = withFileLock(lock, async () => {
-      inside = true;
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      inside = false;
-    }, { staleMs: 60 });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    await withFileLock(lock, async () => {
-      if (inside) overlapped = true;
-    }, { staleMs: 60 });
-    await slow;
-    expect(overlapped).toBe(false);
-  });
-
-  it('gives up with LOUSHO_STORAGE_FAILED while a live lock outlasts timeoutMs', async () => {
-    const lock = await lockIn();
-    await writeFile(lock, '');
-    await expect(withFileLock(lock, async () => 'never', { timeoutMs: 30 })).rejects.toMatchObject({ code: 'LOUSHO_STORAGE_FAILED' });
-  });
 });

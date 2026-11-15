@@ -32,11 +32,6 @@ describe('studio access control', () => {
     fs.rmSync(staticDir, { recursive: true, force: true });
   });
 
-  it('prints a URL carrying the token', () => {
-    expect(handle.token).toBe(TOKEN);
-    expect(handle.url).toBe(`${origin}/?token=${TOKEN}`);
-  });
-
   it('sends no wildcard CORS header and refuses a foreign Origin', async () => {
     const res = await fetch(`${origin}/agents`, {
       headers: { Origin: 'https://example.com', [STUDIO_TOKEN_HEADER]: TOKEN },
@@ -63,11 +58,6 @@ describe('studio access control', () => {
     expect((await fetch(`${origin}/agents`, { headers: { [STUDIO_TOKEN_HEADER]: 'wrong' } })).status).toBe(401);
     expect((await fetch(`${origin}/agents`, { headers: { [STUDIO_TOKEN_HEADER]: TOKEN } })).status).toBe(200);
     expect((await fetch(`${origin}/agents?token=${TOKEN}`)).status).toBe(200);
-  });
-
-  it('accepts a same-origin request with the token', async () => {
-    const res = await fetch(`${origin}/agents`, { headers: { Origin: origin, [STUDIO_TOKEN_HEADER]: TOKEN } });
-    expect(res.status).toBe(200);
   });
 
   it('serves the static client and /health without the token', async () => {

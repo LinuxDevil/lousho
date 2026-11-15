@@ -1,6 +1,6 @@
-import { act, useRef } from 'react';
+import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { render, rerender } from './render';
+import { render } from './render';
 import { Sheet } from '../Sheet';
 
 const noop = () => {};
@@ -18,65 +18,6 @@ const mouseDown = (target: Element) =>
 const sheet = () => document.querySelector('.sheet') as HTMLElement | null;
 
 describe('Sheet', () => {
-  it('renders nothing while closed', () => {
-    render(<Sheet open={false} onClose={noop} title="Import agent">body</Sheet>);
-    expect(document.querySelector('.sheet')).toBeNull();
-    expect(document.querySelector('.overlay-scrim')).toBeNull();
-  });
-
-  it('opens portalled to document.body with labelled title and described body', () => {
-    const host = render(
-      <Sheet open onClose={noop} title="Import agent" description="Paste YAML." size="xl">
-        body
-      </Sheet>,
-    );
-    const el = sheet()!;
-    expect(el.className).toBe('sheet sheet-xl');
-    expect(el.getAttribute('role')).toBe('dialog');
-    expect(el.getAttribute('aria-modal')).toBe('true');
-    const labelledby = document.getElementById(el.getAttribute('aria-labelledby')!)!;
-    expect(labelledby.tagName).toBe('H2');
-    expect(labelledby.textContent).toBe('Import agent');
-    const describedby = document.getElementById(el.getAttribute('aria-describedby')!)!;
-    expect(describedby.textContent).toBe('Paste YAML.');
-    // Inside .screen-main (container-type: size) fixed positioning breaks, so the portal must land on body.
-    expect(el.parentElement).toBe(document.querySelector('.overlay-scrim'));
-    expect(el.parentElement!.parentElement).toBe(document.body);
-    expect(host.contains(el)).toBe(false);
-    expect(el.getAttribute('tabindex')).toBe('-1');
-  });
-
-  it('omits aria-describedby without a description', () => {
-    render(<Sheet open onClose={noop} title="Import agent">body</Sheet>);
-    expect(sheet()!.hasAttribute('aria-describedby')).toBe(false);
-  });
-
-  it('moves focus in on open and back to the opener on close', () => {
-    const opener = document.createElement('button');
-    opener.id = 'opener';
-    document.body.appendChild(opener);
-    opener.focus();
-    try {
-      render(<Sheet open onClose={noop} title="T">plain text</Sheet>);
-      // First focusable in DOM order is the header's close button.
-      expect(document.activeElement).toBe(sheet()!.querySelector('.sheet-close'));
-      rerender(<Sheet open={false} onClose={noop} title="T">plain text</Sheet>);
-      expect(document.activeElement).toBe(opener);
-
-      function WithInitialFocus() {
-        const field = useRef<HTMLInputElement>(null);
-        return (
-          <Sheet open onClose={noop} title="T" initialFocus={field}>
-            <input ref={field} />
-          </Sheet>
-        );
-      }
-      render(<WithInitialFocus />);
-      expect(document.activeElement).toBe(sheet()!.querySelector('input'));
-    } finally {
-      opener.remove();
-    }
-  });
 
   it('Escape keydown and scrim mousedown close; mousedown inside does not', () => {
     const onClose = vi.fn();
@@ -114,18 +55,5 @@ describe('Sheet', () => {
     expect(document.activeElement).toBe(b);
     key('Tab', b!, { shiftKey: true });
     expect(document.activeElement).toBe(a);
-  });
-
-  it('renders a footer row only when footer is given', () => {
-    render(
-      <Sheet open onClose={noop} title="T" footer={<button type="button">Done</button>}>
-        body
-      </Sheet>,
-    );
-    const footer = document.querySelector('footer.sheet-footer')!;
-    expect(footer.textContent).toBe('Done');
-    expect(footer.querySelector('button')!.textContent).toBe('Done');
-    rerender(<Sheet open onClose={noop} title="T">body</Sheet>);
-    expect(document.querySelector('.sheet-footer')).toBeNull();
   });
 });

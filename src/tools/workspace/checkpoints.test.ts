@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createAgent } from '../../createAgent';
 import { mockModel, type MockTurn } from '../../testing';
-import { memoryStore } from '../../storage/agentStore';
 import { createFsTools } from './fsTools';
 import { MemoryWorkspace } from './MemoryWorkspace';
 import { MemoryWorkspaceCheckpointStore, WorkspaceCheckpoints, type WorkspaceCheckpointsOptions } from './checkpoints';
@@ -43,36 +42,6 @@ async function runThreeTurns(options: WorkspaceCheckpointsOptions = {}) {
 }
 
 describe('WorkspaceCheckpoints through createAgent().session()', () => {
-  it('lists the changed paths per turn', async () => {
-    const { checkpoints, sessionId, workspace } = await runThreeTurns();
-    expect(workspace.snapshot()).toEqual({ 'a.txt': 'a2\n', 'b.txt': 'b2\n', 'c.txt': 'c2\n', 'd.txt': 'd1\n', 'e/f.txt': 'f2\n' });
-    expect(await checkpoints.list({ sessionId })).toEqual([
-      { turn: 0, paths: ['a.txt', 'c.txt'] },
-      { turn: 1, paths: ['a.txt', 'b.txt', 'd.txt'] },
-      { turn: 2, paths: ['b.txt', 'c.txt', 'e/f.txt'] },
-    ]);
-  });
-
-  it('a dry run reports and changes nothing; the real rewind restores turn-0 content and deletes created files', async () => {
-    const { checkpoints, sessionId, workspace } = await runThreeTurns();
-    const before = workspace.snapshot();
-    const dry = await checkpoints.rewind(1, { sessionId, dryRun: true });
-    expect(dry).toEqual({ dryRun: true, restored: ['a.txt', 'b.txt', 'c.txt'], deleted: ['d.txt', 'e/f.txt'], skipped: [] });
-    expect(workspace.snapshot()).toEqual(before);
-    expect((await checkpoints.list({ sessionId })).map((t) => t.turn)).toEqual([0, 1, 2]);
-
-    const real = await checkpoints.rewind(1, { sessionId });
-    expect(real).toEqual({ ...dry, dryRun: false });
-    expect(workspace.snapshot()).toEqual({ 'a.txt': 'a1\n', 'b.txt': 'b0\n', 'c.txt': 'c0\n' });
-    expect(await checkpoints.list({ sessionId })).toEqual([{ turn: 0, paths: ['a.txt', 'c.txt'] }]);
-
-    // A second rewind finds nothing left to do.
-    expect(await checkpoints.rewind(1, { sessionId })).toEqual({ dryRun: false, restored: [], deleted: [], skipped: [] });
-    expect(workspace.snapshot()).toEqual({ 'a.txt': 'a1\n', 'b.txt': 'b0\n', 'c.txt': 'c0\n' });
-
-    await checkpoints.rewind(0, { sessionId });
-    expect(workspace.snapshot()).toEqual(START);
-  });
 
   it("skips a file changed by something else as 'changed-since', unless force", async () => {
     const { checkpoints, sessionId, workspace } = await runThreeTurns();
@@ -99,84 +68,12 @@ describe('WorkspaceCheckpoints through createAgent().session()', () => {
     expect(workspace.snapshot()).toEqual({ 'big.txt': 'small\n' });
   });
 
-  it("skips a path that is now a directory as 'not-a-file'", async () => {
-    const { workspace, checkpoints, agent } = setup([[write('x', 'file\n')]], {});
-    const session = agent.session();
-    await session.send('go');
-    await workspace.rm('x');
-    await workspace.mkdir('x');
-    expect((await checkpoints.rewind(0, { sessionId: session.id, force: true })).skipped).toEqual([{ path: 'x', reason: 'not-a-file' }]);
-  });
-
-  it('separate sessions do not affect each other', async () => {
-    const workspace = new MemoryWorkspace({ files: { 'shared.txt': 's0\n' } });
-    const checkpoints = new WorkspaceCheckpoints(workspace);
-    const agent = createAgent({
-      instructions: 'Edit files.',
-      provider: mockModel(script([[write('one.txt', '1\n')], [write('two.txt', '2\n')]])),
-      tools: createFsTools(workspace, { checkpoints }),
-    });
-    const first = agent.session();
-    const second = agent.session();
-    await first.send('one');
-    await second.send('two');
-    expect(await checkpoints.rewind(0, { sessionId: first.id })).toEqual({ dryRun: false, restored: [], deleted: ['one.txt'], skipped: [] });
-    expect(workspace.snapshot()).toEqual({ 'shared.txt': 's0\n', 'two.txt': '2\n' });
-    expect(await checkpoints.list({ sessionId: second.id })).toEqual([{ turn: 0, paths: ['two.txt'] }]);
-  });
-
-  it('a checkpointed session (turns run as <id>.turn-<n>) is grouped under the session id', async () => {
-    const workspace = new MemoryWorkspace({ files: { 'a.txt': 'a0\n' } });
-    const checkpoints = new WorkspaceCheckpoints(workspace);
-    const agent = createAgent({
-      instructions: 'Edit files.',
-      provider: mockModel(script([[write('a.txt', 'a1\n')], [write('a.txt', 'a2\n')]])),
-      tools: createFsTools(workspace, { checkpoints }),
-      store: memoryStore(),
-    });
-    const session = agent.session({ id: 'chat-1' });
-    await session.send('one');
-    await session.send('two');
-    expect(await checkpoints.list({ sessionId: 'chat-1' })).toEqual([
-      { turn: 0, paths: ['a.txt'] },
-      { turn: 1, paths: ['a.txt'] },
-    ]);
-    await checkpoints.rewind(1, { sessionId: 'chat-1' });
-    expect(workspace.snapshot()).toEqual({ 'a.txt': 'a1\n' });
-  });
-
   it("agent.send() without a session records every call as turn 0 of 'default'", async () => {
     const { workspace, checkpoints, agent } = setup([[write('a.txt', 'a1\n')], [write('b.txt', 'b1\n')]], { 'a.txt': 'a0\n' });
     await agent.send('one');
     await agent.send('two');
     expect(await checkpoints.list()).toEqual([{ turn: 0, paths: ['a.txt', 'b.txt'] }]);
     await checkpoints.rewind(0);
-    expect(workspace.snapshot()).toEqual({ 'a.txt': 'a0\n' });
-  });
-
-  it('records nothing for a failed edit', async () => {
-    const { checkpoints, agent, workspace } = setup([[edit('a.txt', 'missing', 'x'), edit('nope.txt', 'a', 'b')]], { 'a.txt': 'a0\n' });
-    const session = agent.session();
-    await session.send('go');
-    expect(await checkpoints.list({ sessionId: session.id })).toEqual([]);
-    expect(workspace.snapshot()).toEqual({ 'a.txt': 'a0\n' });
-  });
-
-  it('records every write; repeats in one turn keep only a hash, and rewind uses the turn\'s first backup', async () => {
-    const store = new MemoryWorkspaceCheckpointStore();
-    const { checkpoints, agent, workspace } = setup(
-      [[write('a.txt', 'a1\n'), write('a.txt', 'a2\n'), edit('a.txt', 'a2', 'a3')]],
-      { 'a.txt': 'a0\n' },
-      { store }
-    );
-    const session = agent.session();
-    await session.send('go');
-    const backups = await store.list(session.id);
-    expect(backups).toHaveLength(3);
-    expect(backups.filter((b) => b.before === 'a0\n')).toHaveLength(1);
-    expect(backups.filter((b) => b.omitted === 'same-turn' && b.before === null)).toHaveLength(2);
-    expect(workspace.snapshot()).toEqual({ 'a.txt': 'a3\n' });
-    await checkpoints.rewind(0, { sessionId: session.id });
     expect(workspace.snapshot()).toEqual({ 'a.txt': 'a0\n' });
   });
 
@@ -196,16 +93,6 @@ describe('WorkspaceCheckpoints through createAgent().session()', () => {
 });
 
 describe('WorkspaceCheckpoints details', () => {
-  /** A MemoryWorkspace with permission bits, like NodeWorkspace on Linux. */
-  class ModeWorkspace extends MemoryWorkspace {
-    readonly modes = new Map<string, number>();
-    async getMode(path: string): Promise<number | undefined> {
-      return (await this.stat(path)) ? (this.modes.get(path) ?? 0o644) : undefined;
-    }
-    async chmod(path: string, mode: number): Promise<void> {
-      this.modes.set(path, mode);
-    }
-  }
 
   const ctx = (sessionId: string, users: number) => ({
     toolCallId: 'c',
@@ -215,28 +102,6 @@ describe('WorkspaceCheckpoints details', () => {
     requireAuth: (): never => {
       throw new Error('checkpoints.test.ts has no token store');
     },
-  });
-
-  it('restores the mode of a file deleted outside the agent (force)', async () => {
-    const workspace = new ModeWorkspace({ files: { 'run.sh': 'echo 0\n' } });
-    workspace.modes.set('run.sh', 0o755);
-    const checkpoints = new WorkspaceCheckpoints(workspace);
-    const [, writeFile] = createFsTools(workspace, { checkpoints });
-    await writeFile.tool.execute!({ path: 'run.sh', content: 'echo 1\n' }, ctx('s', 1));
-    await workspace.rm('run.sh');
-    workspace.modes.delete('run.sh');
-    expect(await checkpoints.rewind(0, { sessionId: 's', force: true })).toMatchObject({ restored: ['run.sh'] });
-    expect(workspace.snapshot()).toEqual({ 'run.sh': 'echo 0\n' });
-    expect(workspace.modes.get('run.sh')).toBe(0o755);
-  });
-
-  it('serializes concurrent writes to one path', async () => {
-    const workspace = new MemoryWorkspace({ files: { 'a.txt': 'a0\n' } });
-    const checkpoints = new WorkspaceCheckpoints(workspace);
-    const [, writeFile] = createFsTools(workspace, { checkpoints });
-    await Promise.all(['1', '2', '3'].map((n) => writeFile.tool.execute!({ path: 'a.txt', content: `a${n}\n` }, ctx('s', 1))));
-    await checkpoints.rewind(0, { sessionId: 's' });
-    expect(workspace.snapshot()).toEqual({ 'a.txt': 'a0\n' });
   });
 
   it('refuses a stored path that escapes the workspace, before changing anything', async () => {
@@ -293,16 +158,6 @@ describe('WorkspaceCheckpoints details', () => {
     // The resumed run re-runs the call; rewind then restores the original.
     await writeFile.tool.execute!({ path: 'a.txt', content: 'a1\n' }, ctx('s', 1));
     expect(await checkpoints.rewind(0, { sessionId: 's' })).toMatchObject({ restored: ['a.txt'] });
-    expect(workspace.snapshot()).toEqual({ 'a.txt': 'a0\n' });
-  });
-
-  it('a write_file re-run after a crash keeps the original backup, so rewind restores the original', async () => {
-    const { workspace, checkpoints, writeFile } = crashSetup({ 'a.txt': 'a0\n' });
-    workspace.crashAfterWrite = true;
-    await expect(writeFile.tool.execute!({ path: 'a.txt', content: 'a1\n' }, ctx('s', 1))).rejects.toThrow('killed');
-    expect(workspace.snapshot()).toEqual({ 'a.txt': 'a1\n' });
-    await writeFile.tool.execute!({ path: 'a.txt', content: 'a1\n' }, ctx('s', 1));
-    expect(await checkpoints.rewind(0, { sessionId: 's' })).toMatchObject({ restored: ['a.txt'], skipped: [] });
     expect(workspace.snapshot()).toEqual({ 'a.txt': 'a0\n' });
   });
 

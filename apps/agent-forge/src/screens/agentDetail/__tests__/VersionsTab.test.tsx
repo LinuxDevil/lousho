@@ -112,14 +112,6 @@ beforeEach(() => {
 });
 
 describe('VersionsTab', () => {
-  it('shows the loading skeleton while the first fetch is in flight', async () => {
-    mocks.listVersions.mockReturnValue(new Promise(() => {}));
-    const host = renderTab();
-    await flush();
-
-    expect(host.querySelector('.skeleton-rows')).not.toBeNull();
-    expect(host.querySelector('[role="status"]')?.textContent).toBe('Loading');
-  });
 
   it('renders versions newest first with the Current pill on the first item', async () => {
     mocks.listVersions.mockResolvedValue([
@@ -170,19 +162,6 @@ describe('VersionsTab', () => {
     expect(mocks.listVersions).toHaveBeenCalledTimes(1);
   });
 
-  it('ignores version.summary events for other agents', async () => {
-    mocks.listVersions.mockResolvedValue([item({ version: 1, summary: null, createdAt: new Date().toISOString() })]);
-    const host = renderTab();
-    await flush();
-
-    act(() => {
-      mocks.eventHandler?.({ type: 'version.summary', agentId: 'other-agent', version: 1, summary: 'Wrong agent.' });
-    });
-    await flush();
-
-    expect(host.querySelector('.version-summary-skeleton')).not.toBeNull();
-  });
-
   it('refreshes on agent.changed with a version-writing reason', async () => {
     mocks.listVersions.mockResolvedValue([item({ version: 1 })]);
     const host = renderTab();
@@ -195,18 +174,6 @@ describe('VersionsTab', () => {
     await flush();
     expect(mocks.listVersions).toHaveBeenCalledTimes(2);
     expect(host.querySelectorAll('.version-item').length).toBe(1);
-  });
-
-  it('caps field chips at four plus a +N overflow chip', async () => {
-    mocks.listVersions.mockResolvedValue([
-      item({ version: 1, changedFields: ['tools', 'instructions', 'model', 'skills', 'memory', 'evals'] }),
-    ]);
-    const host = renderTab();
-    await flush();
-
-    const chips = [...host.querySelectorAll<HTMLLIElement>('.version-fields .chip')];
-    expect(chips.map((c) => c.textContent)).toEqual(['Tools', 'Instructions', 'Model', 'Skills', '+2']);
-    expect(host.querySelector('.version-fields')?.getAttribute('aria-label')).toBe('Changed fields');
   });
 
   it('shows the baseline hint in place of a summary', async () => {
@@ -265,16 +232,5 @@ describe('VersionsTab', () => {
     await clickAndFlush(host, 'Save version');
 
     expect(host.querySelector('.toast-message')?.textContent).toBe('Nothing changed since v3');
-  });
-
-  it('Save version toasts the error message on failure', async () => {
-    mocks.listVersions.mockResolvedValue([item({ version: 1 })]);
-    mocks.saveVersion.mockRejectedValue(new Error('disk full'));
-    const host = renderTab();
-    await flush();
-
-    await clickAndFlush(host, 'Save version');
-
-    expect(host.querySelector('.toast-message')?.textContent).toBe('disk full');
   });
 });

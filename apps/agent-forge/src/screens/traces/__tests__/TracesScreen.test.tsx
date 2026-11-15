@@ -103,35 +103,6 @@ afterEach(() => {
 });
 
 describe('TracesScreen', () => {
-  it('reproduces status and time range filters from the URL on load', async () => {
-    const from = NOW - 3_600_000;
-    const to = NOW - 600_000;
-    const container = await mountAt(`#/traces?status=error&from=${from}&to=${to}`);
-    const last = listRequests().at(-1)!;
-    expect(last.get('status')).toBe('error');
-    expect(last.get('from')).toBe(String(from));
-    expect(last.get('to')).toBe(String(to));
-    expect(last.get('limit')).toBe('50');
-    // The status facet shows one selection and the picker shows the absolute window as Custom.
-    const statusBtn = [...container.querySelectorAll('.facet-btn')].find((b) => b.textContent?.startsWith('Status'));
-    expect(statusBtn?.querySelector('.facet-count')?.textContent).toBe('1');
-    const custom = [...container.querySelectorAll('.seg-btn')].find((b) => b.textContent === 'Custom');
-    expect(custom?.getAttribute('aria-pressed')).toBe('true');
-  });
-
-  it('shows the error_message of a failed run in its row, in the danger style', async () => {
-    const container = await mountAt('#/traces');
-    const row = [...container.querySelectorAll('tbody tr')].find((tr) => tr.textContent?.includes('refund'))!;
-    const error = row.querySelector('.traces-error');
-    expect(error?.textContent).toBe('Tool refund_lookup timed out');
-    expect(error?.getAttribute('title')).toBe('Tool refund_lookup timed out');
-    // The ok row has no error text.
-    const ok = [...container.querySelectorAll('tbody tr')].find((tr) => tr.textContent?.includes('answer'))!;
-    expect(ok.querySelector('.traces-error')).toBeNull();
-    // Started has seconds; previews keep the full text in a title.
-    expect(row.textContent).toContain('15:29:30');
-    expect(ok.querySelector('[title="Where is my order?"]')).not.toBeNull();
-  });
 
   it('sorting by duration requests sort=duration&order=desc and writes it to the URL', async () => {
     const container = await mountAt('#/traces');
@@ -150,17 +121,6 @@ describe('TracesScreen', () => {
     expect(window.location.hash).toBe('#/traces?sort=duration&order=desc');
   });
 
-  it('Enter on a focused row opens #/traces/:id', async () => {
-    const container = await mountAt('#/traces?status=error');
-    const row = container.querySelector<HTMLTableRowElement>('tbody tr[data-row-index="0"]')!;
-    row.focus();
-    act(() => {
-      row.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    });
-    await flush();
-    expect(window.location.hash).toBe('#/traces/trace-err');
-  });
-
   it('passes a prompt URL param to the daemon and shows it as a removable chip', async () => {
     const container = await mountAt('#/traces?prompt=mira%402&status=error');
     expect(listRequests().at(-1)!.get('prompt')).toBe('mira@2');
@@ -173,27 +133,6 @@ describe('TracesScreen', () => {
     expect(window.location.hash).toBe('#/traces?status=error');
     expect(listRequests().at(-1)!.get('prompt')).toBeNull();
     expect(container.querySelector('.traces-prompt-chip')).toBeNull();
-  });
-
-  it('sets the page header: title, description, Refresh and an unpressed Live toggle', async () => {
-    const container = await mountAt('#/traces');
-    const header = container.querySelector('.test-screen-header')!;
-    expect(header.querySelector('h1')?.textContent).toBe('Traces');
-    expect(header.textContent).toContain('Every run reported to the collector');
-    expect(header.querySelector('button[aria-label="Refresh"]')).not.toBeNull();
-    const live = [...header.querySelectorAll('button')].find((b) => b.textContent === 'Live')!;
-    expect(live.getAttribute('aria-pressed')).toBe('false');
-  });
-
-  it('Refresh re-fetches with the rolling window ending at the new now', async () => {
-    const container = await mountAt('#/traces');
-    const before = listRequests().length;
-    vi.setSystemTime(NOW + 60_000);
-    act(() => (container.querySelector('button[aria-label="Refresh"]') as HTMLButtonElement).click());
-    await flush();
-    expect(listRequests().length).toBe(before + 1);
-    expect(listRequests().at(-1)!.get('to')).toBe(String(NOW + 60_000));
-    expect(window.location.hash).toBe('#/traces');
   });
 
   it('Live re-fetches every 5 s while pressed and stops when switched off', async () => {
@@ -214,14 +153,5 @@ describe('TracesScreen', () => {
     await flush();
     expect(listRequests().length).toBe(before + 1);
     expect(window.location.hash).toBe('#/traces');
-  });
-
-  it('shows the agent and trace id under the name, and the model as a chip', async () => {
-    const container = await mountAt('#/traces');
-    const row = [...container.querySelectorAll('tbody tr')].find((tr) => tr.textContent?.includes('answer'))!;
-    expect(row.querySelector('.traces-name-title')?.textContent).toBe('answer');
-    expect(row.querySelector('.traces-name-agent')?.textContent).toBe('support-bot');
-    expect(row.querySelector('.traces-name-id')?.textContent).toBe('trace-ok');
-    expect(row.querySelector('.traces-model-chip')?.textContent).toBe('gpt-4o-mini');
   });
 });

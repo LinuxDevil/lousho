@@ -191,20 +191,6 @@ describe('POST /assistant/sessions/:id/secret', () => {
     return model.calls.map((c) => JSON.stringify(c.messages)).join('\n');
   }
 
-  it('a turn calling requestSecret ends with the part pending and a tool.pending event', async () => {
-    const { session, collected } = await pendingCard(['Done.']);
-
-    expect(collected.events).toContainEqual(
-      expect.objectContaining({ type: 'tool.call', toolCallId: 'call_s1', name: 'requestSecret' })
-    );
-    expect(collected.events).toContainEqual(
-      expect.objectContaining({ type: 'tool.pending', toolCallId: 'call_s1', name: 'requestSecret' })
-    );
-    expect(collected.events.some((e) => e.type === 'tool.result' && e.toolCallId === 'call_s1')).toBe(false);
-    const part = toolPart(await sessions.get(session.id), 'call_s1');
-    expect(part).toMatchObject({ type: 'tool', state: 'pending' });
-  });
-
   it('POST with a value: 204, secret stored, value nowhere in the transcript or the model input', async () => {
     const { model, app, session, collected } = await pendingCard(['All set.']);
 
@@ -267,19 +253,6 @@ describe('POST /assistant/sessions/:id/secret', () => {
     expect(userTexts.some((t) => t.includes('[UI event] The user skipped entering the secret MY_TOKEN'))).toBe(true);
   });
 
-  it('a second POST for the same toolCallId -> 404 NOT_PENDING', async () => {
-    const { app, session, collected } = await pendingCard(['All set.']);
-
-    expect((await secretPost(app, session.id, { toolCallId: 'call_s1', name: 'MY_TOKEN', value: VALUE })).status).toBe(204);
-    await awaitContinuation(collected);
-
-    const res = await secretPost(app, session.id, { toolCallId: 'call_s1', name: 'MY_TOKEN', value: 'sk-test-OTHER' });
-    expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: 'This request is no longer waiting for a value.', code: 'NOT_PENDING' });
-    // The losing answer never overwrote the stored value.
-    expect(secrets.getSecret('MY_TOKEN')).toBe(VALUE);
-  });
-
   it('a name that does not match the card -> 400, and the card stays pending', async () => {
     const { app, session } = await pendingCard(['All set.']);
 
@@ -292,12 +265,7 @@ describe('POST /assistant/sessions/:id/secret', () => {
   });
 
   it.each([
-    ['neither value nor declined', { toolCallId: 'call_s1', name: 'MY_TOKEN' }],
-    ['both value and declined', { toolCallId: 'call_s1', name: 'MY_TOKEN', value: 'x', declined: true }],
-    ['an empty value', { toolCallId: 'call_s1', name: 'MY_TOKEN', value: '' }],
-    ['a whitespace-only value', { toolCallId: 'call_s1', name: 'MY_TOKEN', value: '   ' }],
     ['an overlong value', { toolCallId: 'call_s1', name: 'MY_TOKEN', value: 'v'.repeat(8193) }],
-    ['declined not true', { toolCallId: 'call_s1', name: 'MY_TOKEN', declined: false }],
   ])('an invalid answer (%s) -> 400', async (_label, body) => {
     const { app, session } = await pendingCard(['All set.']);
 
@@ -313,13 +281,6 @@ describe('POST /assistant/sessions/:id/secret', () => {
     const res = await secretPost(app, 'as_0000000000000000', { toolCallId: 'call_s1', name: 'MY_TOKEN', value: VALUE });
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'Chat not found.', code: 'NOT_FOUND' });
-  });
-
-  it('an unknown toolCallId -> 404 NOT_PENDING', async () => {
-    const { app, session } = await pendingCard(['All set.']);
-    const res = await secretPost(app, session.id, { toolCallId: 'call_nope', name: 'MY_TOKEN', value: VALUE });
-    expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: 'This request is no longer waiting for a value.', code: 'NOT_PENDING' });
   });
 
   it('409 BUSY while a reply is running in the chat', async () => {

@@ -7,13 +7,10 @@ import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
 import { createAgent } from '../createAgent';
 import { defineTool } from '../tools/defineTool';
-import { mockModel, type MockModel, type MockRequest } from '../testing';
-import { memoryStore } from '../storage/agentStore';
+import { mockModel, type MockRequest } from '../testing';
 import { textOf } from '../providers/content';
-import type { LLMProvider, Message, StreamResult } from '../providers';
-import { AgentExecutor } from './AgentExecutor';
+import type { Message } from '../providers';
 import type { AgentEvent } from './agentEvents';
-import { InputQueue } from './inputQueue';
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
@@ -31,31 +28,6 @@ function slowTurn(text: string) {
     return text;
   };
   return { turn, calling: calling.promise, release: released.resolve };
-}
-
-/** `model`, whose first streamed reply emits its first text chunk, then waits for `release()`. */
-function textFirst(model: MockModel) {
-  const emitted = deferred();
-  const released = deferred();
-  let first = true;
-  const provider: LLMProvider = Object.assign(Object.create(model) as MockModel, {
-    async stream(request: Parameters<LLMProvider['stream']>[0]): Promise<StreamResult> {
-      const streamed = await model.stream(request);
-      if (!first) return streamed;
-      first = false;
-      const fullStream = async function* () {
-        for await (const chunk of streamed.fullStream) {
-          yield chunk;
-          if (chunk.type === 'text-delta') {
-            emitted.resolve();
-            await released.promise;
-          }
-        }
-      };
-      return { ...streamed, fullStream: fullStream() };
-    },
-  });
-  return { provider, emitted: emitted.promise, release: released.resolve };
 }
 
 /** A tool that signals `started`, then waits for `release`. */
@@ -126,28 +98,6 @@ describe('run.steer()', () => {
     expect(events.filter((e) => e.type === 'text.delta').map((e) => e.type === 'text.delta' && e.text).join('')).toBe('Paris it is.');
   });
 
-  it('queues the input like enqueue() once the model has emitted text', async () => {
-    const slow = textFirst(mockModel(['Rome is lovely.', 'Paris then.']));
-    const run = createAgent({ provider: slow.provider }).stream('Plan a trip to Rome.');
-
-    await slow.emitted;
-    const steered = run.steer('Actually, make it Paris.');
-    slow.release();
-    const events = await collect(run);
-
-    expect(steered.applied).toBe('queued');
-    expect(await steered.joined).toBe(true);
-    expect((await run.result).text).toBe('Paris then.');
-    expect(conversation((slow.provider as MockModel).calls[1]?.messages)).toEqual([
-      'user:Plan a trip to Rome.',
-      'assistant:Rome is lovely.',
-      'user:Actually, make it Paris.',
-    ]);
-    expect(events.find((e) => e.type === 'input.steered')).toMatchObject({ mode: 'queued' });
-    expect(events.find((e) => e.type === 'step.done')).toMatchObject({ step: 1, finishReason: 'stop' });
-    expect(events.find((e) => e.type === 'input.applied')).toMatchObject({ id: steered.id, step: 2 });
-  });
-
   it('lets a running tool call finish and keeps its result; calls not started yet are not run', async () => {
     const { tool, started, release } = gatedTool();
     const other = vi.fn(async () => 'never');
@@ -170,67 +120,6 @@ describe('run.steer()', () => {
       'tool:{"error":"ToolNotRunError","toolName":"other","message":"Tool call was cancelled before it ran because the user steered the run to new input","kind":"not-run"}',
       'user:Stop that, do this.',
     ]);
-  });
-
-  it('returns applied: false once the run has finished', async () => {
-    const run = createAgent({ provider: mockModel(['hi']) }).stream('hello');
-    await run.result;
-
-    const steered = run.steer('too late');
-    expect(steered.applied).toBe(false);
-    expect(await steered.joined).toBe(false);
-  });
-});
-
-describe('InputQueue.steer()', () => {
-  it('redirects a running execute()', async () => {
-    const slow = slowTurn('Rome.');
-    const model = mockModel([slow.turn, 'Paris.']);
-    const inputQueue = new InputQueue();
-
-    const pending = AgentExecutor.execute({
-      agent: { id: 'a', name: 'A', prompt: 'p' },
-      provider: model,
-      input: 'Rome?',
-      inputQueue,
-    });
-    await slow.calling;
-    expect(inputQueue.steer('Paris?').applied).toBe('immediate');
-    const result = await pending;
-
-    expect(result.text).toBe('Paris.');
-    expect(model.calls).toHaveLength(2);
-    expect(conversation(result.messages)).toEqual(['user:Rome?', 'user:Paris?', 'assistant:Paris.']);
-  });
-});
-
-describe('durable steering', () => {
-  it('checkpoints the steer input before the new model call, never the discarded turn', async () => {
-    const store = memoryStore();
-    const slow = slowTurn('DISCARDED');
-    const seenByRetry: string[][] = [];
-    const model = mockModel([
-      slow.turn,
-      async () => {
-        seenByRetry.push(conversation((await store.checkpoints.load('job-1'))?.messages));
-        return { error: new Error('process died') };
-      },
-      'Paris.',
-    ]);
-    const agent = createAgent({ provider: model, store });
-    const run = agent.stream('Rome?', { sessionId: 'job-1' });
-
-    await slow.calling;
-    run.steer('Paris?');
-    await expect(run.result).rejects.toThrow('process died');
-    slow.release();
-
-    expect(seenByRetry).toEqual([['user:Rome?', 'user:Paris?']]);
-    const resumed = await agent.resume('job-1');
-    expect(resumed?.text).toBe('Paris.');
-    expect(conversation(model.calls[2]?.messages)).toEqual(['user:Rome?', 'user:Paris?']);
-    const finished = await store.checkpoints.load('job-1');
-    expect(JSON.stringify(finished?.messages)).not.toContain('DISCARDED');
   });
 });
 

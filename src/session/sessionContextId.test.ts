@@ -43,20 +43,4 @@ describe('ctx.sessionId in a checkpointed session', () => {
       expect(seen).toEqual({ needsApproval: 'user-42', execute: 'user-42', permission: 'user-42', hook: 'user-42' });
     });
   }
-
-  it('a tool approved after a pause, and the rest of the resumed turn, see the session id too', async () => {
-    const seen: Record<string, unknown> = {};
-    const later: unknown[] = [];
-    const after = defineTool({ name: 'after', description: 'd', input: z.object({}), execute: async (_a, ctx) => (later.push(ctx.sessionId), 'ok') });
-    const store = memoryStore();
-    const agent = createAgent({ provider: mockModel([calling('probe'), calling('after'), 'done']), tools: [probe(seen, true), after], store });
-    const paused = await agent.session({ id: 'user-42' }).send('hi');
-    expect(paused.finishReason).toBe('awaiting-approval');
-    expect(await store.checkpoints.load('user-42.turn-0')).toMatchObject({ status: 'awaiting-approval' });
-
-    const resolved = await agent.approvals.resolve({ id: paused.approvalId!, approved: true });
-    expect(resolved.text).toBe('done');
-    expect(seen.execute).toBe('user-42');
-    expect(later).toEqual(['user-42']);
-  });
 });

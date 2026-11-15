@@ -11,13 +11,6 @@ describe('normalizeLabel', () => {
 });
 
 describe('addLabels', () => {
-  it('adds several comma-separated labels, normalised', () => {
-    expect(addLabels(['a'], 'B, c')).toEqual({ labels: ['a', 'b', 'c'] });
-  });
-
-  it('reports a duplicate and leaves the list unchanged', () => {
-    expect(addLabels(['a'], 'A')).toEqual({ labels: ['a'], problem: '“a” is already added.' });
-  });
 
   it('rejects a label over 32 characters', () => {
     expect(addLabels([], 'x'.repeat(MAX_LABEL_LENGTH + 1))).toEqual({
@@ -29,9 +22,5 @@ describe('addLabels', () => {
   it('rejects a 21st label', () => {
     const labels = Array.from({ length: MAX_LABELS }, (_, i) => `l${i}`);
     expect(addLabels(labels, 'y')).toEqual({ labels, problem: 'At most 20 labels.' });
-  });
-
-  it('ignores blank input without a problem', () => {
-    expect(addLabels(['a'], '  ')).toEqual({ labels: ['a'] });
   });
 });

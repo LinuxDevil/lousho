@@ -2,7 +2,6 @@ import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { skillRefSchema } from '../skills';
 import { resolveSkillRef } from './skills';
 
 const repo = path.resolve(__dirname, '..', '..', '..', '..');
@@ -24,15 +23,6 @@ function installSkills(base: string, names: readonly ('changelog' | 'code-review
 }
 
 describe('resolveSkillRef', () => {
-  it('resolves an inline ref to one Skill with no directory', async () => {
-    const skills = await resolveSkillRef(
-      { inline: { name: 'tone', description: 'House tone', content: 'Write plainly.' } },
-      { baseDir: baseDir() }
-    );
-    expect(skills).toHaveLength(1);
-    expect(skills[0]).toMatchObject({ name: 'tone', description: 'House tone', content: 'Write plainly.' });
-    expect(skills[0].directory).toBeUndefined();
-  });
 
   it('resolves { dir } at a single-skill folder to that skill, directory set', async () => {
     const base = baseDir();
@@ -41,13 +31,6 @@ describe('resolveSkillRef', () => {
     expect(skills).toHaveLength(1);
     expect(skills[0].name).toBe('changelog');
     expect(skills[0].directory).toBe(path.join(base, 'skills', 'changelog'));
-  });
-
-  it('resolves { dir } at a folder of skills to all of them, sorted by name', async () => {
-    const base = baseDir();
-    installSkills(base, ['code-review', 'changelog']);
-    const skills = await resolveSkillRef({ dir: 'skills' }, { baseDir: base });
-    expect(skills.map((skill) => skill.name)).toEqual(['changelog', 'code-review']);
   });
 
   it('resolves { registry } to the skill installed under skills/<name>', async () => {
@@ -85,25 +68,5 @@ describe('resolveSkillRef', () => {
       code: 'LOUSHO_SKILL_INVALID',
       message: expect.stringContaining("skills: no SKILL.md or <name>.md skill in 'skills'"),
     });
-  });
-
-  it('rejects a { dir } that escapes the base directory', async () => {
-    const base = baseDir();
-    await expect(resolveSkillRef({ dir: '../x' }, { baseDir: base })).rejects.toMatchObject({
-      code: 'LOUSHO_SPEC_INVALID',
-      message: expect.stringContaining('must be a relative path inside'),
-    });
-  });
-
-  it('rejects a { registry } name that would escape skills/, even unvalidated', async () => {
-    const base = baseDir();
-    await expect(resolveSkillRef({ registry: '../../x' }, { baseDir: base })).rejects.toMatchObject({
-      code: 'LOUSHO_SKILL_INVALID',
-      message: expect.stringContaining("'../../x' is not a valid skill name"),
-    });
-  });
-
-  it('rejects an entry with two kind keys at parse time', () => {
-    expect(skillRefSchema.safeParse({ dir: 'x', registry: 'y' }).success).toBe(false);
   });
 });

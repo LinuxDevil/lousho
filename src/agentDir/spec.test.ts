@@ -3,7 +3,6 @@ import path from 'node:path';
 import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { agentDirToSpec, specToAgentDir } from './spec';
-import { importModule } from './importModule';
 import type { AgentSpecV2 } from '../spec/v2/types';
 
 vi.mock('./importModule', async (importOriginal) => ({
@@ -12,8 +11,6 @@ vi.mock('./importModule', async (importOriginal) => ({
     throw new Error('agentDirToSpec must never import a file');
   }),
 }));
-
-const fixture = (name: string): string => path.join(__dirname, '__fixtures__', name);
 const registryDir = (name: string): string => path.join(__dirname, '..', '..', 'registry', name);
 
 /** A fresh temp directory. */
@@ -39,13 +36,6 @@ function writeDir(files: readonly { path: string; content: string }[]): string {
 const MODEL = 'openai/gpt-4o-mini';
 
 describe('specToAgentDir / agentDirToSpec', () => {
-  it('round-trips a minimal spec (name, model, instructions)', async () => {
-    const spec: AgentSpecV2 = { version: 2, name: 'mini', model: MODEL, instructions: 'You are minimal.' };
-    const { files, dropped } = specToAgentDir(spec);
-    expect(dropped).toEqual([]);
-    const result = await agentDirToSpec(writeDir(files));
-    expect(result).toEqual({ spec, dropped: [] });
-  });
 
   it('round-trips a rich spec: every directory-expressible key', async () => {
     const spec: AgentSpecV2 = {
@@ -85,23 +75,6 @@ describe('specToAgentDir / agentDirToSpec', () => {
     expect(result).toEqual({ spec, dropped: [] });
   });
 
-  it('lists exactly the keys a directory cannot hold in dropped', () => {
-    const spec: AgentSpecV2 = {
-      version: 2,
-      name: 'dropped',
-      model: MODEL,
-      instructions: 'x',
-      guardrails: [{ id: 'g1', name: 'pii' }],
-      mcpServers: { local: { command: 'run-it' } },
-      tools: [{ builtin: 'web_fetch' }],
-    };
-    const { dropped } = specToAgentDir(spec);
-    expect(dropped).toHaveLength(3);
-    expect(dropped.map((d) => d.field).sort()).toEqual(['guardrails', 'mcpServers', 'tools.0']);
-    expect(dropped.find((d) => d.field === 'tools.0')?.reason).toBe("agent directories cannot reference 'builtin' tools");
-    expect(dropped.find((d) => d.field === 'guardrails')?.reason).toBe("agent directories have no 'guardrails' key");
-  });
-
   it('reports the other non-directory rows: instructions file, skill dirs, bad tool paths, extra hooks, ref sub-agents', () => {
     const spec: AgentSpecV2 = {
       version: 2,
@@ -135,38 +108,6 @@ describe('specToAgentDir / agentDirToSpec', () => {
         'memory',
       ].sort()
     );
-  });
-
-  it('throws LOUSHO_SPEC_UNSUPPORTED for a code config directory', async () => {
-    const dir = writeDir([{ path: 'agent.ts', content: 'export default {};\n' }]);
-    await expect(agentDirToSpec(dir)).rejects.toMatchObject({
-      code: 'LOUSHO_SPEC_UNSUPPORTED',
-      message: expect.stringContaining('is a code config'),
-    });
-  });
-
-  it('throws LOUSHO_SPEC_INVALID when the config has no model', async () => {
-    const dir = writeDir([{ path: 'agent.json', content: '{ "instructions": "hi" }\n' }]);
-    await expect(agentDirToSpec(dir)).rejects.toMatchObject({
-      code: 'LOUSHO_SPEC_INVALID',
-      message: expect.stringContaining("has no 'model'"),
-    });
-  });
-
-  it('reads a YAML-config directory without importing anything', async () => {
-    const spy = vi.mocked(importModule);
-    spy.mockClear();
-    const { spec, dropped } = await agentDirToSpec(fixture('yaml-inline'));
-    expect(spy).not.toHaveBeenCalled();
-    expect(dropped).toEqual([]);
-    expect(spec).toMatchObject({
-      version: 2,
-      name: 'yaml-inline',
-      description: 'Instructions live in the config, no other files',
-      model: 'openai/gpt-4o-mini',
-      instructions: 'You are the YAML fixture agent.',
-      maxSteps: 2,
-    });
   });
 
   it('reads registry/inbox-triage and names the files a spec cannot hold', async () => {

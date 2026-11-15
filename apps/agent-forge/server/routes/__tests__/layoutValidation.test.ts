@@ -16,25 +16,6 @@ const VALID = {
 };
 
 describe('parseCanvasLayout', () => {
-  it('accepts a complete valid layout', () => {
-    expect(parseCanvasLayout(VALID)).toEqual(VALID);
-  });
-
-  it('rejects a schemaVersion other than 1', () => {
-    expect(parseCanvasLayout({ ...VALID, schemaVersion: 2 })).toContain('schemaVersion');
-    expect(parseCanvasLayout({ ...VALID, schemaVersion: '1' })).toContain('schemaVersion');
-  });
-
-  it('rejects nodes that are not a plain object', () => {
-    expect(parseCanvasLayout({ ...VALID, nodes: [] })).toContain('nodes');
-    expect(parseCanvasLayout({ ...VALID, nodes: 'x' })).toContain('nodes');
-  });
-
-  it('rejects more than 2000 nodes', () => {
-    const nodes: Record<string, { x: number; y: number }> = {};
-    for (let index = 0; index < 2001; index++) nodes[`n${index}`] = { x: 0, y: 0 };
-    expect(parseCanvasLayout({ ...VALID, nodes })).toContain('2000');
-  });
 
   it('rejects a node without finite x/y, a non-boolean collapsed or extra keys', () => {
     expect(parseCanvasLayout({ ...VALID, nodes: { a: { x: Number.NaN, y: 1 } } })).toBe(

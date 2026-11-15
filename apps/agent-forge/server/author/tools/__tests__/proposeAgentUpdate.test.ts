@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync,  } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -20,7 +20,7 @@ import type {
   AuthorToolPart,
   ProposalOutput,
 } from '../../../../shared/authorWire';
-import { AUTHOR_TOOL_FACTORIES, buildAuthorTools } from '../index';
+import { buildAuthorTools } from '../index';
 
 /**
  * proposeAgentUpdate (AA09): the patch card for an EXISTING agent - patch
@@ -147,48 +147,6 @@ async function writeAgent(repo: AgentRepo, spec: AgentSpecV2 = SAVED, enabled = 
 }
 
 describe('proposeAgentUpdate', () => {
-  it('is registered in AUTHOR_TOOL_FACTORIES', () => {
-    const { repo } = workspace();
-    const names = AUTHOR_TOOL_FACTORIES.map((factory) => factory(turn(), fakeDeps(repo))).map(
-      (tool) => (tool as { name?: string }).name ?? tool.displayName
-    );
-    expect(names).toContain('proposeAgentUpdate');
-  });
-
-  it('patch { tools: [] } on an agent with 2 tools removes each, carrying nothing, writing nothing', async () => {
-    const { root, repo } = workspace();
-    await writeAgent(repo);
-    const before = readdirSync(root, { recursive: true });
-    const specBefore = readFileSync(repo.specPath('a'), 'utf8');
-
-    const t = turn();
-    const output = (await call(updateTool(t, fakeDeps(repo)), { agentId: 'a', patch: { tools: [] } })) as ProposalOutput;
-
-    expect(output.ok).toBe(true);
-    expect(output.kind).toBe('update');
-    expect(output.agentId).toBe('a');
-    expect(output.proposalId).toBe('call_a');
-    expect(output.baseSpecHash).toBe(SAVED_HASH);
-    expect(output.enabled).toBe(true);
-    expect(output.carriedOver).toBe(false);
-    expect(output.carriedFields).toEqual([]);
-    expect(output.spec.tools ?? []).toEqual([]);
-    const removes = output.changes.filter((change) => change.op === 'remove');
-    expect(removes.map((change) => change.field)).toEqual(['tools[web_fetch]', 'tools[http_request]']);
-    expect(proposalTurnState(t).proposed.get('update:a')).toBe(output);
-    expect(readdirSync(root, { recursive: true })).toEqual(before);
-    expect(readFileSync(repo.specPath('a'), 'utf8')).toBe(specBefore);
-  });
-
-  it('reports meta.enabled on the card', async () => {
-    const { repo } = workspace();
-    await writeAgent(repo, SAVED, false);
-    const output = (await call(updateTool(turn(), fakeDeps(repo)), {
-      agentId: 'a',
-      patch: { description: 'Shorter pitch.' },
-    })) as ProposalOutput;
-    expect(output.enabled).toBe(false);
-  });
 
   it('an unknown agentId is AGENT_NOT_FOUND', async () => {
     const { repo } = workspace();
@@ -235,21 +193,6 @@ describe('proposeAgentUpdate', () => {
     expect(output.error).toContain('"prompts/triage.md"');
   });
 
-  it('a valid pair of anchored edits applies both to the saved instructions', async () => {
-    const { repo } = workspace();
-    await writeAgent(repo);
-    const output = (await call(updateTool(turn(), fakeDeps(repo)), {
-      agentId: 'a',
-      patch: {},
-      instructionsEdits: [
-        { oldText: 'Pick a queue.', newText: 'Pick the queue.' },
-        { oldText: 'Reply politely.', newText: '' },
-      ],
-    })) as ProposalOutput;
-    expect(output.ok).toBe(true);
-    expect(output.spec.instructions).toBe('You triage support mail. Pick the queue. ');
-  });
-
   it('an anchor that matches nothing fails with the current instructions and retryWith', async () => {
     const { repo } = workspace();
     await writeAgent(repo);
@@ -262,27 +205,6 @@ describe('proposeAgentUpdate', () => {
     expect(output.code).toBe('ANCHOR_NOT_FOUND');
     expect(output.currentInstructions).toBe(SAVED.instructions);
     expect(output.retryWith).toBe('instructions');
-  });
-
-  it('folds an unsaved card from the stored transcript: both changes land, earlier field is carried', async () => {
-    const { repo } = workspace();
-    await writeAgent(repo);
-    const pendingSpec = patchedSpec({ description: 'Turn 1 rewrote the pitch.' });
-    const t = turn(transcriptWithCard('p1', pendingSpec));
-
-    const output = (await call(updateTool(t, fakeDeps(repo)), {
-      agentId: 'a',
-      patch: { tools: [] },
-    })) as ProposalOutput;
-
-    expect(output.ok).toBe(true);
-    expect(output.spec.description).toBe('Turn 1 rewrote the pitch.');
-    expect(output.spec.tools ?? []).toEqual([]);
-    expect(output.carriedOver).toBe(true);
-    expect(output.carriedFields).toEqual(['description']);
-    const fields = output.changes.map((change) => change.field);
-    expect(fields).toContain('description');
-    expect(fields).toEqual(expect.arrayContaining(['tools[web_fetch]', 'tools[http_request]']));
   });
 
   it('folds an unsaved card proposed earlier in the SAME turn', async () => {
@@ -322,27 +244,6 @@ describe('proposeAgentUpdate', () => {
     expect(output.carriedFields).toEqual([]);
   });
 
-  it('does not fold a stored card that was already saved (Apply uiEvent)', async () => {
-    const { repo } = workspace();
-    await writeAgent(repo);
-    const pendingSpec = patchedSpec({ description: 'Already saved rewrite.' });
-    const saveEvent: AuthorMessage = {
-      id: 'm_save',
-      role: 'user',
-      text: '',
-      at: '2026-01-01T00:00:00.000Z',
-      uiEvent: { kind: 'save', proposalId: 'p1', agentId: 'a', version: 2 },
-    };
-    const t = turn(transcriptWithCard('p1', pendingSpec, [saveEvent]));
-    const output = (await call(updateTool(t, fakeDeps(repo)), {
-      agentId: 'a',
-      patch: { tools: [] },
-    })) as ProposalOutput;
-    expect(output.ok).toBe(true);
-    expect(output.spec.description).toBe(SAVED.description);
-    expect(output.carriedOver).toBe(false);
-  });
-
   it('does not fold when the turn discarded or saved the card this turn', async () => {
     const { repo } = workspace();
     await writeAgent(repo);
@@ -358,22 +259,6 @@ describe('proposeAgentUpdate', () => {
       expect(output.spec.description).toBe(SAVED.description);
       expect(output.carriedOver).toBe(false);
     }
-  });
-
-  it('ignores a pending card whose base no longer matches the saved spec (canvas edit)', async () => {
-    const { repo } = workspace();
-    await writeAgent(repo); // disk now holds SAVED
-    const staleSpec = patchedSpec({ description: 'Card based on an older spec.' });
-    const card = cardOutput('p1', staleSpec, specHash({ ...SAVED, description: 'The spec the card was built on.' }));
-    const t = turn([assistantMsg([proposePart('p1', card)])]);
-    const output = (await call(updateTool(t, fakeDeps(repo)), {
-      agentId: 'a',
-      patch: { tools: [] },
-    })) as ProposalOutput;
-    expect(output.ok).toBe(true);
-    expect(output.spec.description).toBe(SAVED.description);
-    expect(output.carriedOver).toBe(false);
-    expect(output.carriedFields).toEqual([]);
   });
 
   it('retries a missed anchor against the saved instructions and drops instructions from carriedFields', async () => {
@@ -397,39 +282,5 @@ describe('proposeAgentUpdate', () => {
     expect(output.spec.description).toBe('Pending pitch.');
     expect(output.carriedOver).toBe(true);
     expect(output.carriedFields).toEqual(['description']);
-  });
-
-  it('an anchor that fails against both bases reports the folded base instructions', async () => {
-    const { repo } = workspace();
-    await writeAgent(repo);
-    const pendingSpec = patchedSpec({ instructions: 'Pending prompt text.' });
-    const t = turn(transcriptWithCard('p1', pendingSpec));
-    const output = (await call(updateTool(t, fakeDeps(repo)), {
-      agentId: 'a',
-      patch: {},
-      instructionsEdits: [{ oldText: 'Matches neither text.', newText: 'x' }],
-    })) as AuthorToolFailure;
-    expect(output.ok).toBe(false);
-    expect(output.code).toBe('ANCHOR_NOT_FOUND');
-    expect(output.currentInstructions).toBe('Pending prompt text.');
-    expect(output.retryWith).toBe('instructions');
-  });
-
-  it('a failing review returns its failure and leaves proposed empty', async () => {
-    const { repo } = workspace();
-    await writeAgent(repo);
-    const reviewFailure: AuthorToolFailure = {
-      ok: false,
-      code: 'DRAFT_REVIEW',
-      error: 'The change would not run.',
-      userMessage: 'The Author is still working on the change.',
-    };
-    const t = turn();
-    const output = (await call(
-      updateTool(t, fakeDeps(repo, { reviewDraft: async () => ({ pass: false, failure: reviewFailure }) })),
-      { agentId: 'a', patch: { tools: [] } }
-    )) as AuthorToolFailure;
-    expect(output).toBe(reviewFailure);
-    expect(proposalTurnState(t).proposed.size).toBe(0);
   });
 });

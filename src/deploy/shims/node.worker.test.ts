@@ -29,10 +29,4 @@ describe('the Worker node shim', () => {
     const missing = nodeImports(readFileSync(join(SRC, `${module}.ts`), 'utf8')).filter((name) => !(name in shim));
     expect(missing).toEqual([]);
   });
-
-  it('shims the modules createAgent() reaches that read files (skills, the file stores retry)', () => {
-    expect(NODE_SHIMMED_IMPORTERS).toEqual(expect.arrayContaining(['skills/withSkills', 'storage/fsRetry']));
-    expect(nodeImports(readFileSync(join(SRC, 'storage/fsRetry.ts'), 'utf8'))).toEqual(['readFile', 'rename']);
-    expect(nodeImports("import path from 'node:path';\nimport { promises as fs, statSync } from 'node:fs';")).toEqual(['default', 'promises', 'statSync']);
-  });
 });

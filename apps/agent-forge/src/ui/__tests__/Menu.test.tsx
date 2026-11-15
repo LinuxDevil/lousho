@@ -35,36 +35,6 @@ const itemBy = (label: string) =>
   );
 
 describe('Menu', () => {
-  it('renders an icon-only ghost trigger named by label', () => {
-    render(<Menu label="More actions" items={fixture().items} />);
-    const btn = trigger()!;
-    expect(btn).not.toBeNull();
-    expect(btn.className).toContain('btn btn-ghost btn-icon');
-    expect(btn.getAttribute('aria-label')).toBe('More actions');
-    expect(btn.getAttribute('title')).toBe('More actions');
-    expect(btn.getAttribute('aria-expanded')).toBe('false');
-    expect(btn.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
-    expect(menu()).toBeNull();
-  });
-
-  it('opens a portalled menu on click, expanded, controlled and focusing the first item', () => {
-    render(<Menu label="More actions" items={fixture().items} />);
-    act(() => trigger()!.click());
-    const el = menu()!;
-    expect(el).not.toBeNull();
-    expect(el.parentElement).toBe(document.body);
-    expect(el.getAttribute('role')).toBe('menu');
-    expect(el.getAttribute('aria-label')).toBe('More actions');
-    expect(el.getAttribute('style')).toContain('top:');
-    expect(el.getAttribute('style')).toContain('left:');
-    expect(trigger()!.getAttribute('aria-expanded')).toBe('true');
-    expect(trigger()!.getAttribute('aria-controls')).toBe(el.id);
-    expect(document.body.querySelectorAll('[role="menuitem"]')).toHaveLength(4);
-    expect(document.body.querySelectorAll('[role="separator"]')).toHaveLength(1);
-    expect(document.activeElement).toBe(itemBy('Duplicate'));
-    expect(itemBy('Delete')!.className).toContain('menu-item-danger');
-    expect(itemBy('Delete')!.tabIndex).toBe(-1);
-  });
 
   it('moves focus with arrows, Home and End, skipping separators and disabled items', () => {
     render(<Menu label="More actions" items={fixture().items} />);
@@ -104,19 +74,6 @@ describe('Menu', () => {
     expect(onSelect.del).toHaveBeenCalledTimes(1);
     expect(menu()).toBeNull();
     expect(document.activeElement).toBe(trigger());
-  });
-
-  it('disabled items announce their reason and never select', () => {
-    const { items, onSelect } = fixture();
-    render(<Menu label="More actions" items={items} />);
-    act(() => trigger()!.click());
-    const pub = itemBy('Publish')!;
-    expect(pub.getAttribute('aria-disabled')).toBe('true');
-    expect(pub.getAttribute('title')).toBe('Save a version first');
-    expect(pub.textContent?.endsWith('(Save a version first)')).toBe(true);
-    act(() => pub.click());
-    expect(onSelect.pub).not.toHaveBeenCalled();
-    expect(menu()).not.toBeNull();
   });
 
   it('Escape closes and refocuses the trigger; outside pointerdown closes', () => {

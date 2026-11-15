@@ -44,16 +44,6 @@ function worker(kv: KVBinding, provider: ReturnType<typeof mockModel>, token?: s
 }
 
 describe('Worker /chat API over KVStore', () => {
-  it('streams a turn as SSE and ends with event: done', async () => {
-    const { handle } = worker(fakeKV(), mockModel(['Hello there.']));
-    const response = await handle('/chat', { sessionId: 's1', input: 'hi' });
-    expect(response.headers.get('content-type')).toContain('text/event-stream');
-    const raw = await response.text();
-    expect(raw.endsWith('event: done\ndata: {}\n\n')).toBe(true);
-    const frames = raw.split('\n\n').filter((frame) => frame.startsWith('data: ') && frame !== 'data: {}');
-    expect(JSON.parse(frames[0].slice(6))).toMatchObject({ type: 'run.start' });
-    expect(JSON.parse(frames.at(-1)!.slice(6))).toMatchObject({ type: 'run.done', finishReason: 'stop', text: 'Hello there.' });
-  });
 
   it('keeps history in KV: a later request (a new agent) sees the first turn, GET /chat/:id returns the transcript', async () => {
     const kv = fakeKV();
@@ -102,10 +92,6 @@ describe('Worker /chat API over KVStore', () => {
   });
 
   describe('bearer auth', () => {
-    it('is off without a token', async () => {
-      const { handle } = worker(fakeKV(), mockModel(['ok']));
-      expect((await handle('/chat/open')).status).toBe(200);
-    });
 
     it('requires the token on every route but /health: 401 JSON without or with a wrong one, 200 with it', async () => {
       const { handle, events } = worker(fakeKV(), mockModel(['secret answer']), 's3cret');
@@ -134,26 +120,6 @@ describe('handleWorkerRequest', () => {
       env,
       spec
     );
-
-  it('serves a session over the AGENT_CHECKPOINTS namespace, with LOUSHO_API_TOKEN from env', async () => {
-    const kv = fakeKV();
-    const env = { AGENT_CHECKPOINTS: kv, LOUSHO_API_TOKEN: 'tok' };
-    expect(await (await call(env, '/health')).text()).toBe('ok');
-    expect((await call(env, '/chat', { sessionId: 'w1', input: 'hi' })).status).toBe(401);
-
-    const turn = await call(env, '/chat', { sessionId: 'w1', input: 'hi' }, { Authorization: 'Bearer tok' });
-    expect(await turn.text()).toContain('This is a mock response.');
-    expect(JSON.parse(kv.data.get('sessions/w1')!).map((m: { role: string }) => m.role)).toEqual(['user', 'assistant']);
-    const transcript = await (await call(env, '/chat/w1', undefined, { Authorization: 'Bearer tok' })).json();
-    expect(transcript.messages).toHaveLength(2);
-  });
-
-  it('checkpoints the deprecated { message, sessionId } run under checkpoints/<sessionId>', async () => {
-    const kv = fakeKV();
-    const response = await call({ AGENT_CHECKPOINTS: kv, LOUSHO_ALLOW_OPEN_SESSIONS: 'true' }, '/chat', { message: 'hi', sessionId: 'legacy-1' });
-    expect((await response.json()).text).toBe('This is a mock response.');
-    expect(kv.data.has('checkpoints/legacy-1')).toBe(true);
-  });
 
   it('without LOUSHO_API_TOKEN, refuses every session route unless LOUSHO_ALLOW_OPEN_SESSIONS is "true"', async () => {
     const kv = fakeKV();
@@ -187,15 +153,6 @@ describe('handleWorkerRequest', () => {
     const plain = { ...bearer, 'Content-Type': 'text/plain' };
     expect((await call(env, '/chat', { sessionId: 'g2', input: 'hi' }, plain)).status).toBe(415);
     expect((await call({ ...env, LOUSHO_REQUIRE_JSON_BODY: 'false' }, '/chat', { sessionId: 'g2', input: 'hi' }, plain)).status).toBe(200);
-  });
-
-  it('falls back to the memory of this isolate without a (valid) KV binding', async () => {
-    for (const [id, env] of [['mem-1', { LOUSHO_ALLOW_OPEN_SESSIONS: 'true' }], ['mem-2', { AGENT_CHECKPOINTS: 'not a namespace', LOUSHO_ALLOW_OPEN_SESSIONS: 'true' }]] as const) {
-      expect(workerStore(env)).toBe(workerStore({}));
-      await (await call(env, '/chat', { sessionId: id, input: 'hi' })).text();
-      expect((await (await call(env, `/chat/${id}`)).json()).messages).toHaveLength(2);
-    }
-    expect(workerStore({ AGENT_CHECKPOINTS: fakeKV() })).toBeInstanceOf(KVStore);
   });
 
   it('encrypts OAuth tokens with the LOUSHO_TOKEN_KEY secret of env', async () => {

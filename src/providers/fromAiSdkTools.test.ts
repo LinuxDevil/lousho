@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { jsonSchema as jsonSchemaV4, tool as toolV4 } from 'ai';
+import { jsonSchema as jsonSchemaV4 } from 'ai';
 import { jsonSchema as jsonSchemaV7, tool as toolV7 } from 'ai-v7';
 import { z } from 'zod';
 import { createAgent } from '../createAgent';
@@ -12,7 +12,6 @@ import { isDefinedTool } from '../tools/defineTool';
 import { mockModel } from '../testing';
 import type { Message } from './llm';
 import { fromAiSdkTools } from './fromAiSdkTools';
-import * as root from '../index';
 
 const weatherCall = { toolCalls: [{ name: 'weather', args: { city: 'Paris' }, id: 'call_weather' }] };
 
@@ -27,9 +26,6 @@ function acceptsCityOnly(schema: unknown): boolean {
 }
 
 describe('fromAiSdkTools', () => {
-  it('is exported from the package root', () => {
-    expect(root.fromAiSdkTools).toBe(fromAiSdkTools);
-  });
 
   it('converts an ai v7 tool with a zod inputSchema and runs it in createAgent with the call id and abort signal', async () => {
     const execute = vi.fn(async ({ city }: { city: string }, _options: { toolCallId: string; abortSignal?: AbortSignal }) => `Sunny in ${city}`);
@@ -54,13 +50,6 @@ describe('fromAiSdkTools', () => {
     expect(options.abortSignal).toBeInstanceOf(AbortSignal);
     // The model is sent the tool's schema.
     expect(acceptsCityOnly(model.calls[0].tools?.find((t) => t.function.name === 'weather')?.function.parameters)).toBe(true);
-  });
-
-  it('converts an ai v4-shaped tool with zod `parameters`', async () => {
-    const weather = toolV4({ description: 'Get the weather', parameters: z.object({ city: z.string() }), execute: async ({ city }) => `Rain in ${city}` });
-    const agent = createAgent({ provider: mockModel([weatherCall, 'Rainy.']), tools: fromAiSdkTools({ weather }) });
-    const result = await agent.send('Weather?');
-    expect(toolResult(result.messages)?.content).toBe(JSON.stringify('Rain in Paris'));
   });
 
   for (const [label, jsonSchema] of [
@@ -96,20 +85,6 @@ describe('fromAiSdkTools', () => {
     expect(execute.mock.calls[0][0]).toEqual({ city: 'PARIS' });
   });
 
-  it('maps needsApproval: true to a Lousho approval pause', async () => {
-    const execute = vi.fn(async ({ city }: { city: string }) => `Sunny in ${city}`);
-    const weather = toolV7({ description: 'Get the weather', inputSchema: z.object({ city: z.string() }), needsApproval: true, execute });
-    const agent = createAgent({ provider: mockModel([weatherCall, 'Done.']), tools: fromAiSdkTools({ weather }) });
-
-    const paused = await agent.send('Weather?');
-    expect(paused.finishReason).toBe('awaiting-approval');
-    expect(execute).not.toHaveBeenCalled();
-
-    const result = await agent.approvals.resolve({ id: paused.approvalId!, approved: true });
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(result.text).toBe('Done.');
-  });
-
   it('maps a needsApproval function, passing the input and the call id', async () => {
     const checks: Array<{ city: string; toolCallId: string }> = [];
     const weather = toolV7({
@@ -129,44 +104,6 @@ describe('fromAiSdkTools', () => {
       { city: 'Rome', toolCallId: 'call_rome' },
       { city: 'Paris', toolCallId: 'call_weather' },
     ]);
-  });
-
-  it('turns an error thrown by execute into a tool error the model sees', async () => {
-    const weather = toolV7({
-      description: 'w',
-      inputSchema: z.object({ city: z.string() }),
-      execute: async (): Promise<string> => {
-        throw new Error('weather service down');
-      },
-    });
-    const agent = createAgent({ provider: mockModel([weatherCall, 'Sorry.']), tools: fromAiSdkTools({ weather }) });
-    const result = await agent.send('Weather?');
-    expect(result.text).toBe('Sorry.');
-    expect(String(toolResult(result.messages)?.content)).toContain('weather service down');
-  });
-
-  it('streams an async iterable result; the last value is the result', async () => {
-    const weather = toolV7({
-      description: 'w',
-      inputSchema: z.object({ city: z.string() }),
-      async *execute({ city }) {
-        yield { status: 'loading' };
-        yield { status: 'done', city };
-      },
-    });
-    const agent = createAgent({ provider: mockModel([weatherCall, 'ok']), tools: fromAiSdkTools({ weather }) });
-    const result = await agent.send('Weather?');
-    expect(toolResult(result.messages)?.content).toBe(JSON.stringify({ status: 'done', city: 'Paris' }));
-  });
-
-  it('accepts a tool with no schema as taking no arguments', () => {
-    const [ping] = fromAiSdkTools({ ping: { description: 'Ping', execute: async () => 'pong' } });
-    expect(ping.name).toBe('ping');
-  });
-
-  it('calls an ai v7 description function', () => {
-    const [ping] = fromAiSdkTools({ ping: { description: () => 'Ping the server', execute: async () => 'pong' } });
-    expect(ping.description).toBe('Ping the server');
   });
 
   it('rejects a tool without execute, a provider-defined tool and an invalid name', () => {

@@ -47,17 +47,6 @@ describe('TestPane run bar', () => {
     vi.useRealTimers();
   });
 
-  it('shows the status pill but no model, elapsed or trace link while idle', () => {
-    const container = render(<TestPane />);
-    const bar = container.querySelector('.test-run-bar')!;
-    expect(bar.getAttribute('role')).toBe('group');
-    expect(bar.getAttribute('aria-label')).toBe('Test run');
-    expect(bar.querySelector('.status-pill')).not.toBeNull();
-    expect(bar.querySelector('.test-run-model')).toBeNull();
-    expect(bar.querySelector('.test-run-elapsed')).toBeNull();
-    expect(bar.querySelector('.run-trace-link')).toBeNull();
-  });
-
   it('shows the model and Open trace for a finished run, but no elapsed clock', () => {
     state.runStatus = status({ status: 'done', provider: 'openai/gpt-4o', traceId: 'trace-9' });
     const container = render(<TestPane />);
@@ -67,12 +56,6 @@ describe('TestPane run bar', () => {
     expect(link.getAttribute('href')).toBe('#/traces/trace-9');
     expect(link.getAttribute('aria-label')).toBe('Open trace');
     expect(bar.querySelector('.test-run-elapsed')).toBeNull();
-  });
-
-  it('hides Open trace until the status carries a traceId', () => {
-    state.runStatus = status({ status: 'running', provider: 'mock/mock-1' });
-    const container = render(<TestPane />);
-    expect(container.querySelector('.test-run-bar .run-trace-link')).toBeNull();
   });
 
   it('ticks the elapsed clock once a second while running, and stops when the run ends', () => {

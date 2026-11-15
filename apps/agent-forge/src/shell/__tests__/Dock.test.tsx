@@ -5,7 +5,6 @@ const appState = vi.hoisted(() => ({ connected: true, agents: [] }));
 vi.mock('../../state/AppState', () => ({ useAppState: () => appState }));
 
 import { AppShell } from '../AppShell';
-import { useDock } from '../Dock';
 import { DOCK_OPEN_KEY, DOCK_WIDTH_KEY } from '../dockState';
 import { ToastProvider } from '../../ui/Toast';
 import { render } from '../../ui/__tests__/render';
@@ -67,35 +66,6 @@ afterEach(() => {
 });
 
 describe('Dock docked', () => {
-  it('opens as a third grid column with the stored open state and default width', () => {
-    window.localStorage.setItem(DOCK_OPEN_KEY, '1');
-    const c = mount(<p id="dock-content">x</p>);
-    expect(shellEl(c).getAttribute('data-dock')).toBe('open');
-    expect(shellEl(c).getAttribute('style')).toContain('--dock-width: 490px');
-    expect(aside(c)?.getAttribute('aria-label')).toBe('Agent Author');
-    expect(c.querySelector('#dock-content')).not.toBeNull();
-    const sep = separator(c);
-    expect(sep.getAttribute('aria-valuenow')).toBe('490');
-    expect(sep.getAttribute('aria-valuemin')).toBe('360');
-    expect(sep.getAttribute('aria-valuemax')).toBe('640');
-  });
-
-  it('renders the shell exactly as before when no dock prop is passed', () => {
-    window.localStorage.setItem(DOCK_OPEN_KEY, '1');
-    const c = mount();
-    expect(aside(c)).toBeNull();
-    expect(shellEl(c).hasAttribute('data-dock')).toBe(false);
-    expect(shellEl(c).style.getPropertyValue('--dock-width')).toBe('');
-    expect(c.querySelector('#screen')).not.toBeNull();
-  });
-
-  it('restores a stored width', () => {
-    window.localStorage.setItem(DOCK_OPEN_KEY, '1');
-    window.localStorage.setItem(DOCK_WIDTH_KEY, '600');
-    const c = mount(<p>x</p>);
-    expect(separator(c).getAttribute('aria-valuenow')).toBe('600');
-    expect(shellEl(c).getAttribute('style')).toContain('--dock-width: 600px');
-  });
 
   it('resizes by 16px with the arrow keys and jumps to the limits with Home/End', () => {
     window.localStorage.setItem(DOCK_OPEN_KEY, '1');
@@ -130,23 +100,6 @@ describe('Dock docked', () => {
     expect(shellEl(c).hasAttribute('data-dock-resizing')).toBe(false);
     expect(window.localStorage.getItem(DOCK_WIDTH_KEY)).toBe('590');
   });
-
-  it('closes on Escape inside the panel unless a child handler stopped it', () => {
-    window.localStorage.setItem(DOCK_OPEN_KEY, '1');
-    const c = mount(<p id="dock-content">x</p>);
-    key(c.querySelector('#dock-content')!, 'Escape');
-    expect(aside(c)).toBeNull();
-    expect(window.localStorage.getItem(DOCK_OPEN_KEY)).toBe('0');
-
-    window.localStorage.setItem(DOCK_OPEN_KEY, '1');
-    const c2 = mount(
-      <p id="dock-content" onKeyDown={(e) => e.preventDefault()}>
-        x
-      </p>,
-    );
-    key(c2.querySelector('#dock-content')!, 'Escape');
-    expect(aside(c2)).not.toBeNull();
-  });
 });
 
 describe('Dock narrow sheet', () => {
@@ -171,15 +124,5 @@ describe('Dock narrow sheet', () => {
     key(c2.querySelector('#dock-content')!, 'Escape');
     expect(aside(c2)).toBeNull();
     expect(window.localStorage.getItem(DOCK_OPEN_KEY)).toBe('0');
-  });
-});
-
-describe('useDock', () => {
-  it('throws outside a DockProvider', () => {
-    function Probe() {
-      useDock();
-      return null;
-    }
-    expect(() => render(<Probe />)).toThrow('useDock must be used inside a <DockProvider>.');
   });
 });

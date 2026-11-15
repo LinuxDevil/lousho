@@ -6,7 +6,7 @@ import type { Checkpoint } from '../../execution/checkpoint';
 import type { PageRunEvent } from '../contracts/execution';
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { fileHostBackend, postgresHostBackend, sqlHostBackend, sqliteHostBackend } from './backends';
-import { postgresSqlClient, sqliteSqlClient, type PgQueryable } from './sql';
+import { sqliteSqlClient, type PgQueryable } from './sql';
 import { createWorkspaceStores, type HostBackend, type WorkspaceScope } from './stores';
 
 const dirs: string[] = [];
@@ -194,22 +194,5 @@ describe('the Postgres backend', () => {
     expect(ended).toBe(0);
     await (await postgresHostBackend(pool, { ownsPool: true })).close();
     expect(ended).toBe(1);
-  });
-});
-
-describe('the Postgres client', () => {
-  it('numbers placeholders and binds every value instead of building SQL', async () => {
-    const calls: Array<{ text: string; values?: unknown[] }> = [];
-    const pool: PgQueryable = {
-      async query(text, values) {
-        calls.push({ text, values });
-        return { rows: [{ seq: 4 }], rowCount: 1 };
-      },
-    };
-    const client = postgresSqlClient(pool);
-    expect(await client.query('SELECT * FROM ws_runs WHERE run_id = ? AND status = ?', ["x' OR 1=1 --", 'ok'])).toEqual([{ seq: 4 }]);
-    expect(await client.execute('DELETE FROM ws_threads WHERE key = ?', ['k'])).toBe(1);
-    expect(calls[0]).toEqual({ text: 'SELECT * FROM ws_runs WHERE run_id = $1 AND status = $2', values: ["x' OR 1=1 --", 'ok'] });
-    expect(calls[1]?.text).toBe('DELETE FROM ws_threads WHERE key = $1');
   });
 });

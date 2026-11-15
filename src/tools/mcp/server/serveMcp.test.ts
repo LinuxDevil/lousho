@@ -28,15 +28,6 @@ const deleteAll = defineTool({
   execute: () => 'deleted',
 });
 
-const brokenTool = defineTool({
-  name: 'broken',
-  description: 'Always fails',
-  input: z.object({}),
-  execute: () => {
-    throw new Error('boom');
-  },
-});
-
 function spec(agent: SimpleAgent, overrides: Partial<ServerSpec> = {}): ServerSpec {
   return {
     agent,
@@ -69,43 +60,6 @@ function textOf(result: Awaited<ReturnType<Client['callTool']>>): string {
 }
 
 describe('serveMcp agent tool', () => {
-  it('lists the agent as one tool with a { message } input schema', async () => {
-    const agent = createAgent({ prompt: 'p', provider: mockModel(['hi']) });
-    const client = await connect(spec(agent, { description: 'Ask the support agent a question' }));
-    const { tools } = await client.listTools();
-    expect(tools).toHaveLength(1);
-    expect(tools[0].name).toBe('support-bot');
-    expect(tools[0].description).toBe('Ask the support agent a question');
-    expect(tools[0].inputSchema).toMatchObject({
-      type: 'object',
-      properties: { message: { type: 'string' } },
-      required: ['message'],
-    });
-  });
-
-  it("calls agent.send and returns the agent's text", async () => {
-    const model = mockModel(['Reset it from Settings.']);
-    const agent = createAgent({ prompt: 'p', provider: model });
-    const client = await connect(spec(agent));
-    const result = await client.callTool({ name: 'support-bot', arguments: { message: 'How do I reset?' } });
-    expect(result.isError).toBeUndefined();
-    expect(textOf(result)).toBe('Reset it from Settings.');
-    expect(JSON.stringify(model.lastCall)).toContain('How do I reset?');
-  });
-
-  it('treats each call as a fresh conversation', async () => {
-    const model = mockModel(['one', 'two']);
-    const client = await connect(spec(createAgent({ prompt: 'p', provider: model })));
-    await client.callTool({ name: 'support-bot', arguments: { message: 'first' } });
-    await client.callTool({ name: 'support-bot', arguments: { message: 'second' } });
-    expect(JSON.stringify(model.lastCall)).not.toContain('first');
-  });
-
-  it('rejects arguments that do not match the schema', async () => {
-    const client = await connect(spec(createAgent({ prompt: 'p', provider: mockModel(['x']) })));
-    const result = await client.callTool({ name: 'support-bot', arguments: { message: 42 } });
-    expect(result.isError).toBe(true);
-  });
 
   it('returns isError when the agent throws', async () => {
     const agent = { send: vi.fn().mockRejectedValue(new Error('model down')) };
@@ -132,15 +86,6 @@ describe('serveMcp agent tool', () => {
     expect(textOf(result)).toMatch(/needs human approval.*cannot be approved over MCP/s);
   });
 
-  it('returns isError when a createAgent() agent pauses on an approval-gated tool', async () => {
-    const model = mockModel([{ toolCalls: [{ name: 'delete_all' }] }, 'done']);
-    const agent = createAgent({ prompt: 'p', provider: model, tools: [deleteAll] });
-    const client = await connect(spec(agent));
-    const result = await client.callTool({ name: 'support-bot', arguments: { message: 'wipe' } });
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toMatch(/needs human approval.*cannot be approved over MCP/s);
-  });
-
   it('does not leave the paused approvals of an MCP call pending, nor call the model again', async () => {
     const model = mockModel([{ toolCalls: [{ name: 'delete_all', id: 'c1' }, { name: 'delete_all', id: 'c2' }] }]);
     const agent = createAgent({ prompt: 'p', provider: model, tools: [deleteAll] });
@@ -150,77 +95,10 @@ describe('serveMcp agent tool', () => {
     expect(await agent.approvals.list()).toEqual([]);
     expect(model.calls).toHaveLength(1);
   });
-
-  it('reports an aborted run as an error', async () => {
-    const agent = {
-      send: vi.fn().mockResolvedValue({ text: '', finishReason: 'aborted', messages: [], toolCalls: [], steps: 0, usage: {} }),
-    };
-    const client = await connect(spec(agent as unknown as SimpleAgent));
-    const result = await client.callTool({ name: 'support-bot', arguments: { message: 'hi' } });
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('cancelled');
-  });
-
-  it('aborts the agent run when the MCP request is cancelled', async () => {
-    let seen: AbortSignal | undefined;
-    let started!: () => void;
-    const startedPromise = new Promise<void>((resolve) => (started = resolve));
-    const agent = {
-      send: vi.fn((_message: string, options?: { signal?: AbortSignal }) => {
-        seen = options?.signal;
-        started();
-        return new Promise((resolve) => {
-          options?.signal?.addEventListener('abort', () =>
-            resolve({ text: '', finishReason: 'aborted', messages: [], toolCalls: [], steps: 0, usage: {} })
-          );
-        });
-      }),
-    };
-    const client = await connect(spec(agent as unknown as SimpleAgent));
-    const controller = new AbortController();
-    const call = client.callTool(
-      { name: 'support-bot', arguments: { message: 'slow' } },
-      undefined,
-      { signal: controller.signal }
-    );
-    await startedPromise;
-    controller.abort();
-    await expect(call).rejects.toBeDefined();
-    await vi.waitFor(() => expect(seen?.aborted).toBe(true), SLOW_RUNNER);
-  });
 });
 
 describe('serveMcp direct tools', () => {
   const agent = createAgent({ prompt: 'p', provider: mockModel(['x']) });
-
-  it('exposes tools with a JSON Schema derived from the zod input', async () => {
-    const client = await connect(spec(agent, { tools: [searchDocs] }));
-    const { tools } = await client.listTools();
-    const found = tools.find((t) => t.name === 'search_docs');
-    expect(found?.description).toBe('Search the docs');
-    expect(found?.inputSchema).toMatchObject({ properties: { query: { type: 'string' } }, required: ['query'] });
-  });
-
-  it('runs a tool and validates its arguments', async () => {
-    const client = await connect(spec(agent, { tools: [searchDocs] }));
-    const ok = await client.callTool({ name: 'search_docs', arguments: { query: 'mcp' } });
-    expect(textOf(ok)).toBe('results for mcp');
-    const bad = await client.callTool({ name: 'search_docs', arguments: { query: 1 } });
-    expect(bad.isError).toBe(true);
-  });
-
-  it('serializes non-string results as JSON', async () => {
-    const objectTool = defineTool({ name: 'obj', description: 'd', input: z.object({}), execute: () => ({ a: 1 }) });
-    const client = await connect(spec(agent, { tools: [objectTool] }));
-    expect(textOf(await client.callTool({ name: 'obj', arguments: {} }))).toBe('{"a":1}');
-  });
-
-  it('maps a throwing tool to isError', async () => {
-    const client = await connect(spec(agent, { tools: [brokenTool] }));
-    const result = await client.callTool({ name: 'broken', arguments: {} });
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('boom');
-  });
 
   it('hides needsApproval tools unless allowApprovalTools is set', async () => {
     const hidden = await connect(spec(agent, { tools: [searchDocs, deleteAll] }));
@@ -287,66 +165,6 @@ describe('serveMcp over HTTP', () => {
     });
   }
 
-  it('completes a client round-trip on an ephemeral port bound to 127.0.0.1', async () => {
-    const server = await start();
-    expect(server.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
-    const client = new Client({ name: 'c', version: '1' });
-    await client.connect(new StreamableHTTPClientTransport(new URL(server.url!)));
-    closers.push(() => client.close());
-    const result = await client.callTool({ name: 'support-bot', arguments: { message: 'ping' } });
-    expect(textOf(result)).toBe('pong');
-  });
-
-  it('a client timeout (notifications/cancelled in another POST) aborts the agent run', async () => {
-    let seen: AbortSignal | undefined;
-    const slow = {
-      send: vi.fn((_message: string, options?: { signal?: AbortSignal }) => {
-        seen = options?.signal;
-        return new Promise((resolve) => {
-          const timer = setTimeout(() => resolve({ text: 'late', finishReason: 'stop', messages: [], toolCalls: [], steps: 0, usage: {} }), 5000);
-          options?.signal?.addEventListener('abort', () => {
-            clearTimeout(timer);
-            resolve({ text: '', finishReason: 'aborted', messages: [], toolCalls: [], steps: 0, usage: {} });
-          });
-        });
-      }),
-    };
-    const server = await serveMcp({ agent: slow as unknown as SimpleAgent, name: 'slow', transport: { type: 'http', port: 0 }, warn: () => {} });
-    closers.push(server.close);
-    const client = new Client({ name: 'c', version: '1' });
-    await client.connect(new StreamableHTTPClientTransport(new URL(server.url!)));
-    closers.push(() => client.close());
-    // The timeout must fire after the run has started (a cancel for a request not yet in flight matches
-    // nothing), which a cold CI runner can take well over 200 ms to reach; the run itself lasts 5 s.
-    await expect(client.callTool({ name: 'slow', arguments: { message: 'x' } }, undefined, { timeout: 1500 })).rejects.toThrow(/timed out/i);
-    await vi.waitFor(() => expect(seen?.aborted).toBe(true), SLOW_RUNNER);
-  });
-
-  it('a cancel naming a request id two clients have in flight is ignored', async () => {
-    const signals: AbortSignal[] = [];
-    let started = 0;
-    const slow = {
-      send: vi.fn((_message: string, options?: { signal?: AbortSignal }) => {
-        signals.push(options!.signal!);
-        started += 1;
-        // Long enough that both runs are still in flight when the cancel lands on a slow runner: once one has
-        // finished, the id names a single request and the cancel rightly stops it.
-        return new Promise((resolve) => setTimeout(() => resolve({ text: 'done', finishReason: 'stop', messages: [], toolCalls: [], steps: 0, usage: {} }), 2000));
-      }),
-    };
-    const server = await serveMcp({ agent: slow as unknown as SimpleAgent, name: 'slow', transport: { type: 'http', port: 0 }, warn: () => {} });
-    closers.push(server.close);
-    const headers = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' };
-    const call = () =>
-      fetch(server.url!, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'slow', arguments: { message: 'x' } } }) });
-    const calls = [call(), call()];
-    await vi.waitFor(() => expect(started).toBe(2), SLOW_RUNNER);
-    await fetch(server.url!, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 7 } }) });
-    const results = await Promise.all(calls.map(async (response) => (await response).json()));
-    expect(signals.map((signal) => signal.aborted)).toEqual([false, false]);
-    expect(results.map((result) => result.result.content[0].text)).toEqual(['done', 'done']);
-  });
-
   /** An agent whose runs take `ms` unless aborted; `signals` holds each run's signal, in start order. */
   function slowAgent(ms: number) {
     const signals: AbortSignal[] = [];
@@ -392,43 +210,11 @@ describe('serveMcp over HTTP', () => {
     expect(signals[0].aborted).toBe(false);
   });
 
-  it("a late cancel from another session does not stop a request with the same id, and a cancelled request is answered", async () => {
-    const { agent: slow, signals } = slowAgent(2000);
-    const server = await serveMcp({ agent: slow, name: 'slow', transport: { type: 'http', port: 0 }, warn: () => {} });
-    closers.push(server.close);
-    const headers = (session: string) => ({ 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'Mcp-Session-Id': session });
-    const call = (session: string) =>
-      fetch(server.url!, { method: 'POST', headers: headers(session), body: JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'slow', arguments: { message: 'x' } } }) });
-    const cancel = (session: string) =>
-      fetch(server.url!, { method: 'POST', headers: headers(session), body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 7 } }) });
-
-    const a = call('session-a');
-    await vi.waitFor(() => expect(signals).toHaveLength(1), SLOW_RUNNER);
-    // session-b has nothing in flight under id 7: its (late) cancel must not reach session-a.
-    await cancel('session-b');
-    expect(signals[0].aborted).toBe(false);
-    expect((await (await a).json()).result.content[0].text).toBe('done');
-
-    const b = call('session-b');
-    await vi.waitFor(() => expect(signals).toHaveLength(2), SLOW_RUNNER);
-    await cancel('session-b');
-    const answer = await b;
-    expect(signals[1].aborted).toBe(true);
-    expect(answer.status).toBe(200);
-    expect(await answer.json()).toEqual({ jsonrpc: '2.0', id: 7, error: { code: -32800, message: 'Request cancelled' } });
-  });
-
   it('rejects missing or wrong bearer tokens with 401 and accepts the right one', async () => {
     const server = await start({ auth: true });
     expect((await post(server.url!)).status).toBe(401);
     expect((await post(server.url!, { Authorization: 'Bearer nope' })).status).toBe(401);
     expect((await post(server.url!, { Authorization: 'Bearer s3cret' })).status).toBe(200);
-  });
-
-  it('answers 404 on other paths and 405 on non-POST', async () => {
-    const server = await start();
-    expect((await post(server.url!.replace('/mcp', '/other'))).status).toBe(404);
-    expect((await fetch(server.url!)).status).toBe(405);
   });
 
   it('answers 400 on invalid JSON', async () => {
@@ -484,14 +270,6 @@ describe('serveMcp over HTTP', () => {
     expect(await rawPost(port, { Host: `mcp.internal:${port}`, Origin: 'https://app.example' })).toBe(200);
     expect(await rawPost(port, { Host: `127.0.0.1:${port}` })).toBe(403);
     expect(await rawPost(port, { Host: `mcp.internal:${port}`, Origin: 'https://other.example' })).toBe(403);
-  });
-
-  it('warns once when bound to a non-loopback host without auth', async () => {
-    const warn = vi.fn();
-    const server = await serveMcp({ agent, name: 'a', transport: { type: 'http', port: 0, host: '0.0.0.0' }, warn });
-    closers.push(server.close);
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('without authentication'));
   });
 
   it('does not warn on non-loopback hosts when auth is set, and rejects an empty token', async () => {

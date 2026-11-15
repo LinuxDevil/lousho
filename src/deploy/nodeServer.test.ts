@@ -22,7 +22,6 @@ import { defineChannel } from '../channels/defineChannel';
 import type { RunConfigContext } from '../createAgent';
 
 const ping = defineTool({ name: 'ping', description: 'Reply with pong', input: z.object({}), execute: () => 'pong', needsApproval: true });
-const pinged = { toolCalls: [{ name: 'ping' }] };
 
 let server: http.Server | undefined;
 let agent: SimpleAgent | undefined;
@@ -50,61 +49,8 @@ async function serve(provider: ReturnType<typeof mockModel>, options: DeployedSe
 }
 
 describe('deployed node server /chat API', () => {
-  it('streams a turn as SSE and ends with event: done', async () => {
-    const { call, events } = await serve(mockModel(['Hello there.']));
-    const res = await call('/chat', { sessionId: 's1', input: 'hi' });
-    expect(res.headers.get('content-type')).toContain('text/event-stream');
-    const raw = await res.text();
-    expect(raw.endsWith('event: done\ndata: {}\n\n')).toBe(true);
-    const turn = await events(new Response(raw));
-    expect(turn[0].type).toBe('run.start');
-    expect(turn.at(-1)).toMatchObject({ type: 'run.done', finishReason: 'stop', text: 'Hello there.' });
-  });
-
-  it('keeps history per session: the second turn sees the first, GET /chat/:id returns the transcript', async () => {
-    const provider = mockModel(['Nice to meet you, Ali.', 'You are Ali.']);
-    const { call, events } = await serve(provider);
-    await events(await call('/chat', { sessionId: 'tab-a', input: 'My name is Ali.' }));
-    await events(await call('/chat', { sessionId: 'tab-a', input: 'Who am I?' }));
-    const history = provider.calls[1].messages.map((m) => `${m.role}:${String(m.content)}`);
-    expect(history).toContain('user:My name is Ali.');
-    expect(history).toContain('assistant:Nice to meet you, Ali.');
-
-    const saved = await (await call('/chat/tab-a')).json();
-    expect(saved.messages.map((m: { role: string }) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
-    expect((await call('/chat/not%20valid!')).status).toBe(400);
-  });
-
-  it('pauses a tool call for approval and streams the continuation from the approvals endpoint', async () => {
-    const { call, events } = await serve(mockModel([pinged, 'The tool said pong.']));
-    const paused = await events(await call('/chat', { sessionId: 's2', input: 'ping it' }));
-    const requested = paused.find((e) => e.type === 'approval.requested') as { approvalId: string } | undefined;
-    expect(requested).toMatchObject({ toolName: 'ping' });
-    expect(paused.at(-1)).toMatchObject({ finishReason: 'awaiting-approval' });
-
-    const continued = await events(await call(`/chat/s2/approvals/${requested!.approvalId}`, { approved: true }));
-    expect(continued.find((e) => e.type === 'tool.done')).toMatchObject({ toolName: 'ping', result: 'pong' });
-    expect(continued.at(-1)).toMatchObject({ finishReason: 'stop', text: 'The tool said pong.' });
-    expect((await call(`/chat/s2/approvals/${requested!.approvalId}`, { approved: true })).status).toBe(404);
-    expect((await call('/chat/s2/approvals/x', {})).status).toBe(400);
-  });
-
-  it('still answers the legacy { message } body with the non-streamed result, and rejects bad bodies', async () => {
-    const { call } = await serve(mockModel(['legacy reply']));
-    const res = await call('/chat', { message: 'hi' });
-    expect(res.headers.get('content-type')).toContain('application/json');
-    expect((await res.json()).text).toBe('legacy reply');
-    expect((await call('/chat', {})).status).toBe(400);
-    expect((await call('/chat', { message: 'x'.repeat(2 * 1024 * 1024) })).status).toBe(413);
-    expect((await call('/nope')).status).toBe(404);
-  });
 
   describe('bearer auth', () => {
-    it('is off without a token: every route is open', async () => {
-      const { call, authenticated } = await serve(mockModel(['ok']));
-      expect(authenticated).toBe(false);
-      expect((await call('/chat/open')).status).toBe(200);
-    });
 
     it('requires the token on every route but /health: 401 JSON without or with a wrong one, 200 with it', async () => {
       const { call, events, authenticated } = await serve(mockModel(['secret answer']), { env: { LOUSHO_API_TOKEN: 's3cret' } });

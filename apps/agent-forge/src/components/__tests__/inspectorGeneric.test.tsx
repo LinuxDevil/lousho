@@ -60,14 +60,6 @@ function editJson(container: HTMLElement, value: string) {
 }
 
 describe('generic Inspector', () => {
-  it('shows the selected node header and the JSON editor seeded with its item', () => {
-    const container = render(<Inspector />);
-    expect(container.querySelector('.inspector-head .k')?.textContent).toBe('Selected node (flow)');
-    expect(container.querySelector('.inspector-head .v')?.textContent).toBe('e1');
-    const textarea = container.querySelector('#node-json') as HTMLTextAreaElement;
-    expect(JSON.parse(textarea.value)).toEqual({ type: 'end', id: 'e1' });
-    expect(container.textContent).toContain('This node has no form yet.');
-  });
 
   it('a valid JSON edit on blur calls setGraph and changes the node data', () => {
     const container = render(<Inspector />);

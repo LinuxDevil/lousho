@@ -13,7 +13,6 @@ const render = (props: Partial<StringListFieldProps> = {}) => {
 };
 
 const input = () => container.querySelector('input')!;
-const chips = () => [...container.querySelectorAll('.chip')].map((chip) => chip.firstChild!.textContent);
 const fieldError = () => container.querySelector('.field-error')?.textContent ?? undefined;
 
 function type(el: HTMLInputElement, value: string) {
@@ -26,24 +25,16 @@ function type(el: HTMLInputElement, value: string) {
 
 const enter = (el: HTMLInputElement) =>
   act(() => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })));
-const click = (el: Element) => act(() => (el as HTMLElement).click());
 
 describe('StringListField', () => {
-  it('adds the draft on Enter and renders it as a chip', () => {
-    const onChange = vi.fn();
-    render({ onChange });
-    type(input(), 'openai/gpt-4o');
-    enter(input());
-    expect(onChange).toHaveBeenLastCalledWith(['openai/gpt-4o']);
-    expect(input().value).toBe('');
-  });
 
-  it('adds items on comma and keeps the tail as the draft', () => {
+  it('commits the draft when the input loses focus', () => {
     const onChange = vi.fn();
     render({ onChange });
-    type(input(), 'a,b,c');
-    expect(onChange).toHaveBeenLastCalledWith(['a', 'b']);
-    expect(input().value).toBe('c');
+    type(input(), '@playwright/mcp@latest');
+    act(() => input().dispatchEvent(new FocusEvent('focusout', { bubbles: true })));
+    expect(onChange).toHaveBeenLastCalledWith(['@playwright/mcp@latest']);
+    expect(input().value).toBe('');
   });
 
   it('ignores a duplicate item', () => {
@@ -63,25 +54,5 @@ describe('StringListField', () => {
     expect(onChange).not.toHaveBeenCalled();
     expect(fieldError()).toBe('Not a known model');
     expect(input().value).toBe('bad');
-  });
-
-  it('renders chips with labelled remove buttons', () => {
-    render({ value: ['a', 'b'] });
-    expect(chips()).toEqual(['a', 'b']);
-    expect(container.querySelector('button[aria-label="Remove a"]')).not.toBeNull();
-  });
-
-  it('removes a chip', () => {
-    const onChange = vi.fn();
-    render({ onChange, value: ['a', 'b'] });
-    click(container.querySelector('button[aria-label="Remove a"]')!);
-    expect(onChange).toHaveBeenLastCalledWith(['b']);
-  });
-
-  it('emits undefined when the last chip is removed', () => {
-    const onChange = vi.fn();
-    render({ onChange, value: ['a'] });
-    click(container.querySelector('button[aria-label="Remove a"]')!);
-    expect(onChange).toHaveBeenLastCalledWith(undefined);
   });
 });

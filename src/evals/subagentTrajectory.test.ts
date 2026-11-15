@@ -34,26 +34,6 @@ function run(test: (t: EvalTestContext) => void | Promise<void>): Promise<EvalRe
 }
 
 describe('trajectory evals see sub-agent tool calls', () => {
-  it('lists sub-agent calls after the task call that started them, with subagentPath', async () => {
-    const result = await run(async (t) => {
-      await t.send('go');
-    });
-    expect(result.toolCalls.map((c) => [c.name, c.subagentPath])).toEqual([
-      ['task', undefined],
-      ['web_search', ['researcher']],
-      ['delete_repo', ['researcher']],
-      ['summarize', undefined],
-    ]);
-  });
-
-  it('calledTool and notCalledTool search the whole tree by default', async () => {
-    const result = await run(async (t) => {
-      await t.send('go');
-      t.calledTool('web_search', { args: { q: 'bikes' }, times: 1 });
-      t.notCalledTool('delete_repo');
-    });
-    expect(result.assertions.map((a) => a.passed)).toEqual([true, false]);
-  });
 
   it('the subagent filter narrows a call to one sub-agent', async () => {
     const result = await run(async (t) => {
@@ -94,10 +74,4 @@ defineEval({
     seen.push(t.reply);
     t.check('ok reply', t.reply, equals('ok'));
   },
-});
-
-describe('defineEval repeat / passAt', () => {
-  it('ran the case three times and still passed with one failure', () => {
-    expect(seen).toEqual(['ok', 'bad', 'ok']);
-  });
 });

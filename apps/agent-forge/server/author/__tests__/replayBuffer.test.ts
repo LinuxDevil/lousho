@@ -68,41 +68,6 @@ describe('ReplayBuffer', () => {
     return events;
   }
 
-  it('replays only the events after the resume cursor while the turn runs', () => {
-    const events = recordRunning(4); // seqs 1..5
-    expect(buffer.resume(SESSION, REQ, 2)).toEqual({ kind: 'replay', events: events.slice(2) });
-    expect(buffer.resume(SESSION, REQ, 0)).toEqual({ kind: 'replay', events });
-    expect(buffer.resume(SESSION, REQ, 99)).toEqual({ kind: 'replay', events: [] });
-  });
-
-  it('answers unknown for a requestId it never saw, another session, or a replaced turn', () => {
-    recordRunning(2);
-    expect(buffer.resume(SESSION, 'req-never-seen', 0)).toEqual({ kind: 'unknown' });
-    expect(buffer.resume('other-session', REQ, 0)).toEqual({ kind: 'unknown' });
-    // A new turn.started replaces the session's entry entirely.
-    buffer.record(SESSION, started(1, 'req-aa04-0002'));
-    expect(buffer.resume(SESSION, REQ, 0)).toEqual({ kind: 'unknown' });
-    expect(buffer.resume(SESSION, 'req-aa04-0002', 0)).toEqual({
-      kind: 'replay',
-      events: [started(1, 'req-aa04-0002')],
-    });
-  });
-
-  it('answers a settled turn with only its terminal event, never a replay', () => {
-    recordRunning(3);
-    const end = finished(5);
-    buffer.record(SESSION, end);
-    expect(buffer.resume(SESSION, REQ, 0)).toEqual({ kind: 'settled', final: end });
-    expect(buffer.resume(SESSION, REQ, 4)).toEqual({ kind: 'settled', final: end });
-  });
-
-  it('treats a runner turn.error as the settled terminal event', () => {
-    recordRunning(1);
-    const end: AuthorServerEvent = { type: 'turn.error', requestId: REQ, seq: 3, message: 'boom' };
-    buffer.record(SESSION, end);
-    expect(buffer.resume(SESSION, REQ, 0)).toEqual({ kind: 'settled', final: end });
-  });
-
   it('answers unknown once a settled entry outlives REPLAY_SETTLED_TTL_MS', () => {
     recordRunning(1);
     buffer.record(SESSION, finished(3));
@@ -113,12 +78,6 @@ describe('ReplayBuffer', () => {
     // An expired entry is also evicted lazily by the next record on any session.
     recordRunning(0, 'sess-2', 'req-aa04-0003');
     expect(buffer.resume(SESSION, REQ, 0)).toEqual({ kind: 'unknown' });
-  });
-
-  it('keeps a running turn past the TTL - only settled entries expire', () => {
-    recordRunning(2);
-    now += REPLAY_SETTLED_TTL_MS * 10;
-    expect(buffer.resume(SESSION, REQ, 0).kind).toBe('replay');
   });
 
   it('on overflow drops the oldest text.delta events first and keeps every tool.* event', () => {

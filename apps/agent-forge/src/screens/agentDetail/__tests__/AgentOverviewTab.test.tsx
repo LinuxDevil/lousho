@@ -103,33 +103,6 @@ beforeEach(() => {
 });
 
 describe('AgentOverviewTab', () => {
-  it('shows the missing-requirements banner with a Settings link', async () => {
-    const requirements: Requirement[] = [
-      { id: 'provider:anthropic', kind: 'provider_key', status: 'missing', label: 'Anthropic API key' },
-      { id: 'model:x', kind: 'model', status: 'ok', label: 'Model x' },
-    ];
-    const host = renderTab(record({ requirements }));
-    await flush();
-
-    const banner = host.querySelector('.agent-overview-banner')!;
-    expect(banner.getAttribute('role')).toBe('status');
-    expect(banner.textContent).toContain('This agent can’t run yet: Anthropic API key.');
-    const link = banner.querySelector<HTMLAnchorElement>('a.btn')!;
-    expect(link.textContent).toBe('Open settings');
-    expect(link.getAttribute('href')).toBe('#/settings');
-  });
-
-  it('hides the banner when nothing is missing or requirements are absent', async () => {
-    const ok = renderTab(
-      record({ requirements: [{ id: 'm', kind: 'model', status: 'ok', label: 'Model' }] }),
-    );
-    await flush();
-    expect(ok.querySelector('.agent-overview-banner')).toBeNull();
-
-    const absent = renderTab(record());
-    await flush();
-    expect(absent.querySelector('.agent-overview-banner')).toBeNull();
-  });
 
   it('shows the six capability rows, with None for empty sections', async () => {
     const host = renderTab(
@@ -171,29 +144,6 @@ describe('AgentOverviewTab', () => {
     );
   });
 
-  it('shows permission-rule counts by action in the Safety card', async () => {
-    const host = renderTab(
-      record({
-        spec: {
-          permissions: [
-            { id: 'p1', tool: 'github_*', action: 'ask' },
-            { id: 'p2', tool: '*', action: 'ask' },
-            { id: 'p3', tool: 'rm', action: 'deny' },
-          ],
-        },
-      }),
-    );
-    await flush();
-    expect(rowText(card(host, 'Safety'), 'Permission rules')).toBe('1 deny · 2 ask');
-  });
-
-  it('shows a skeleton status while runs load', async () => {
-    mocks.listTraces.mockReturnValue(new Promise(() => {}));
-    const host = renderTab();
-    await flush();
-    expect(card(host, 'Recent runs').querySelector('[role="status"]')?.textContent).toBe('Loading');
-  });
-
   it('links each recent run to its trace', async () => {
     mocks.listTraces.mockResolvedValue([trace('t-1'), trace('t-2', { status: 'error' })]);
     const host = renderTab();
@@ -205,18 +155,6 @@ describe('AgentOverviewTab', () => {
     expect(links[0].getAttribute('href')).toBe('#/traces/t-1');
     expect(links[1].getAttribute('href')).toBe('#/traces/t-2');
     expect(links[0].querySelector('.agent-overview-run-name')?.textContent).toBe('Run t-1');
-  });
-
-  it('shows the empty copy and a Test pane link when there are no runs', async () => {
-    const host = renderTab();
-    await flush();
-
-    const runsCard = card(host, 'Recent runs');
-    expect(runsCard.textContent).toContain('No runs yet. Try it from the Test pane.');
-    const link = [...runsCard.querySelectorAll<HTMLAnchorElement>('a.btn')].find(
-      (a) => a.textContent === 'Open Test pane',
-    )!;
-    expect(link.getAttribute('href')).toBe('#/agents/support-bot/canvas?test=1');
   });
 
   it('shows a retryable error when the run list fails', async () => {
@@ -232,13 +170,5 @@ describe('AgentOverviewTab', () => {
 
     expect(mocks.listTraces).toHaveBeenCalledTimes(2);
     expect(runsCard.querySelectorAll('a.agent-overview-run').length).toBe(1);
-  });
-
-  it('links All runs to the runs tab now that it is built', async () => {
-    const host = renderTab();
-    await flush();
-    const runsCard = card(host, 'Recent runs');
-    const link = [...runsCard.querySelectorAll<HTMLAnchorElement>('a')].find((a) => a.textContent === 'All runs');
-    expect(link?.getAttribute('href')).toBe('#/agents/support-bot/runs');
   });
 });

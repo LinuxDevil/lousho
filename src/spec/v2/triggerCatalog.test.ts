@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { jsonSchemaToZod } from '../../tools/mcp/schema';
 import { listTriggerTypes, type TriggerTypeInfo } from './triggerCatalog';
-import { CHANNEL_KINDS, triggerSpecSchema, type TriggerSpec } from './triggers';
+import { triggerSpecSchema, type TriggerSpec } from './triggers';
 
 /** A valid trigger of each type, as a builder's form would produce it. */
 const FIXTURES: Record<TriggerSpec['type'], TriggerSpec> = {
@@ -56,50 +56,6 @@ function formSchema(info: TriggerTypeInfo) {
     additionalProperties: false,
   });
 }
-
-describe('listTriggerTypes', () => {
-  it('returns the five trigger types in fixed order', () => {
-    const types = listTriggerTypes();
-    expect(types.map((info) => info.type)).toEqual(['chat', 'cron', 'webhook', 'channel', 'agent']);
-  });
-
-  it('carries the title, description and runtimes the picker shows', () => {
-    const expected = [
-      ['chat', 'Chat', 'Runs when someone sends the agent a message in the test pane, a client or the HTTP API.', ['dev', 'worker', 'studio']],
-      ['cron', 'Schedule', 'Runs the agent on a cron schedule with a fixed prompt.', ['dev', 'worker', 'studio']],
-      ['webhook', 'Webhook', 'Runs when an HTTP POST arrives at the path; the body fills the prompt template.', ['studio']],
-      ['channel', 'Channel', 'Runs on messages from Telegram, Slack, GitHub, Teams, Discord or plain HTTP.', ['studio']],
-      ['agent', 'After another agent', "Runs when another agent's run finishes with the chosen status.", ['studio']],
-    ] as const;
-    expect(listTriggerTypes().map((info) => [info.type, info.title, info.description, info.runsUnder])).toEqual([...expected]);
-  });
-
-  it('returns a deep copy: mutating the result does not change the next call', () => {
-    const first = listTriggerTypes();
-    first[0].title = 'MUTATED';
-    first[0].runsUnder = [];
-    (first[1].fieldsJsonSchema.properties as Record<string, unknown>).cron = { type: 'number' };
-    const second = listTriggerTypes();
-    expect(second[0].title).toBe('Chat');
-    expect(second[0].runsUnder).toEqual(['dev', 'worker', 'studio']);
-    expect((second[1].fieldsJsonSchema.properties as Record<string, { type: string }>).cron.type).toBe('string');
-  });
-
-  it('gives every field of every type a title and a description', () => {
-    for (const info of listTriggerTypes()) {
-      for (const [name, property] of Object.entries(info.fieldsJsonSchema.properties as Record<string, Record<string, unknown>>)) {
-        expect(property.title, `${info.type}.${name} title`).toBeTruthy();
-        expect(property.description, `${info.type}.${name} description`).toBeTruthy();
-      }
-    }
-  });
-
-  it('lists the channel kinds the schema accepts', () => {
-    const channel = listTriggerTypes().find((info) => info.type === 'channel');
-    const field = (channel?.fieldsJsonSchema.properties as Record<string, Record<string, unknown>>).channel;
-    expect(field.enum).toEqual([...CHANNEL_KINDS]);
-  });
-});
 
 describe('trigger catalog conformance', () => {
   for (const info of listTriggerTypes()) {

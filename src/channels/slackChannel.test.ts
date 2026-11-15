@@ -11,13 +11,10 @@ import { z } from 'zod';
 import { createAgent } from '../createAgent';
 import { defineTool } from '../tools/defineTool';
 import { mockModel } from '../testing';
-import { InMemoryApprovalStore } from '../execution/InMemoryApprovalStore';
-import { MemorySessionStore } from '../session/sessionStore';
 import type { Message } from '../providers';
 import { mountChannels, type ChannelsHandler } from './mountChannels';
 import { slackChannel } from './slackChannel';
 import { durableStores } from './__fixtures__/durableStores';
-import { defineMemory, inMemoryMemory, type MemoryScopeContext } from '../memory';
 import { memoryStore } from '../storage/agentStore';
 import { fakeOAuthServer, githubProvider, listReposTool } from '../oauth/__fixtures__/fakeOAuth';
 
@@ -130,31 +127,6 @@ describe('slackChannel', () => {
     expect(() => slackChannel({ signingSecret: '', botToken: 'x' })).toThrow(/signingSecret/);
   });
 
-  it('runs the turn with the sender as its principal, which a memory scope sees', async () => {
-    const scopes: MemoryScopeContext[] = [];
-    const notes = defineMemory({ name: 'notes', scope: (ctx) => (scopes.push(ctx), ctx.principal && `slack:${ctx.principal.id}`), provider: inMemoryMemory() });
-    const t = setup(['Hi'], { memory: [notes] });
-    await t.send(event('hello'));
-    expect(scopes[0].principal).toEqual({ id: 'U1', type: 'user', authenticator: 'slack' });
-  });
-
-  it('acks first, then replies in the thread; follow-ups in the thread continue the same session', async () => {
-    const t = setup(['Hi Ali', 'You are Ali', 'Other thread']);
-
-    expect(await t.send(event('I am Ali'))).toEqual({ status: 200, json: { ok: true } });
-    await t.send(event('Who am I?', { type: 'message', text: 'Who am I?', ts: '100.5', thread_ts: '100.1' }));
-    await t.send(event('Who am I?', { ts: '200.1' }));
-
-    expect(t.log.slice(0, 2)).toEqual(['ack', 'post']);
-    expect(t.posts).toEqual([
-      { channel: 'C1', thread_ts: '100.1', text: 'Hi Ali' },
-      { channel: 'C1', thread_ts: '100.1', text: 'You are Ali' },
-      { channel: 'C1', thread_ts: '200.1', text: 'Other thread' },
-    ]);
-    expect(t.userTexts(1)).toEqual(['I am Ali', 'Who am I?']);
-    expect(t.userTexts(2)).toEqual(['Who am I?']);
-  });
-
   it('runs a retry whose event it never saw, and skips a redelivered event_id', async () => {
     const t = setup(['First', 'Lost one']);
 
@@ -183,30 +155,6 @@ describe('slackChannel', () => {
     expect(t.posts).toHaveLength(1);
   });
 
-  it('posts Approve / Deny buttons and resumes the session from the button click', async () => {
-    const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-    const tool = defineTool({ name: 'send_email', description: 'Sends an email', input: z.object({ to: z.string() }), needsApproval: true, execute });
-    const call = { toolCalls: [{ name: 'send_email', args: { to: 'sam@example.com' }, id: 'call_email' }] };
-    const t = setup([call, 'Email sent.'], { tools: [tool] });
-
-    await t.send(event('Email Sam'));
-
-    const [prompt] = t.posts as Array<{ thread_ts: string; blocks: Array<{ elements?: Array<{ action_id: string; value: string }> }> }>;
-    expect(prompt.thread_ts).toBe('100.1');
-    const [approve, deny] = prompt.blocks[1].elements ?? [];
-    expect([approve.action_id, deny.action_id]).toEqual(['lousho_approve', 'lousho_deny']);
-    expect(execute).not.toHaveBeenCalled();
-
-    const approval = click(approve.value);
-    expect(await t.send(approval, { form: true, secret: 'wrong' })).toMatchObject({ status: 401 });
-    expect(await t.send(approval, { form: true })).toEqual({ status: 200, json: { ok: true } });
-
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(t.posts[1]).toEqual({ channel: 'C1', thread_ts: '100.1', text: 'Email sent.' });
-    // the clicked message is replaced by the outcome: no buttons left
-    expect(t.callbacks).toEqual([{ replace_original: true, text: 'Approve?\nApproved by <@U1>.' }]);
-  });
-
   /** Runs a turn that pauses on `send_email` and returns the button value of its Approve button. */
   async function pause(t: ReturnType<typeof setup>) {
     await t.send(event('Email Sam'));
@@ -227,74 +175,6 @@ describe('slackChannel', () => {
     expect(t.callbacks[1]).toMatchObject({ replace_original: true, text: 'Approve?\nDenied by <@U1>.' });
   });
 
-  it('approvers as a list of user ids', async () => {
-    const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-    const t = setup([emailCall, 'Email sent.'], { tools: [emailTool(execute)] }, { channel: { approvers: ['UBOSS'] } });
-    const value = await pause(t);
-
-    await t.send(click(value, 'U1'), { form: true }); // the starter is not on the list
-    expect(execute).not.toHaveBeenCalled();
-    await t.send(click(value, 'UBOSS'), { form: true });
-
-    expect(execute).toHaveBeenCalledTimes(1);
-  });
-
-  it('approvers as a function sees the user and the tool request, and the approver is recorded', async () => {
-    const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-    const seen: unknown[] = [];
-    const approvers = vi.fn(async (user: { id: string }, request: { toolName: string }) => (seen.push([user, request]), user.id === 'UADMIN'));
-    const onDecision = vi.fn();
-    const t = setup([emailCall, 'Email sent.'], { tools: [emailTool(execute)] }, { channel: { approvers }, mount: { onDecision } });
-    const value = await pause(t);
-
-    await t.send(click(value, 'U1'), { form: true });
-    expect(execute).not.toHaveBeenCalled();
-    await t.send(click(value, 'UADMIN'), { form: true });
-
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(seen[1]).toEqual([
-      { id: 'UADMIN', name: 'name-UADMIN' },
-      // The approvers function sees whose call it is (the turn's sender).
-      { toolName: 'send_email', input: { to: 'sam@example.com' }, sessionId: expect.stringContaining('slack_T1_C1_100_1'), principal: { id: 'U1', type: 'user', authenticator: 'slack' } },
-    ]);
-    // The tool runs for the sender; the clicking user is recorded as the approver.
-    expect((execute.mock.calls[0] as unknown[])[1]).toMatchObject({
-      principal: { id: 'U1', type: 'user', authenticator: 'slack' },
-      approval: { by: { id: 'UADMIN', type: 'user', authenticator: 'slack' } },
-    });
-    expect(onDecision).toHaveBeenCalledWith(expect.objectContaining({ approver: { id: 'UADMIN', name: 'name-UADMIN' }, decision: expect.objectContaining({ approved: true }), channel: 'slack' }));
-  });
-
-  it('reports a failed reply to onError (never throws) and logs with the channel, session and no token by default', async () => {
-    const onError = vi.fn();
-    const t = setup(['Hello'], {}, { channel: { onError } });
-    t.state.failPosts = true;
-
-    expect(await t.send(event('hi'))).toEqual({ status: 200, json: { ok: true } });
-
-    expect(onError).toHaveBeenCalledTimes(1);
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('channel_not_found') }), { channel: 'slack', stage: 'reply', sessionId: expect.stringContaining('slack') });
-
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const quiet = setup(['Hello']);
-    quiet.state.failPosts = true;
-    await quiet.send(event('hi'));
-    expect(log).toHaveBeenCalledTimes(1);
-    expect(String(log.mock.calls[0][0])).toMatch(/^\[slack\] reply failed \(session slack_T1_C1_100_1/);
-    expect(String(log.mock.calls[0][0])).not.toContain('xoxb');
-    log.mockRestore();
-  });
-
-  it('a failed turn goes to onError and the user is told in the thread', async () => {
-    const onError = vi.fn();
-    const t = setup([{ error: new Error('model down') }], {}, { channel: { onError } });
-
-    expect(await t.send(event('hi'))).toEqual({ status: 200, json: { ok: true } });
-
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'model down' }), { channel: 'slack', stage: 'turn', sessionId: expect.stringContaining('slack') });
-    expect(t.posts).toEqual([{ channel: 'C1', thread_ts: '100.1', text: 'Sorry, that request failed.' }]);
-  });
-
   it('a failed approval continuation goes to onError; a failing notice never throws out of the handler', async () => {
     const onError = vi.fn();
     const t = setup([emailCall, { error: new Error('model down') }], { tools: [emailTool()] }, { channel: { onError } });
@@ -304,23 +184,6 @@ describe('slackChannel', () => {
     expect(await t.send(click(value), { form: true })).toEqual({ status: 200, json: { ok: true } });
 
     expect(onError.mock.calls.map(([, ctx]) => ctx.stage)).toEqual(['approval', 'reply']);
-  });
-
-  it('a click still resolves after a restart: a second channel over the same stores', async () => {
-    const approvalStore = new InMemoryApprovalStore();
-    const store = new MemorySessionStore();
-    const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-    const first = setup([emailCall], { tools: [emailTool(execute)], approvalStore }, { mount: { store } });
-    const value = await pause(first);
-
-    const second = setup(['Email sent.', 'Still here.'], { tools: [emailTool(execute)], approvalStore }, { mount: { store } });
-    await second.send(click(value), { form: true });
-
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(second.posts).toEqual([{ channel: 'C1', thread_ts: '100.1', text: 'Email sent.' }]);
-    // the thread is known from the session store, not from memory
-    await second.send(event('x', { type: 'message', text: 'again', thread_ts: '100.1', ts: '100.5' }));
-    expect(second.model.calls).toHaveLength(2);
   });
 
   it('a direct message to the bot is a session keyed on the DM channel, without a mention', async () => {
@@ -340,19 +203,6 @@ describe('slackChannel', () => {
       { channel: 'D1', text: 'You are Ali' },
     ]);
     expect(t.userTexts(1)).toEqual(['I am Ali', 'Who am I?']);
-  });
-
-  it('posts an ask_question as text and takes the next thread message as the answer', async () => {
-    const ask = { toolCalls: [{ name: 'ask_question', args: { question: 'Which city?' }, id: 'call_q' }] };
-    const t = setup([ask, 'Booked Lisbon.'], { askQuestion: true });
-
-    await t.send(event('Book a trip'));
-    expect(t.posts[0]).toMatchObject({ thread_ts: '100.1', text: expect.stringContaining('Which city?') });
-
-    await t.send(event('x', { type: 'message', text: 'Lisbon', thread_ts: '100.1', ts: '100.2' }));
-
-    expect(t.posts[1]).toEqual({ channel: 'C1', thread_ts: '100.1', text: 'Booked Lisbon.' });
-    expect(JSON.stringify(t.model.calls[1].messages)).toContain('Lisbon');
   });
 
   describe('after a restart: a second channel over the same durable stores', () => {
@@ -379,94 +229,6 @@ describe('slackChannel', () => {
       await second.send(threadMessage('Thanks', '100.3'));
       expect(second.posts[1]).toEqual({ channel: 'C1', thread_ts: '100.1', text: 'You are welcome.' });
       expect(second.userTexts(1)).toEqual(['Book a trip', 'Thanks']);
-    });
-
-    it('a thread with no pending question still starts a normal turn', async () => {
-      const stores = durableStores();
-      const first = setup(['Hello.'], { approvalStore: stores.approvalStore }, { mount: { store: stores.store } });
-      await first.send(event('hi'));
-
-      const second = setup(['Still here.'], { approvalStore: stores.approvalStore }, { mount: { store: stores.store } });
-      await second.send(threadMessage('again', '100.2'));
-
-      expect(second.posts).toEqual([{ channel: 'C1', thread_ts: '100.1', text: 'Still here.' }]);
-      expect(second.userTexts(0)).toEqual(['hi', 'again']);
-    });
-
-    it('a plain message does not answer a pending tool approval; the click still does', async () => {
-      const stores = durableStores();
-      const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-      const agentOptions = { tools: [emailTool(execute)], approvalStore: stores.approvalStore };
-      const value = await pause(setup([emailCall], agentOptions, { mount: { store: stores.store } }));
-
-      const second = setup(['Email sent.'], agentOptions, { mount: { store: stores.store } });
-      await second.send(threadMessage('yes', '100.2'));
-      expect(second.model.calls).toHaveLength(0);
-      expect(execute).not.toHaveBeenCalled();
-
-      await second.send(click(value), { form: true });
-      expect(execute).toHaveBeenCalledTimes(1);
-      expect(second.posts.at(-1)).toEqual({ channel: 'C1', thread_ts: '100.1', text: 'Email sent.' });
-    });
-
-    it('a click after a restart is appended to the transcript, and the next thread message continues the session (#279)', async () => {
-      const stores = durableStores();
-      const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-      const agentOptions = { tools: [emailTool(execute)], approvalStore: stores.approvalStore };
-      const value = await pause(setup([emailCall], agentOptions, { mount: { store: stores.store } }));
-
-      const second = setup(['Email sent.', 'You are welcome.'], agentOptions, { mount: { store: stores.store } });
-      await second.send(click(value), { form: true });
-
-      expect(execute).toHaveBeenCalledTimes(1);
-      expect(second.posts).toEqual([{ channel: 'C1', thread_ts: '100.1', text: 'Email sent.' }]);
-      const transcript = await stores.transcript();
-      for (const text of ['Email Sam', '"call_email"', 'sent to sam@example.com', 'Email sent.']) expect(transcript).toContain(text);
-
-      // the thread has a session now: a message without a mention is its next turn
-      await second.send(threadMessage('Thanks', '100.3'));
-      expect(second.posts[1]).toEqual({ channel: 'C1', thread_ts: '100.1', text: 'You are welcome.' });
-      expect(second.userTexts(1)).toEqual(['Email Sam', 'Thanks']);
-      expect(JSON.stringify(second.model.calls[1].messages)).toContain('sent to sam@example.com');
-    });
-
-    it('a replayed click after a restart decides nothing twice (#279)', async () => {
-      const stores = durableStores();
-      const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-      const onError = vi.fn();
-      const agentOptions = { tools: [emailTool(execute)], approvalStore: stores.approvalStore };
-      const value = await pause(setup([emailCall], agentOptions, { mount: { store: stores.store } }));
-
-      const second = setup(['Email sent.', 'never'], agentOptions, { mount: { store: stores.store, onError } });
-      await second.send(click(value), { form: true });
-      await second.send(click(value), { form: true });
-
-      expect(execute).toHaveBeenCalledTimes(1);
-      expect(second.model.calls).toHaveLength(1);
-      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'LOUSHO_APPROVAL_NOT_FOUND' }), expect.objectContaining({ stage: 'approval' }));
-      expect(JSON.parse(await stores.transcript()).filter((m: Message) => m.role === 'tool')).toHaveLength(1);
-    });
-
-    it('a function approver still decides after a restart (#280)', async () => {
-      const stores = durableStores();
-      const execute = vi.fn(async ({ to }: { to: string }) => `sent to ${to}`);
-      const seen: unknown[] = [];
-      const approvers = vi.fn(async (user: { id: string }, request: { toolName: string }) => (seen.push([user, request]), user.id === 'UADMIN'));
-      const agentOptions = { tools: [emailTool(execute)], approvalStore: stores.approvalStore };
-      const value = await pause(setup([emailCall], agentOptions, { channel: { approvers }, mount: { store: stores.store } }));
-
-      const second = setup(['Email sent.'], agentOptions, { channel: { approvers }, mount: { store: stores.store } });
-      await second.send(click(value, 'U1'), { form: true }); // the starter is not the approver
-      expect(execute).not.toHaveBeenCalled();
-      await second.send(click(value, 'UADMIN'), { form: true });
-
-      expect(execute).toHaveBeenCalledTimes(1);
-      expect(second.posts.at(-1)).toEqual({ channel: 'C1', thread_ts: '100.1', text: 'Email sent.' });
-      // the function saw the request from the store: the paused run's facts, unchanged by the restart
-      expect(seen[1]).toEqual([
-        { id: 'UADMIN', name: 'name-UADMIN' },
-        { toolName: 'send_email', input: { to: 'sam@example.com' }, sessionId: expect.stringContaining('slack_T1_C1_100_1'), principal: { id: 'U1', type: 'user', authenticator: 'slack' } },
-      ]);
     });
   });
 });

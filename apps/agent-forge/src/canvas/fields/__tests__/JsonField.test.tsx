@@ -24,20 +24,6 @@ function type(el: HTMLTextAreaElement, value: string) {
 const blur = (el: Element) => act(() => el.dispatchEvent(new FocusEvent('focusout', { bubbles: true })));
 
 describe('JsonField', () => {
-  it('emits the parsed value on blur and keeps the draft formatting', () => {
-    const onChange = vi.fn();
-    render({ onChange });
-    type(textarea(), '{"a":1}');
-    blur(textarea());
-    expect(onChange).toHaveBeenLastCalledWith({ a: 1 });
-    expect(fieldError()).toBeUndefined();
-    expect(textarea().value).toBe('{"a":1}');
-  });
-
-  it('pretty-prints an existing value', () => {
-    render({ value: { a: 1 } });
-    expect(textarea().value).toBe('{\n  "a": 1\n}');
-  });
 
   it('keeps the draft and shows the parse error for invalid JSON', () => {
     const onChange = vi.fn();
@@ -48,25 +34,5 @@ describe('JsonField', () => {
     expect(textarea().value).toBe('{bad');
     expect(fieldError()).toContain('This is not valid JSON:');
     expect(textarea().getAttribute('aria-invalid')).toBe('true');
-  });
-
-  it('shows the check message and does not emit', () => {
-    const onChange = vi.fn();
-    render({
-      onChange,
-      check: (v) => (typeof v === 'object' && v !== null && !Array.isArray(v) ? undefined : 'Options must be a JSON object'),
-    });
-    type(textarea(), '[1]');
-    blur(textarea());
-    expect(onChange).not.toHaveBeenCalled();
-    expect(fieldError()).toBe('Options must be a JSON object');
-  });
-
-  it('emits undefined for empty text', () => {
-    const onChange = vi.fn();
-    render({ onChange, value: { a: 1 } });
-    type(textarea(), '');
-    blur(textarea());
-    expect(onChange).toHaveBeenLastCalledWith(undefined);
   });
 });

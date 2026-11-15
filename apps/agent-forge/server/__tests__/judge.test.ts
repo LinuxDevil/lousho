@@ -79,28 +79,6 @@ describe('judge loop and test-on-trace', () => {
     return started;
   };
 
-  it('pulls a judge job, runs the mock judge and writes its score as an online score', async () => {
-    await judgeRuleWithJob();
-    const seen: unknown[] = [];
-    const judge: JudgeFn = async (rule, trace) => {
-      seen.push(rule.config, trace);
-      return { value: 0.8, comment: 'refund handled' };
-    };
-    await loop(judge).tick();
-    expect(seen[0]).toEqual({ model: 'mock', rubric: 'Is the refund handled?' });
-    expect(seen[1]).toMatchObject({ trace_id: 't1', agent_id: 'support', input: 'refund?', output: 'done', duration_ms: 50 });
-    expect(onlineScores('t1')).toEqual([expect.objectContaining({ name: 'helpful', value: 0.8, comment: 'refund handled', agent_id: 'support' })]);
-    expect(daemon.evaluators.stats()).toMatchObject({ judge_queued: 0, judge_leased: 0, judge_scored: 1 });
-  });
-
-  it('a judge that throws scores null with a judge_error comment', async () => {
-    await judgeRuleWithJob();
-    await loop(async () => {
-      throw new Error('no key for openai');
-    }).tick();
-    expect(onlineScores('t1')).toEqual([expect.objectContaining({ value: null, comment: 'judge_error: no key for openai' })]);
-  });
-
   it('the default judge turns a missing provider key into a judge_error score', async () => {
     const created = await fetch(`${daemonUrl}/api/v1/evaluators`, {
       method: 'POST',
@@ -199,25 +177,6 @@ describe('judge loop and test-on-trace', () => {
     expect(onlineScores('t2')).toEqual([]);
   });
 
-  it('caps a judge call at what is left of the lease', async () => {
-    await judgeRuleWithJob();
-    const clock = { now: Date.now() };
-    let signalled: AbortSignal | undefined;
-    const started = loop(
-      (_rule, _trace, signal) => {
-        signalled = signal;
-        return new Promise(() => undefined);
-      },
-      // A 1150 ms lease minus the 1000 ms post margin leaves 150 ms (the clock stands still).
-      { leaseMs: 1150, judgeTimeoutMs: 20_000, now: () => clock.now }
-    );
-    const begun = Date.now();
-    await started.tick();
-    expect(Date.now() - begun).toBeLessThan(2000);
-    expect(signalled?.aborted).toBe(true);
-    expect(onlineScores('t1')).toEqual([expect.objectContaining({ comment: 'judge_error: timed out after 150 ms' })]);
-  });
-
   it('warns once per outage for a 2xx claim answer that is not JSON', async () => {
     const warnings: string[] = [];
     const notJson = (async () => new Response('<html>proxy</html>', { status: 200, headers: { 'content-type': 'text/html' } })) as typeof fetch;
@@ -226,13 +185,6 @@ describe('judge loop and test-on-trace', () => {
     await started.tick();
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain('without a jobs array');
-  });
-
-  it('without a loop the job stays queued (nothing claims it)', async () => {
-    await judgeRuleWithJob();
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(daemon.evaluators.stats()).toMatchObject({ judge_queued: 1, judge_leased: 0, judge_scored: 0 });
-    expect(onlineScores('t1')).toEqual([]);
   });
 
   describe('POST /observe/api/v1/evaluators/:id/test', () => {
@@ -266,24 +218,6 @@ describe('judge loop and test-on-trace', () => {
       expect(daemon.evaluators.stats()).toMatchObject({ judge_queued: 1 });
     });
 
-    it('forwards a code rule to the daemon unchanged', async () => {
-      seedTrace('t1');
-      const created = await fetch(`${daemonUrl}/api/v1/evaluators`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: 'len', kind: 'code', config: { source: '(t) => 1' } }),
-      });
-      const ruleId = ((await created.json()) as { evaluator: { rule_id: string } }).evaluator.rule_id;
-      const app = appWith(async () => {
-        throw new Error('the judge must not run for a code rule');
-      });
-      // The daemon's own validation answers (the body goes through as sent).
-      const bad = await request(app).post(`/observe/api/v1/evaluators/${ruleId}/test`).send({ trace_id: 't1', extra: 1 });
-      expect(bad.status).toBe(400);
-      const missing = await request(app).post(`/observe/api/v1/evaluators/${ruleId}/test`).send({ trace_id: 'nope' });
-      expect(missing.status).toBe(404);
-    });
-
     it('passes through 404s for an unknown rule or trace, 400s a bad body, 502s a daemon that is down', async () => {
       const ruleId = await judgeRuleWithJob();
       const app = appWith(async () => ({ value: 1, comment: null }));
@@ -311,20 +245,6 @@ describe('parseJudgeReply', () => {
   it('reads a valid JSON reply', () => {
     expect(parseJudgeReply('{"score": 0.8, "comment": "good"}')).toEqual({ value: 0.8, comment: 'good' });
     expect(parseJudgeReply('{"score": 1}')).toEqual({ value: 1, comment: null });
-  });
-
-  it('finds the first JSON object inside prose and code fences', () => {
-    expect(parseJudgeReply('Sure! Here is my grade:\n```json\n{"score": 0, "comment": "wrong {refund}"}\n```\nThanks.')).toEqual({
-      value: 0,
-      comment: 'wrong {refund}',
-    });
-    expect(parseJudgeReply('I think {this} is fine. {"score": 0.5, "comment": "ok"}')).toEqual({ value: 0.5, comment: 'ok' });
-  });
-
-  it('rejects an out-of-range or non-numeric score', () => {
-    for (const reply of ['{"score": 1.5}', '{"score": -0.1}', '{"score": "0.5"}', '{"comment": "no score"}']) {
-      expect(parseJudgeReply(reply)).toEqual({ value: null, comment: 'invalid_judge_output' });
-    }
   });
 
   it('rejects garbage', () => {

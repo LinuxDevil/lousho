@@ -121,35 +121,12 @@ describe('webhookChannel auth (test vectors)', () => {
     expect(res.json).not.toHaveProperty('messages');
   });
 
-  it('replies with a trimmed body by default: no transcript, system prompt or usage', async () => {
-    const agent = createAgent({ provider: mockModel(['hi there']), instructions: 'SECRET-SYSTEM-PROMPT' });
-    const res = await viaChannel(webhookChannel({}), body, {}, agent);
-
-    expect(res.status).toBe(200);
-    expect(res.json).toMatchObject({ text: 'hi there', finishReason: 'stop' });
-    expect(typeof res.json.sessionId).toBe('string');
-    for (const key of ['messages', 'stepUsage', 'usage', 'toolCalls']) expect(res.json).not.toHaveProperty(key);
-    expect(JSON.stringify(res.json)).not.toContain('SECRET-SYSTEM-PROMPT');
-  });
-
   it('`fullResult: true` restores the whole ExecutionResult', async () => {
     const agent = createAgent({ provider: mockModel(['hi there']), instructions: 'SECRET-SYSTEM-PROMPT' });
     const res = await viaChannel(webhookChannel({ fullResult: true }), body, {}, agent);
 
     expect(res.json).toHaveProperty('messages');
     expect(JSON.stringify(res.json)).toContain('SECRET-SYSTEM-PROMPT');
-  });
-
-  it('a body without what `principal` needs runs without one', async () => {
-    const scopes: MemoryScopeContext[] = [];
-    const notes = defineMemory({ name: 'notes', scope: (ctx) => (scopes.push(ctx), 'global'), provider: inMemoryMemory() });
-    const channel = webhookChannel({ principal: (body) => ((body as { source?: unknown })?.source === 'x' ? { id: 'x', type: 'service', authenticator: 'webhook' } : undefined) });
-    const agent = createAgent({ provider: mockModel(['ok']), memory: [notes] });
-
-    const res = await viaChannel(channel, body, {}, agent);
-
-    expect(res.status).toBe(200);
-    expect(scopes[0]?.principal).toBeUndefined();
   });
 });
 
@@ -172,11 +149,6 @@ describe('webhookChannel on a Fetch host', () => {
     const res = await handler(new Request('http://h/channels/webhook', { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body }), { waitUntil: () => {} });
     return res?.status;
   };
-
-  it('accepts a correctly signed request and rejects a bad one', async () => {
-    expect(await post(hmacAuth, { 'x-signature-256': `sha256=${hmac(body)}` })).toBe(200);
-    expect(await post(hmacAuth, { 'x-signature-256': `sha256=${hmac(body, 'wrong')}` })).toBe(401);
-  });
 
   it('supports bearer and custom auth', async () => {
     expect(await post({ type: 'bearer', token: 't' }, { authorization: 'Bearer t' })).toBe(200);

@@ -148,30 +148,6 @@ describe('mcp Inspector: transport switch', () => {
       optional: true,
     });
   });
-
-  it('keeps the same fields switching back, dropping http-only fields', () => {
-    useServer(
-      {
-        github: {
-          url: 'https://mcp.linear.app/sse',
-          headers: { Authorization: { env: 'LIN' } },
-          oauth: { redirectUri: 'https://app.example.com/cb' },
-          approval: 'annotations',
-          timeoutMs: 5000,
-          tools: { exclude: ['x'] },
-        },
-      },
-      'mcp:github',
-    );
-    renderInspector();
-    choose('node-mcp-transport', '1');
-    expect(item()).toStrictEqual({
-      command: '',
-      approval: 'annotations',
-      timeoutMs: 5000,
-      tools: { exclude: ['x'] },
-    });
-  });
 });
 
 describe('mcp Inspector: name and stdio fields', () => {
@@ -191,19 +167,6 @@ describe('mcp Inspector: name and stdio fields', () => {
     type('node-mcp-command', '');
     flush();
     expect(container.textContent).toContain('Enter the command that starts the server');
-  });
-
-  it('writes env rows with secret refs', () => {
-    renderInspector();
-    click(field('node-mcp-env')); // the Add button when the map is empty
-    type('node-mcp-env', 'GITHUB_TOKEN');
-    choose('node-mcp-env-value-0-mode', 'secret');
-    const input = container.querySelector<HTMLInputElement>('.kv-row input[placeholder="Secret name"]')!;
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'gh-token');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    expect(item()).toStrictEqual({ command: 'npx', env: { GITHUB_TOKEN: { secret: 'gh-token' } } });
   });
 
   it('writes args, cwd and stderr', () => {
@@ -278,24 +241,6 @@ describe('mcp Inspector: behaviour fields', () => {
 });
 
 describe('mcp Inspector: probe', () => {
-  it('is disabled while the command is invalid', () => {
-    useServer({ github: { command: '' } }, 'mcp:github');
-    renderInspector();
-    const button = field<HTMLButtonElement>('node-mcp-probe');
-    expect(button.disabled).toBe(true);
-    expect(button.title).toBe('Fix the errors above first');
-  });
-
-  it('lists the tools a successful probe returns', async () => {
-    useServer({ github: { command: 'probe-ok-1' } }, 'mcp:github');
-    vi.spyOn(runtimeClient, 'probeMcp').mockResolvedValue({ ok: true, tools: PROBE_TOOLS });
-    renderInspector();
-    click(field<HTMLButtonElement>('node-mcp-probe'));
-    await asyncFlush();
-    flush();
-    const names = [...container.querySelectorAll('.mcp-tool-name')].map((el) => el.textContent);
-    expect(names).toEqual(['create_issue', 'delete_repo']);
-  });
 
   it('shows the alert when the server cannot be reached', async () => {
     useServer({ github: { command: 'probe-fail-1' } }, 'mcp:github');

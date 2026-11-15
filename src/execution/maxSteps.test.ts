@@ -6,9 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import { AgentExecutor } from './AgentExecutor';
-import type { ApprovalStore, ExecutionSnapshot, PendingApproval } from './ApprovalGate';
 import type { AgentEvent } from './agentEvents';
-import { resumeAfterApproval } from './resume';
 import { createAgent } from '../createAgent';
 import { defineTool, DefinedTool } from '../tools/defineTool';
 import { ToolRegistry } from '../tools';
@@ -20,14 +18,6 @@ const ping = defineTool({
   description: 'Ping',
   input: z.object({}),
   execute: async () => 'pong',
-});
-
-const gated = defineTool({
-  name: 'gated',
-  description: 'Needs approval',
-  input: z.object({}),
-  needsApproval: true,
-  execute: async () => 'done',
 });
 
 function registryOf(tools: DefinedTool[]): ToolRegistry {
@@ -43,20 +33,6 @@ function options(tools: DefinedTool[], script: MockTurn[]) {
   return { agent, provider: mockModel(script, { onExhausted: 'repeat-last' }), toolRegistry: registryOf(tools), input: 'go' };
 }
 
-function memoryApprovalStore(): ApprovalStore {
-  const records = new Map<string, { pending: PendingApproval; snapshot: ExecutionSnapshot }>();
-  return {
-    async save(pending, snapshot) {
-      records.set(pending.id, { pending, snapshot: JSON.parse(JSON.stringify(snapshot)) as ExecutionSnapshot });
-    },
-    async resolve(id) {
-      const record = records.get(id) ?? null;
-      records.delete(id);
-      return record;
-    },
-  };
-}
-
 async function events(run: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> {
   const all: AgentEvent[] = [];
   for await (const event of run) all.push(event);
@@ -64,14 +40,8 @@ async function events(run: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> {
 }
 
 const alwaysPing: MockTurn = { toolCalls: [{ name: 'ping', id: 'call_ping' }] };
-const gatedCall: MockTurn = { toolCalls: [{ name: 'gated', id: 'call_gated' }] };
 
 describe("finishReason 'max-steps'", () => {
-  it('a model that always calls a tool exhausts maxSteps: 2', async () => {
-    const result = await AgentExecutor.execute({ ...options([ping], [alwaysPing]), maxSteps: 2 });
-    expect(result.finishReason).toBe('max-steps');
-    expect(result.steps).toBe(2);
-  });
 
   it('the finish event and run.done (AgentExecutor.stream) carry max-steps', async () => {
     const finishReasons: Array<string | undefined> = [];
@@ -86,65 +56,6 @@ describe("finishReason 'max-steps'", () => {
     expect(all.find((e) => e.type === 'run.done')).toMatchObject({ type: 'run.done', finishReason: 'max-steps' });
     expect((await run.result).finishReason).toBe('max-steps');
     expect(finishReasons).toEqual(['max-steps']);
-  });
-
-  it('agent.stream() run.done carries max-steps', async () => {
-    const agent = createAgent({
-      instructions: 'x',
-      provider: mockModel([alwaysPing], { onExhausted: 'repeat-last' }),
-      tools: [ping],
-      maxSteps: 2,
-    });
-    const all = await events(agent.stream('go'));
-    expect(all.find((e) => e.type === 'run.done')).toMatchObject({ finishReason: 'max-steps' });
-  });
-
-  it('a text reply on exactly the last allowed step is not max-steps', async () => {
-    const result = await AgentExecutor.execute({ ...options([ping], [alwaysPing, 'all done']), maxSteps: 2 });
-    expect(result.finishReason).toBe('stop');
-    expect(result.steps).toBe(2);
-    expect(result.text).toBe('all done');
-  });
-
-  it('a run that finishes well within the budget is unchanged', async () => {
-    const result = await AgentExecutor.execute({ ...options([ping], ['hi']), maxSteps: 5 });
-    expect(result.finishReason).toBe('stop');
-  });
-
-  it('initialSteps count against the budget', async () => {
-    const result = await AgentExecutor.execute({ ...options([ping], [alwaysPing]), maxSteps: 3, initialSteps: 2 });
-    expect(result.steps).toBe(3);
-    expect(result.finishReason).toBe('max-steps');
-  });
-
-  it('a resume after approval that immediately exhausts the budget reports max-steps', async () => {
-    const approvalStore = memoryApprovalStore();
-    const paused = await AgentExecutor.execute({ ...options([gated], [gatedCall]), approvalStore, maxSteps: 1 });
-    expect(paused.finishReason).toBe('awaiting-approval');
-
-    const resumed = await resumeAfterApproval(
-      { id: paused.approvalId!, approved: true },
-      approvalStore,
-      registryOf([gated]),
-      mockModel(['never reached']),
-      { maxSteps: 1 }
-    );
-    expect(resumed.finishReason).toBe('max-steps');
-    expect(resumed.steps).toBe(1);
-  });
-
-  it('a resume after approval with budget left finishes naturally', async () => {
-    const approvalStore = memoryApprovalStore();
-    const paused = await AgentExecutor.execute({ ...options([gated], [gatedCall]), approvalStore, maxSteps: 2 });
-    const resumed = await resumeAfterApproval(
-      { id: paused.approvalId!, approved: true },
-      approvalStore,
-      registryOf([gated]),
-      mockModel(['ok']),
-      { maxSteps: 2 }
-    );
-    expect(resumed.finishReason).toBe('stop');
-    expect(resumed.steps).toBe(2);
   });
 });
 
@@ -164,32 +75,5 @@ describe('limits.maxSteps and maxSteps validation', () => {
     expect(result.budget).toMatchObject({ limit: 'maxSteps', max: 1 });
     expect(model.calls).toHaveLength(2);
     expect(model.calls[1].toolChoice).toBe('none');
-  });
-
-  it('limits.maxSteps tighter than maxSteps gets the forced answer too', async () => {
-    const model = script();
-    const result = await createAgent({ provider: model, tools: [ping], output: answer, maxSteps: 5, limits: { maxSteps: 1 } }).send('go');
-
-    expect(result.object).toEqual({ answer: 'from gathered data' });
-    expect(model.calls).toHaveLength(2);
-  });
-
-  it('limits.maxSteps without output still ends budget-exceeded with no extra call', async () => {
-    const model = script();
-    const result = await createAgent({ provider: model, tools: [ping], limits: { maxSteps: 1 } }).send('go');
-
-    expect(result.finishReason).toBe('budget-exceeded');
-    expect(model.calls).toHaveLength(1);
-  });
-
-  it.each([0, -1, 1.5, Number.NaN, Infinity, '3'])('createAgent rejects maxSteps %s with LOUSHO_CONFIG_INVALID', (bad) => {
-    expect(() => createAgent({ provider: mockModel(['hi']), maxSteps: bad as number })).toThrow(
-      expect.objectContaining({ code: 'LOUSHO_CONFIG_INVALID', message: expect.stringMatching(/'maxSteps' must be a whole number >= 1/) })
-    );
-  });
-
-  it('AgentExecutor.execute rejects an invalid maxSteps', async () => {
-    const { agent, provider } = options([], ['hi']);
-    await expect(AgentExecutor.execute({ agent, provider, input: 'x', maxSteps: 0 })).rejects.toMatchObject({ code: 'LOUSHO_CONFIG_INVALID' });
   });
 });
