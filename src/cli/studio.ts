@@ -146,7 +146,8 @@ export function startStudio(options: StudioOptions = {}): StudioHandle {
   if (!appDir) throw agentForgeNotFound(repoRoot, packageRoot);
 
   const mode = resolveMode(appDir, requested);
-  const token = randomBytes(24).toString('base64url');
+  const fixed = process.env[STUDIO_TOKEN_ENV];
+  const token = fixed !== undefined && fixed.length >= 24 ? fixed : randomBytes(24).toString('base64url');
 
   if (mode === 'prod') return startProdStudio(appDir, repoRoot, apiPort, apiHost, token);
   return startDevStudio(appDir, repoRoot, apiPort, apiHost, token);
