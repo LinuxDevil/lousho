@@ -6,6 +6,7 @@
  */
 import { flowRoot } from './flow';
 import { toolNodeName } from './nodeIds';
+import type { ToolRef } from './specTypes';
 import { subagentEntryKey } from './order';
 import type {
   AbortNodeData,
@@ -59,6 +60,13 @@ export function globMatch(pattern: string, name: string): boolean {
  */
 export function ruleCoversTool(patterns: readonly string[], name: string): boolean {
   return patterns.some((pattern) => globMatch(pattern, name));
+}
+
+export function ruleCoversToolRef(patterns: readonly string[], ref: ToolRef): boolean {
+  if ('integration' in ref && ref.id === undefined) {
+    return patterns.some((pattern) => pattern === '*' || pattern.startsWith(`${ref.integration}_`));
+  }
+  return ruleCoversTool(patterns, toolNodeName(ref));
 }
 
 /**
@@ -132,8 +140,7 @@ function permissionEdges(node: GraphNode, nodes: GraphNode[]): GraphEdge[] {
   for (const other of nodes) {
     if (other.owner !== node.owner) continue;
     if (other.kind === 'tool') {
-      const name = toolNodeName((other.data as ToolNodeData).item);
-      if (ruleCoversTool(patterns, name)) sources.push(other.id);
+      if (ruleCoversToolRef(patterns, (other.data as ToolNodeData).item)) sources.push(other.id);
     } else if (other.kind === 'mcp') {
       const key = (other.data as McpNodeData).key;
       if (ruleCoversServer(patterns, key)) sources.push(other.id);

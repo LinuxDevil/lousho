@@ -55,6 +55,7 @@ WORKDIR /opt/lousho
 RUN npm init -y >/dev/null
 ${install}
 ENV PATH=/opt/lousho/node_modules/.bin:$PATH
+RUN ln -s /opt/lousho/node_modules /node_modules
 RUN mkdir -p /workspace /home/node/.lousho && chown node:node /workspace /home/node/.lousho
 USER node
 WORKDIR /workspace

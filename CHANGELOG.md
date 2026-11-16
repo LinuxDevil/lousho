@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Studio: a workspace whose `lousho` is the same install Studio runs on uses Studio's in-process host (full features, no banner) instead of the bridge. The Studio image `lousho deploy` builds links its `lousho` at `/node_modules`, so deployed workspaces resolve it.
+- Studio: a permission rule like `github_create_*` now counts as covering a `github` integration tool, so the canvas no longer warns that no tool matches it.
+
 ## [1.0.0-alpha.121] - 2026-11-16
 
 - Specs and Studio: the `github` integration and `github` channel trigger accept a GitHub App (`appId`, `privateKey`) instead of a token, and a channel trigger's `pullRequests: true` reviews every pull request from owners, members and collaborators. `lousho deploy` serves Studio's `/hooks/*` past its login so platform webhooks (checked by their own signatures) reach Studio-hosted agents, and `lousho deploy github-app --agent <studio-agent-id>` points an App at one.
