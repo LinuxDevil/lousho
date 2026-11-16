@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Release: `lousho-studio` is published with a semver `lousho` range. Earlier releases (0.1.0-alpha.2 to alpha.4) carried `"lousho": "file:../.."` in their registry metadata and could not be installed from npm.
+
 ## [1.0.0-alpha.122] - 2026-11-16
 
 - Studio: a workspace whose `lousho` is the same install Studio runs on uses Studio's in-process host (full features, no banner) instead of the bridge. The Studio image `lousho deploy` builds links its `lousho` at `/node_modules`, so deployed workspaces resolve it.

@@ -104,7 +104,9 @@ jobs:
       # Studio's SDK dep is pinned to ^<root version> by its prepack script, so
       # it must publish after lousho for the range to resolve on npm.
       - name: Publish lousho-studio
-        run: npm publish -w lousho-studio --tag latest
+        run: |
+          (cd apps/agent-forge && node scripts/pin-sdk-range.mjs pin && rm .package.json.prepack)
+          npm publish -w lousho-studio --tag latest
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       # GitHub Packages only accepts scoped names (@owner/pkg), so the
