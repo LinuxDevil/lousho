@@ -23,6 +23,8 @@ import { BridgeAgentHost } from './bridgeAgentHost';
 import { InProcessAgentHost } from './inProcessAgentHost';
 import { MIN_BRIDGE_SDK_VERSION } from './sdkCompat';
 import { findWorkspaceSdk, type WorkspaceSdk } from './workspaceSdk';
+import { realpathSync } from 'node:fs';
+import { sdkRootDir } from '../sdkRoot';
 import type { AgentHost } from './agentHost';
 import type { SecretsStore } from '../secretsStore';
 
@@ -106,6 +108,14 @@ function bridgeEnv(ref: WorkspaceRef, collector: { url: string; token?: string }
   return { ...env, ...extra };
 }
 
+function studioSdkDir(): string | undefined {
+  try {
+    return realpathSync(sdkRootDir());
+  } catch {
+    return undefined;
+  }
+}
+
 /** One workspace's host decision: in-process, bridge, or read-only. */
 export class WorkspaceHostSelector {
   /** The host RunManager uses - fixed for the context's life. */
@@ -130,6 +140,13 @@ export class WorkspaceHostSelector {
       this.host = this.inProcessHost;
       this.reportsToObserve = true;
       this.selection = { mode: 'in-process', sdkVersion: deps.studioVersion, banner: INFO_NO_SDK(deps.studioVersion) };
+      return;
+    }
+    if (this.sdk.packageDir === studioSdkDir()) {
+      this.inProcessHost = deps.inProcess();
+      this.host = this.inProcessHost;
+      this.reportsToObserve = true;
+      this.selection = { mode: 'in-process', sdk: this.sdk, sdkVersion: deps.studioVersion, banner: null };
       return;
     }
     if (this.sdk.source === 'self' && !this.sdk.built) {

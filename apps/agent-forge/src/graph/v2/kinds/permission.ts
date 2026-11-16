@@ -8,8 +8,8 @@
  * `duplicateData` gives the copy the next free `p<n>` item id.
  */
 import type { ConnectResult, KindRules } from '../kindRules';
-import { ruleCoversServer, ruleCoversTool } from '../edges';
-import { nextItemId, toolNodeName } from '../nodeIds';
+import { ruleCoversServer, ruleCoversTool, ruleCoversToolRef } from '../edges';
+import { nextItemId } from '../nodeIds';
 import { arrayItemSpecPath, sectionChildren } from '../order';
 import { SPEC_ID_PATTERN } from '../specTypes';
 import type {
@@ -106,7 +106,7 @@ function toolProblems(node: NodeOfKind<'permission'>, graph: Graph, path: string
     .concat(sectionChildren(graph, node.owner ?? '', 'mcpServers'))
     .some((sibling) =>
       sibling.kind === 'tool'
-        ? ruleCoversTool(patterns, toolNodeName((sibling.data as ToolNodeData).item))
+        ? ruleCoversToolRef(patterns, (sibling.data as ToolNodeData).item)
         : ruleCoversServer(patterns, (sibling.data as McpNodeData).key),
     );
   if (!governs) problems.push(fail('warning', 'No tool on this agent matches this rule'));
