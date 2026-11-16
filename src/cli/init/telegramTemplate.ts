@@ -224,7 +224,7 @@ const BRIDGE_TS = [
   ' */',
   "import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';",
   "import { basename, dirname, join } from 'node:path';",
-  "import type { Agent, Session } from 'lousho';",
+  "import type { SimpleAgent as Agent, AgentSession as Session } from 'lousho';",
   'import {',
   '  answerCallbackQuery,',
   '  downloadFile,',

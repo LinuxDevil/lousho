@@ -25,14 +25,6 @@ OPENROUTER_API_KEY=... npx tsx examples/coding-harness/index.ts  # live, openrou
 
 Offline it works on an in-memory project with a faked `node --test`. Live it copies the project into a temporary directory and runs real commands there, capped at 0.05 USD a run.
 
-## Test it
-
-```bash
-npx vitest run examples/coding-harness
-```
-
-The tests check the fix, the refused `rm`, that test files stay untouched, the loop guard, the checkpoint rewind, and the per-family instructions.
-
 ## The same harness as a kit
 
 `registry/coding-kit/` is this harness expressed as an agent directory and
@@ -52,11 +44,8 @@ decide those calls. Resolve them with `agent.approvals.resolve()`, or, if you
 trust the kit's approver, pass it in code:
 `loadAgentDir(dir, { approve: (await import('./my-agent/approve.ts')).default })`.
 
-`kit.test.ts` installs it with `lousho add`, loads it with `loadAgentDir()`,
-runs the same scripted scenario as `index.test.ts` (provider and explorer
-provider injected through loader overrides), and builds it into a node-server
-deployment whose `POST /chat` answers the same task. The live test runs
-against `openrouter/openai/gpt-4o-mini` when `OPENROUTER_API_KEY` is set.
+It loads with `loadAgentDir()` and builds into a node-server deployment
+whose `POST /chat` answers the same task.
 
 ## The production variant: `coding-pi`
 
@@ -74,9 +63,6 @@ lousho add coding-pi --dir ./my-agent --yes --allow exec,fs-write,network,env
 OPENROUTER_API_KEY=... lousho dev ./my-agent
 ```
 
-`kit-pi.test.ts` installs it, runs it offline (a mock lead delegates through
-`task` to a Pi session on pi-ai's faux provider - the session edits the
-installed workspace for real), and runs the whole stack live on OpenRouter
-when `OPENROUTER_API_KEY` is set. Node-only: it needs the optional peers
+It runs live on OpenRouter when `OPENROUTER_API_KEY` is set. Node-only: it needs the optional peers
 `@earendil-works/pi-ai@1.0.3` and `@earendil-works/pi-coding-agent@1.0.2`, and
 the `node-server` or `docker` build target.

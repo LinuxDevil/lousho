@@ -9,7 +9,6 @@ The workspace is loaded into `memorySource` and run through `createWorkspaceRunt
 | Workspace files | `workspace/` |
 | Host: tools, stores, checks, scripted model | `host.ts` |
 | CLI | `run.ts` |
-| Tests | `index.test.ts` |
 
 The `render_video` and `synthesize_voice` tools are mocks. They write small placeholder artifacts (`video`, `voice`) into the current run's artifact store. `workspace/` is a deliberate fork of the P0.11 Marketing fixture (`src/workspaces/__fixtures__/marketing`), trimmed to two `single` pages; it does not track the fixture.
 
@@ -28,9 +27,3 @@ npx tsx examples/workspace-marketing/run.ts --model openrouter/openai/gpt-4o-min
 ```
 
 `--mock` runs offline with a scripted model. Without it, `--model` names a live model. `--page` takes `instagram`, `facebook` or a full page id and defaults to both. Artifacts are written under the temp directory the run prints.
-
-## Test it
-
-```bash
-npx vitest run examples/workspace-marketing
-```

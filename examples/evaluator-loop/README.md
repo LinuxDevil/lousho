@@ -37,13 +37,3 @@ OPENROUTER_API_KEY=... npx tsx examples/evaluator-loop/index.ts  # live, openrou
 Offline, the writer's first draft fails on citations (score 0.42), the
 critique goes back into the writer's session, and the revision passes
 (score 0.91).
-
-## Test it
-
-```bash
-npx vitest run examples/evaluator-loop
-```
-
-The tests check that a failing score triggers a revision carrying the
-critic's feedback, that the loop stops at `maxRounds` returning the last
-draft, and that a first-round pass needs no critique call.

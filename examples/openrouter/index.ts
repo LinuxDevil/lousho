@@ -37,7 +37,7 @@ async function streamingGeneration() {
   const provider = createProvider();
 
   const stream = await provider.stream({
-    model: 'anthropic/claude-sonnet-4',
+    model: 'anthropic/claude-sonnet-4.5',
     messages: [
       { role: 'user', content: 'Write a short story about a robot learning to paint.' },
     ],
@@ -127,7 +127,7 @@ async function toolCalling() {
 async function agentBuilder() {
   const providerConfig = {
     apiKey,
-    defaultModel: 'anthropic/claude-sonnet-4',
+    defaultModel: 'anthropic/claude-sonnet-4.5',
     siteUrl: 'https://myapp.com',
     siteName: 'Travel App',
   };
@@ -190,7 +190,7 @@ async function costOptimizedGeneration() {
   console.log('Tokens used:', simpleTask.usage?.totalTokens);
 
   const complexTask = await provider.generate({
-    model: 'anthropic/claude-sonnet-4',
+    model: 'anthropic/claude-sonnet-4.5',
     messages: [
       {
         role: 'user',
@@ -266,7 +266,7 @@ async function modelCapabilities() {
 
   const models = [
     'openai/gpt-4o',
-    'anthropic/claude-sonnet-4',
+    'anthropic/claude-sonnet-4.5',
     'google/gemini-2.5-flash',
     'meta-llama/llama-3.1-8b-instruct',
   ];
@@ -315,8 +315,18 @@ async function main() {
     return;
   }
 
+  const failed: string[] = [];
   for (const name of selectSnippets(process.argv[2])) {
-    await runSnippet(name);
+    try {
+      await runSnippet(name);
+    } catch (error) {
+      failed.push(name);
+      console.error(`${name} failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  if (failed.length > 0) {
+    console.error(`Failed snippets: ${failed.join(', ')}`);
+    process.exitCode = 1;
   }
 }
 

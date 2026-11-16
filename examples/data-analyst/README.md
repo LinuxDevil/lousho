@@ -24,13 +24,3 @@ OPENROUTER_API_KEY=... npx tsx examples/data-analyst/index.ts  # live, openroute
 Offline, a scripted mock model walks the loop; the `run_query` calls still
 execute for real against the in-memory `node:sqlite` database, so the run
 needs no network and no API key.
-
-## Test it
-
-```bash
-npx vitest run examples/data-analyst
-```
-
-The tests check that the agent introspects the schema before querying, that a
-`DELETE`/`DROP` attempt is refused by both the tool and the permission rule,
-and that answers come back with real rows.

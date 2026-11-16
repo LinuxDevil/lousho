@@ -11,7 +11,7 @@ import { harnessKey, passK } from './gates';
 
 export const LOOP_PREFIX = 'heal-loop-';
 export const AGENT_MODEL = 'qwen/qwen3.7-flash';
-export const EDITOR_MODEL = 'stealth/crouton-alpha';
+export const EDITOR_MODEL = 'qwen/qwen3.7-flash';
 export const FIX_RULE = `When test/months.test.js fails, replace src/months.js with exactly this code, which leaves its argument unchanged and keeps the day inside the target month:\n\n${FIXES['add-months']['src/months.js']}`;
 export const INJECTED = 'ZEBRA-7';
 export const NEW_CLASS_RULE = 'Before you change anything, read src/config.json, the project settings file.';

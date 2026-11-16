@@ -10,6 +10,8 @@ import { summarizePolicy } from '../spec/policy';
 import { unknownGuardrailMessage } from '../spec/guardrailOptions';
 import { listProviders } from '../providers/providerSpec';
 import { NO_SPEC_NEEDS, type SpecNeeds } from './doctorChecks';
+import { parseSpecData, readSpecFile } from '../spec/specFile';
+import { loadSpecV2 } from '../spec/v2/loadSpec';
 import type { AgentDirSummary, DoctorCheck, DoctorEnvironment } from './doctorTypes';
 
 export interface SpecInspection {
@@ -162,6 +164,14 @@ async function inspectLoadedAgent(path: string, { title, load, what, fix }: Agen
 }
 
 /** Loads the spec or agent directory (if a path was given) and checks everything it references. */
+function isV2Spec(file: string): boolean {
+  try {
+    return (parseSpecData(readSpecFile(file), nodePath.extname(file).toLowerCase(), file) as { version?: unknown } | null)?.version === 2;
+  } catch {
+    return false;
+  }
+}
+
 export async function inspectSpec(env: DoctorEnvironment): Promise<SpecInspection> {
   const path = env.specPath;
   if (!path) return { checks: [], needs: NO_SPEC_NEEDS };
@@ -170,6 +180,19 @@ export async function inspectSpec(env: DoctorEnvironment): Promise<SpecInspectio
   }
   if (MODULE_FILE.test(path)) {
     return inspectLoadedAgent(path, { title: 'Agent module', load: env.loadAgentModule, what: 'agent modules', fix: `Fix the file named above: ${path}.` });
+  }
+
+  if (isV2Spec(path)) {
+    try {
+      const v2 = loadSpecV2(path);
+      const provider = v2.model.split('/')[0].toLowerCase();
+      return {
+        checks: [{ id: 'spec', status: 'ok', title: 'Agent spec', finding: `'${v2.name}' is a valid version 2 spec (model ${v2.model})` }],
+        needs: { providers: new Set([provider]), usesSandbox: false },
+      };
+    } catch (error) {
+      return loadFailure(path, error);
+    }
   }
 
   let spec: AgentSpec;

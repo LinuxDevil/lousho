@@ -17,7 +17,7 @@ An agent defined as a directory (`instructions.md`, `tools/`, `skills/`, `agent.
 
 ## [coding-harness](./coding-harness)
 
-A coding-agent harness: a broken `add()` fixture the agent must fix under a guard (test files are refused), with a loop guard, checkpoint rewind and per-family instructions; runs offline with a mock model. `kit.test.ts` installs the same harness as the `coding-kit` registry item and builds it into a node-server deployment (H1).
+A coding-agent harness: a broken `add()` fixture the agent must fix under a guard (test files are refused), with a loop guard, checkpoint rewind and per-family instructions; runs offline with a mock model. The same harness ships as the `coding-kit` registry item (`lousho add coding-kit`).
 
 ## [coding-agent-workflows](./coding-agent-workflows)
 
@@ -49,7 +49,7 @@ A repeatable benchmark for agent reliability: four agents with working tools and
 
 ## [hostinger-deploy](./hostinger-deploy)
 
-Deploy an agent to a real Hostinger VPS: verify the VM via the Hostinger API, `lousho build --target=docker`, ship the image over SSH, run it behind bearer auth, then prove `/health` + approval pause/resume. Needs a Hostinger API token and a VM; no purchase step.
+Deploy an ops agent to your own server (a Hostinger VPS, for example) with `lousho deploy`: Docker Compose over SSH, HTTPS on `<agent>.<ip>.sslip.io`, bearer auth. Needs a server you can SSH into with Docker installed.
 
 ## [openrouter](./openrouter)
 
