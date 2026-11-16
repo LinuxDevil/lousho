@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-alpha.123] - 2026-11-16
+
 - Release: `lousho-studio` is published with a semver `lousho` range. Earlier releases (0.1.0-alpha.2 to alpha.4) carried `"lousho": "file:../.."` in their registry metadata and could not be installed from npm.
 
 ## [1.0.0-alpha.122] - 2026-11-16
