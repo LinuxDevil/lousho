@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-alpha.122] - 2026-11-16
+
 - Studio: a workspace whose `lousho` is the same install Studio runs on uses Studio's in-process host (full features, no banner) instead of the bridge. The Studio image `lousho deploy` builds links its `lousho` at `/node_modules`, so deployed workspaces resolve it.
 - Studio: a permission rule like `github_create_*` now counts as covering a `github` integration tool, so the canvas no longer warns that no tool matches it.
 
