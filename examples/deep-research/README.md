@@ -14,16 +14,8 @@ The "deep research" archetype Anthropic's multi-agent research system uses: one 
 
 ```bash
 npx tsx examples/deep-research/index.ts                    # offline, scripted models
-npx tsx examples/deep-research/index.ts "your question"    # offline, own question
+npx tsx examples/deep-research/index.ts "your question"    # offline: the scripted models answer the built-in question whatever you ask; set a key to research yours
 OPENROUTER_API_KEY=... npx tsx examples/deep-research/index.ts  # live, openrouter/openai/gpt-4o-mini
 ```
 
 Offline, both the lead and the researchers run on scripted `mockModel`s: the researchers' `search` calls still execute for real against the corpus, so the run needs no network and no API key.
-
-## Test it
-
-```bash
-npx vitest run examples/deep-research
-```
-
-The tests check that one lead turn fans out >= 2 `task` calls, that the researcher runs actually overlap (`stats.maxConcurrent`), that the corpus was really searched, and that the report carries `[S#]` citation markers and a Sources list.

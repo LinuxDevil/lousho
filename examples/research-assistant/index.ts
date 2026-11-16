@@ -15,7 +15,7 @@ import { resolveProvider } from 'lousho';
 import { httpTool } from 'lousho';
 
 const provider = process.env.ANTHROPIC_API_KEY
-  ? resolveProvider('anthropic/claude-3-5-sonnet-latest')
+  ? resolveProvider('anthropic/claude-sonnet-4-5')
   : createMockProvider({
       responses: ['Based on my research, here is a concise summary of the topic.'],
     });

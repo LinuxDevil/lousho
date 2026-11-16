@@ -33,13 +33,3 @@ OPENROUTER_API_KEY=... npx tsx examples/support-desk/index.ts  # live, openroute
 Offline, a scripted conversation runs: broken order -> triage -> billing ->
 `lookup_order` -> `issue_refund` paused -> human approves -> refund -> a
 follow-up turn answered by billing directly.
-
-## Test it
-
-```bash
-npx vitest run examples/support-desk
-```
-
-The tests check that the handoff transfers control to billing (and stays
-there on later turns), that the refund pauses for approval and resumes after
-it, and that the routing args reach the specialist as a system note.
