@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-alpha.124] - 2026-11-16
+
 - `lousho doctor <spec>` validates version 2 specs (all six Studio templates) instead of reporting v1 schema errors.
 - `lousho init --template telegram` scaffolds a project whose `npm run typecheck` passes (its bridge imported the non-existent `Agent` and `Session` types).
 - Examples: `examples/openrouter` uses `anthropic/claude-sonnet-4.5` (Sonnet 4 is retired on OpenRouter) and keeps running the other snippets when one fails; `heal-benchmark` defaults its editor to `qwen/qwen3.7-flash`; `research-assistant` uses `anthropic/claude-sonnet-4-5`; READMEs no longer point at removed tests, `tracing` has a README, and the hostinger-deploy and deep-research descriptions match what they do.
