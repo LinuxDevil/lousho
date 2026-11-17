@@ -144,6 +144,7 @@ export function TemplatesScreen() {
   const { items, error, onRetry } = useTemplateList();
   const [category, setCategory] = useQueryState('category', parseKey, formatKey);
   const [templateId, setTemplateId] = useQueryState('template', parseKey, formatKey);
+  const [workspaceId] = useQueryState('ws', parseKey, formatKey);
 
   const counts = useMemo(() => (items === undefined ? [] : categoryCounts(items)), [items]);
   // A `?category=` that names no shipped category falls back to All.
@@ -171,6 +172,7 @@ export function TemplatesScreen() {
         <TemplateSheet
           templateId={templateId === '' ? null : templateId}
           summary={selected}
+          workspaceId={workspaceId === '' ? undefined : workspaceId}
           onClose={onCloseSheet}
         />
       </div>

@@ -83,7 +83,10 @@ export function useNewAgentActions(onImport?: () => void, createWorkspaceId?: st
       .finally(() => setCreating(false));
   }, [toast, createWorkspaceId]);
 
-  const openTemplates = useCallback(() => navigate('/templates'), []);
+  const openTemplates = useCallback(
+    () => navigate(createWorkspaceId === undefined ? '/templates' : `/templates?ws=${encodeURIComponent(createWorkspaceId)}`),
+    [createWorkspaceId]
+  );
 
   // AA19: a fresh Author chat focused on creating, prefilled with the shared
   // draft (composer text only - the user still has to send it).
