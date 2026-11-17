@@ -50,7 +50,8 @@ type IvmModule = typeof import('isolated-vm');
  */
 const loadIvm = lazyValue(async (): Promise<IvmModule> => {
   try {
-    return await loadOptionalPeer('isolated-vm', () => import('isolated-vm'));
+    const mod: IvmModule & { default?: IvmModule } = await loadOptionalPeer('isolated-vm', () => import('isolated-vm'));
+    return mod.default ?? mod;
   } catch (error) {
     if (error instanceof MissingPeerDependencyError) {
       throw new MissingPeerDependencyError('isolated-vm', error.installCommand, {
