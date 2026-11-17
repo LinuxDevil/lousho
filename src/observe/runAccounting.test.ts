@@ -55,7 +55,7 @@ it('keeps a run in one session and counts its tokens and cost once', async () =>
   }
 });
 
-it('previews a run by its last user message, not the raw message JSON', async () => {
+it('previews a run by its last user message and its answer, not the raw message JSON', async () => {
   const sent: IngestEvent[] = [];
   const fetchFn = (async (_url: string, init: { body: string }) => {
     sent.push(...(JSON.parse(init.body) as { batch: IngestEvent[] }).batch);
@@ -79,6 +79,7 @@ it('previews a run by its last user message, not the raw message JSON', async ()
     'gen_ai.operation.name': 'invoke_agent',
     'gen_ai.conversation.id': 'chat-2',
     'gen_ai.input.messages': JSON.stringify(messages),
+    'gen_ai.output.messages': JSON.stringify([{ role: 'assistant', parts: [{ type: 'text', content: '8.047 km' }] }]),
   });
   reporter.onSpanStart(root);
   reporter.onSpanEnd({ ...root, endTime: T0 + 10 });
@@ -88,6 +89,7 @@ it('previews a run by its last user message, not the raw message JSON', async ()
   try {
     ingestBatch(db, sent, T0 + 20);
     expect(listTraces(db, { limit: 10, offset: 0 }).traces[0]?.input_preview).toBe('Design a URL shortener');
+    expect(listTraces(db, { limit: 10, offset: 0 }).traces[0]?.output_preview).toBe('8.047 km');
     expect(listSessions(db, { limit: 10, offset: 0 }).sessions[0]?.last_input_preview).toBe('Design a URL shortener');
   } finally {
     db.close();

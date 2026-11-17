@@ -896,9 +896,9 @@ function meteredShare(column: 'usage_input_tokens' | 'usage_output_tokens' | 'co
 }
 
 /** Per-trace aggregates; {@link listTraces} splices its WHERE in after the FROM. */
-const inputPreview = (col: string): string => `CASE WHEN json_valid(${col}) AND json_type(${col}) = 'array' THEN COALESCE(
+const messagePreview = (col: string, role: 'user' | 'assistant'): string => `CASE WHEN json_valid(${col}) AND json_type(${col}) = 'array' THEN COALESCE(
       (SELECT substr(COALESCE(json_extract(m.value, '$.parts[0].content'), json_extract(m.value, '$.content')), 1, 200)
-        FROM json_each(${col}) m WHERE json_extract(m.value, '$.role') = 'user' ORDER BY m.key DESC LIMIT 1),
+        FROM json_each(${col}) m WHERE json_extract(m.value, '$.role') = '${role}' ORDER BY m.key DESC LIMIT 1),
       substr(${col}, 1, 200)) ELSE substr(${col}, 1, 200) END`;
 
 const TRACE_SELECT = `
@@ -915,8 +915,8 @@ const TRACE_SELECT = `
     MAX(o.agent_id) AS agent_id,
     MAX(o.session_id) AS session_id,
     (SELECT r.name FROM ${ROOT_OF} LIMIT 1) AS name,
-    (SELECT ${inputPreview('r.input')} FROM ${ROOT_OF} LIMIT 1) AS input_preview,
-    (SELECT substr(r.output, 1, 200) FROM ${ROOT_OF} LIMIT 1) AS output_preview,
+    (SELECT ${messagePreview('r.input', 'user')} FROM ${ROOT_OF} LIMIT 1) AS input_preview,
+    (SELECT ${messagePreview('r.output', 'assistant')} FROM ${ROOT_OF} LIMIT 1) AS output_preview,
     ${ROOT_STATUS} AS root_status
   FROM observations o
 `;
@@ -1538,7 +1538,7 @@ const SESSION_SELECT = `
     (SELECT COALESCE(SUM(${meteredShare('usage_input_tokens')}), 0) FROM observations o WHERE o.session_id = s.session_id) AS input_tokens,
     (SELECT COALESCE(SUM(${meteredShare('usage_output_tokens')}), 0) FROM observations o WHERE o.session_id = s.session_id) AS output_tokens,
     (SELECT COALESCE(SUM(${meteredShare('cost_usd')}), 0) FROM observations o WHERE o.session_id = s.session_id) AS cost_usd,
-    (SELECT ${inputPreview('r.input')} FROM observations r
+    (SELECT ${messagePreview('r.input', 'user')} FROM observations r
       WHERE r.session_id = s.session_id AND r.parent_obs_id IS NULL
       ORDER BY r.start DESC, r.obs_id DESC LIMIT 1) AS last_input_preview
   FROM sessions s
