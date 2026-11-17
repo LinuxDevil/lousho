@@ -388,6 +388,10 @@ export class GitHubTools extends ToolRegistry {
     'github_merge_pull_request',
   ]);
 
+  public override getAll(): Record<string, ToolDescriptor> {
+    return Object.fromEntries(Object.entries(super.getAll()).filter(([name]) => !GitHubTools.OUT_OF_SCOPE_TOOLS.has(name)));
+  }
+
   constructor(config: GitHubConfig) {
     super();
     this.config = config;

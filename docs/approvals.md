@@ -487,7 +487,7 @@ rule means the model is never consulted.
 ```yaml
 permissions:
   - id: p1
-    tool: github_create_issue
+    tool: github_add_pr_comment
     action: auto
 ```
 
