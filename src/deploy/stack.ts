@@ -65,8 +65,8 @@ CMD ["lousho-studio", "--workspace", "/workspace", "--host", "0.0.0.0", "--port"
 `;
 }
 
-export function npmSource(): StudioSource {
-  return { kind: 'npm', sdk: VERSION, studio: 'latest' };
+export function npmSource(studio = 'latest'): StudioSource {
+  return { kind: 'npm', sdk: VERSION, studio };
 }
 
 function traefikLabels(config: DeployConfig, service: string, port: number, auth: boolean): string[] {

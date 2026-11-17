@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assertValidConfig, envLine, renderCaddyfile, renderCompose, sslipDomain, studioDockerfile, type DeployConfig } from './stack';
+import { assertValidConfig, envLine, npmSource, renderCaddyfile, renderCompose, sslipDomain, studioDockerfile, type DeployConfig } from './stack';
 
 const base: DeployConfig = {
   name: 'lousho',
@@ -30,6 +30,10 @@ describe('deploy stack', () => {
     expect(compose).not.toContain('lousho-studio-hooks.middlewares');
     expect(compose).not.toContain('lousho-reviewer.middlewares');
     expect(compose).toContain('networks:\n  proxy:\n    external: true\n    name: web');
+  });
+
+  it('pins the Studio version so a new Studio release busts the cached install layer', () => {
+    expect(studioDockerfile(npmSource('0.1.0-alpha.8'))).toContain(' lousho-studio@0.1.0-alpha.8 ');
   });
 
   it('refuses unsafe names and values', () => {

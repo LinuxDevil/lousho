@@ -304,7 +304,7 @@ async function writeStack(config: DeployConfig, secrets: Map<string, string>, fl
     const studioDir = path.join(dir, 'studio');
     fs.mkdirSync(studioDir);
     if (flags.local) packLocal(studioDir);
-    fs.writeFileSync(path.join(studioDir, 'Dockerfile'), studioDockerfile(flags.local ? { kind: 'local' } : npmSource()));
+    fs.writeFileSync(path.join(studioDir, 'Dockerfile'), studioDockerfile(flags.local ? { kind: 'local' } : npmSource(latestStudioVersion())));
   }
   for (const agent of config.agents) {
     const code = await runBuild([agent.dir, '--target=docker', `--out=${path.join(dir, 'agents', agent.name)}`], {
@@ -474,4 +474,10 @@ export async function runDeploy(argv: string[]): Promise<number> {
     console.error(`lousho deploy: ${(error as Error).message}`);
     return error instanceof DeployError || (error as { code?: string }).code === 'ERR_PARSE_ARGS_UNKNOWN_OPTION' ? 2 : 1;
   }
+}
+
+function latestStudioVersion(): string {
+  const out = spawnSync('npm', ['view', 'lousho-studio', 'version'], { encoding: 'utf8', shell: process.platform === 'win32' });
+  const version = out.status === 0 ? out.stdout.trim() : '';
+  return /^\d+\.\d+\.\d+/.test(version) ? version : 'latest';
 }
