@@ -123,6 +123,12 @@ describe('GitHubTools scope enforcement', () => {
     expect(parsed.number).toBe(5);
   });
 
+  it('getAll() offers the model only tools the token can use', () => {
+    const offered = Object.keys(githubTools.getAll());
+    expect(offered).toContain('github_get_pull_request');
+    for (const outOfScope of outOfScopeTools) expect(offered).not.toContain(outOfScope);
+  });
+
   it('every registered tool remains present (out-of-scope tools are disabled, not removed)', () => {
     const allNames = githubTools.list();
     expect(allNames.length).toBeGreaterThan(0);

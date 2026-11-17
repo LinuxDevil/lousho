@@ -179,6 +179,8 @@ export interface GitHubSearchResult {
 // @public (undocumented)
 export class GitHubTools extends ToolRegistry {
     constructor(config: GitHubConfig);
+    // (undocumented)
+    getAll(): Record<string, ToolDescriptor>;
     register(tool: DefinedTool): void;
     // (undocumented)
     register(name: string, descriptor: ToolDescriptor): void;
