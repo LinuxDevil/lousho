@@ -46,7 +46,7 @@ const COLUMNS: Column<WorkspaceRow>[] = [
     key: 'lastRun',
     header: 'Last run',
     render: () => (
-      <span title="Last run shows with P2.6a">—</span>
+      <span title="Not available yet">—</span>
     ),
   },
   {
@@ -57,7 +57,7 @@ const COLUMNS: Column<WorkspaceRow>[] = [
         <a className="btn btn-sm" href={`#${workspacePath(row.id)}`}>
           Open
         </a>
-        <button type="button" className="btn btn-sm" title="Export lands with P2.15" disabled>
+        <button type="button" className="btn btn-sm" title="Export is not available yet" disabled>
           Export
         </button>
       </span>
@@ -91,19 +91,22 @@ export function WorkspacesScreen() {
         title="Workspaces"
         description="Each workspace's pages, problems and live revision."
         actions={
-          <button type="button" className="btn" title="Import lands with P2.15" disabled>
+          <button type="button" className="btn" title="Import is not available yet" disabled>
             Import
           </button>
         }
       />
       <section className="ws-list" aria-label="Workspaces">
         <h2 className="visually-hidden">Workspaces</h2>
-        <Input
-          type="search"
-          aria-label="Filter workspaces"
-          value={q}
-          onChange={(event) => navigate(workspacesHref({ q: event.target.value }), { replace: true })}
-        />
+        {!state.notFound && (
+          <Input
+            type="search"
+            aria-label="Filter workspaces"
+            placeholder="Filter workspaces"
+            value={q}
+            onChange={(event) => navigate(workspacesHref({ q: event.target.value }), { replace: true })}
+          />
+        )}
         {state.notFound ? (
           <EmptyState
             title="No workspace service here"

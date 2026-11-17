@@ -17,7 +17,7 @@ export function ChatSheet({ open, focus, onClose }: ChatSheetProps) {
     >
       <EmptyState
         title="The authoring chat is not built yet"
-        hint="It lands with P2.19. Until then, edit with the forms on each tab."
+        hint="It is not available yet. Edit with the forms on each tab."
       />
     </Sheet>
   );

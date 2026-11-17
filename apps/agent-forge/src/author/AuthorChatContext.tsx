@@ -45,7 +45,7 @@ import { fireAgentSaved, fireOpenPage } from './authorEvents';
 import {
   loadPendingRequest,
   REATTACH_GAVE_UP,
-  REATTACH_MAX_ATTEMPTS,
+  reattachTimeoutVerdict,
   REATTACH_TIMEOUT_MS,
   savePendingRequest,
   streamEndRecovery,
@@ -261,6 +261,8 @@ export function AuthorChatProvider({ children }: { children: ReactNode }): JSX.E
     try {
       const record = await runtimeClient.getAuthorSession(sessionId);
       if (stateRef.current.sessionId !== sessionId || record.runningRequestId === null) return;
+      const sentOnThisSocket = loadPendingRequest();
+      if (sentOnThisSocket?.sessionId === sessionId && sentOnThisSocket.requestId === record.runningRequestId) return;
       const lastSeq =
         stateRef.current.active?.requestId === record.runningRequestId ? stateRef.current.active.lastSeq : 0;
       startResume(sessionId, record.runningRequestId, lastSeq);
@@ -315,7 +317,12 @@ export function AuthorChatProvider({ children }: { children: ReactNode }): JSX.E
     if (record !== undefined && stateRef.current.sessionId === rt.sessionId) {
       dispatch({ type: 'transcript.reconciled', record });
     }
-    if (record?.runningRequestId != null && rt.attempts + 1 < REATTACH_MAX_ATTEMPTS) {
+    const verdict = reattachTimeoutVerdict({
+      running: record?.runningRequestId != null,
+      socketOpen: connectionRef.current === 'open',
+      attempts: rt.attempts,
+    });
+    if (verdict === 'retry') {
       reattachRef.current = { ...rt, attempts: rt.attempts + 1 };
       streamRef.current?.stream.send({
         type: 'chat.resume',
@@ -325,7 +332,7 @@ export function AuthorChatProvider({ children }: { children: ReactNode }): JSX.E
       reattachTimerRef.current = setTimeout(() => void onReattachTimeout(), REATTACH_TIMEOUT_MS);
       return;
     }
-    if (record?.runningRequestId != null) {
+    if (verdict === 'gaveUp') {
       dispatch({
         type: 'server.event',
         event: { type: 'turn.error', requestId: rt.requestId, seq: 0, message: REATTACH_GAVE_UP },

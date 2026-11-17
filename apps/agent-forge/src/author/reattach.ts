@@ -113,6 +113,15 @@ export const REATTACH_TIMEOUT_MS = 5000;
 /** How many times the hook resends `chat.resume` while the record still shows a running reply. */
 export const REATTACH_MAX_ATTEMPTS = 3;
 
+export function reattachTimeoutVerdict(input: {
+  running: boolean;
+  socketOpen: boolean;
+  attempts: number;
+}): 'done' | 'retry' | 'gaveUp' {
+  if (!input.running || input.socketOpen) return 'done';
+  return input.attempts + 1 < REATTACH_MAX_ATTEMPTS ? 'retry' : 'gaveUp';
+}
+
 /** The ErrorNote shown when every reattach attempt timed out. */
 export const REATTACH_GAVE_UP =
   'Could not reconnect to this reply. Your chat is saved; reopen it from History to see the latest.';

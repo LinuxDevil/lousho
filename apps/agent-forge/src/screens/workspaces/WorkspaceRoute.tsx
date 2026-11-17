@@ -175,7 +175,7 @@ function SectionBody({ workspaceId, section }: { workspaceId: string; section: W
       ) : (
         <EmptyState
           title={`${entry?.label ?? section} is not built yet`}
-          hint={`This section lands with ${entry?.ticket ?? 'a later ticket'}.`}
+          hint="This section is not available yet."
         />
       )}
     </main>
@@ -224,7 +224,7 @@ function LoadedWorkspace({
         <ChatSheet open={chat !== undefined} focus={chat} onClose={() => setChat(undefined)} />
         <Sheet open={draftOpen} onClose={() => setDraftOpen(false)} title="Draft">
           <EmptyState
-            title="Draft review lands with P2.22"
+            title="Draft review is not available yet"
             hint="Apply or discard it with the authoring chat until then."
           />
         </Sheet>

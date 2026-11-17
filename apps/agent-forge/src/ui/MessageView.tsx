@@ -32,6 +32,7 @@ interface ChatMessage {
 interface ContentPart {
   type?: unknown;
   text?: unknown;
+  content?: unknown;
   name?: unknown;
 }
 
@@ -73,7 +74,10 @@ function parseJson(value: string): { ok: true; data: object } | { ok: false } {
 function asMessages(data: object): ChatMessage[] | undefined {
   const list = Array.isArray(data) ? data : (data as { messages?: unknown }).messages;
   if (!Array.isArray(list) || list.length === 0) return undefined;
-  return list.every((m) => isRecord(m) && typeof m.role === 'string') ? (list as ChatMessage[]) : undefined;
+  if (!list.every((m) => isRecord(m) && typeof m.role === 'string')) return undefined;
+  return (list as Array<ChatMessage & { parts?: unknown }>).map((m) =>
+    m.content === undefined && Array.isArray(m.parts) ? { ...m, content: m.parts } : m
+  );
 }
 
 /** Text without per-character work; long strings show a first chunk until expanded. */
@@ -106,7 +110,8 @@ function Chip({ name, detail }: { name: string; detail?: string }) {
 function Part({ part }: { part: unknown }) {
   if (typeof part === 'string') return <LongText text={part} />;
   const p = (isRecord(part) ? part : {}) as ContentPart;
-  if (p.type === 'text' && typeof p.text === 'string') return <LongText text={p.text} />;
+  const text = p.text ?? p.content;
+  if (p.type === 'text' && typeof text === 'string') return <LongText text={text} />;
   return <Chip name={toText(p.name) ?? toText(p.type) ?? 'part'} />;
 }
 

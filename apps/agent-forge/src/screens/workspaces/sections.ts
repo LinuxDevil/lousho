@@ -6,17 +6,16 @@ import { PagesSection } from './PagesSection';
 export interface SectionEntry {
   id: WorkspaceSection;
   label: string;
-  ticket?: string;
 }
 
 export const WORKSPACE_SECTIONS: readonly SectionEntry[] = [
   { id: 'overview', label: 'Overview' },
-  { id: 'main-agent', label: 'Main agent', ticket: 'P2.7' },
+  { id: 'main-agent', label: 'Main agent' },
   { id: 'pages', label: 'Pages' },
-  { id: 'agents', label: 'Agents', ticket: 'P2.8' },
-  { id: 'runs', label: 'Runs', ticket: 'P3.14' },
-  { id: 'improve', label: 'Improve', ticket: 'P5.36' },
-  { id: 'revisions', label: 'Revisions', ticket: 'P5.38' },
+  { id: 'agents', label: 'Agents' },
+  { id: 'runs', label: 'Runs' },
+  { id: 'improve', label: 'Improve' },
+  { id: 'revisions', label: 'Revisions' },
 ];
 
 export const SECTION_SCREENS: Partial<Record<WorkspaceSection, () => ReactNode>> = {

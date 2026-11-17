@@ -35,7 +35,7 @@ import type {
 import { asyncRoute, sendError } from '../http/routeUtils';
 import { sdkRootDir } from '../sdkRoot';
 import { hasOpenRouterKey, withOpenRouterModels } from './openRouterCatalog';
-import { isSecretProvider, type SecretsStore } from '../secretsStore';
+import { PROVIDER_KEY_ENV, isSecretProvider, type SecretsStore } from '../secretsStore';
 import { workspaceOf } from '../workspace/middleware';
 
 /** Deps for {@link registerCatalogRoutes}. */
@@ -98,11 +98,12 @@ async function readRegistryIndex(indexPath: string): Promise<RegistryItem[]> {
  * route and the `listModels` tool report availability identically.
  */
 export function withStoredKeyAvailability(models: CatalogModel[], secretsStore: SecretsStore): CatalogModel[] {
+  const viaOpenRouter = secretsStore.getKey('openrouter') !== undefined || Boolean(process.env[PROVIDER_KEY_ENV.openrouter]);
   return models.map((model) => ({
     ...model,
     available:
       model.available ||
-      (isSecretProvider(model.provider) && secretsStore.getKey(model.provider) !== undefined),
+      (isSecretProvider(model.provider) && (secretsStore.getKey(model.provider) !== undefined || viaOpenRouter)),
   }));
 }
 
