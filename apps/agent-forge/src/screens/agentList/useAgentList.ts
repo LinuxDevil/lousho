@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentListItem, AllAgentsResponse, AnyAgentItem, CodeAgentDir, CodeAgentItem, WorkspaceAgentItem } from '../../../shared/wireTypes';
 import { runtimeClient } from '../../runtime/runtimeClient';
+import { onAgentSaved } from '../../author/authorEvents';
 import { useToast } from '../../ui/Toast';
 
 /** Which agents the list shows: every workspace's, or one workspace's. */
@@ -131,6 +132,8 @@ export function useAgentList(scope: AgentListScope): AgentListState {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => onAgentSaved(() => void load()), [load]);
 
   const refresh = useCallback(() => {
     void load();
