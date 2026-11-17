@@ -336,6 +336,11 @@ export async function startStudioServer(
     collector,
   });
   const server = http.createServer(app);
+  const sockets = new Set<import('node:net').Socket>();
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
+  });
   // One upgrade listener for every WS endpoint: the shared Host/Origin/
   // token gate runs in the router, then the first registered route wins.
   const upgradeRouter = createUpgradeRouter(server, access);
@@ -395,7 +400,9 @@ export async function startStudioServer(
       await closeObserveReporters();
       // A daemon this Studio started stops with it; an attached one is left alone.
       await collector.stop();
-      return new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      const closed = new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      for (const socket of sockets) socket.destroy();
+      return closed;
     },
   };
 }
