@@ -36,7 +36,7 @@ TypeScript AI agents you can test in CI, pause for approval, and resume after a 
 
 ## Try it in 60 seconds, no API key
 
-You need Node.js 22.19 or newer and a network connection to install packages. You do not need an API key.
+You need Node.js 22 (22.19 or newer) or 24, the LTS lines, and a network connection to install packages. You do not need an API key.
 
 ```bash
 npm create lousho@latest my-agent -- --yes
@@ -117,7 +117,7 @@ For a side-by-side look at the Vercel AI SDK, OpenAI Agents SDK, Mastra and Lang
 
 ## Installation
 
-Requires Node.js 22.19 or newer. To start a new project, see [Try it](#try-it-in-60-seconds-no-api-key) above. To chat with that agent, copy `.env.example` to `.env`, put your API key in it and run `npm run dev`.
+Requires Node.js 22 (22.19 or newer) or 24. To start a new project, see [Try it](#try-it-in-60-seconds-no-api-key) above. To chat with that agent, copy `.env.example` to `.env`, put your API key in it and run `npm run dev`.
 
 To add Lousho to an existing project:
 
@@ -3632,9 +3632,10 @@ import { createAgent } from 'lousho';
 const agent = createAgent({ model: 'openai/gpt-4o-mini' /* , tools: [payInvoice, archiveThread] */ });
 const paused = await agent.send('Pay the invoice and archive the thread');
 // paused.approvalIds: ['…pay', '…archive']
+const [pay, archive] = paused.approvalIds ?? [];
 const result = await agent.approvals.resolveAll([
-  { id: paused.approvalIds![0], approved: true, args: { amount: 120 } },
-  { id: paused.approvalIds![1], approved: false, note: 'keep it for now' },
+  { id: pay!, approved: true, args: { amount: 120 } },
+  { id: archive!, approved: false, note: 'keep it for now' },
 ]);
 ```
 
@@ -14112,7 +14113,7 @@ const model = mockModel([{ toolCalls: [{ name: 'read_log', args: {} }] }, { text
 const agent = createAgent({ instructions: 'You read logs.', provider: model, tools: [readLog], hooks: [redact] });
 
 await agent.send('Read the log');
-const toolMessage = model.calls[1].messages.at(-1);
+const toolMessage = model.calls[1]?.messages.at(-1);
 console.log(toolMessage?.role); // 'tool': its content is the redacted text
 ```
 
@@ -16099,7 +16100,7 @@ await store.add(memoryKey(notes)!, { text: 'The user likes tea.' });
 const model = mockModel([{ toolCalls: [{ name: 'remember_notes', args: { text: 'Lives in Oslo.' } }] }, 'Noted.']);
 await createAgent({ provider: model, memory: [notes] }).send('I moved to Oslo.');
 
-console.log(model.calls[0].messages[0].content); // ends with <memory name="notes">\n- The user likes tea.\n</memory>
+console.log(model.calls[0]?.messages[0]?.content); // ends with <memory name="notes">\n- The user likes tea.\n</memory>
 console.log((await store.list(memoryKey(notes)!)).map((item) => item.text)); // ['Lives in Oslo.', 'The user likes tea.']
 ```
 
@@ -23540,7 +23541,7 @@ describe('weather agent', () => {
     expect(result.text).toBe('It is 21°C in Paris.');
     expect(execute).toHaveBeenCalledWith({ city: 'Paris' }, expect.anything());
     expect(model.calls).toHaveLength(2);
-    expect(model.calls[1].messages.at(-1)).toMatchObject({ role: 'tool', toolCallId: 'call_1' });
+    expect(model.calls[1]?.messages.at(-1)).toMatchObject({ role: 'tool', toolCallId: 'call_1' });
     model.assertExhausted(); // fails if scripted turns were never used
   });
 });

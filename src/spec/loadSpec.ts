@@ -27,6 +27,11 @@ function unknownFieldTypos(data: unknown): string[] {
   });
 }
 
+function looksLikeV2(data: unknown): boolean {
+  if (typeof data !== 'object' || data === null || 'version' in data || 'prompt' in data || 'provider' in data) return false;
+  return 'instructions' in data || 'model' in data;
+}
+
 /**
  * Loads and validates an agent spec file. Supports both .yaml/.yml (via
  * the `yaml` package) and .json (via JSON.parse), chosen by file
@@ -45,6 +50,13 @@ export function loadSpec(filePath: string): AgentSpec {
 
   const data = parseSpecData(raw, ext, filePath);
 
+  if (looksLikeV2(data)) {
+    throw new ValidationError(
+      `loadSpec: '${filePath}' uses AgentSpec v2 fields (model, instructions) but has no version - add \`version: 2\` at the top`,
+      undefined,
+      'LOUSHO_SPEC_INVALID'
+    );
+  }
   const typos = unknownFieldTypos(data);
   const result = agentSpecSchema.safeParse(data);
   if (!result.success) {

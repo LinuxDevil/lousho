@@ -18,7 +18,7 @@ import {
   registerBuiltInAdapters,
 } from '../deploy';
 import { findSdkRoot } from '../deploy/bundle';
-import { USAGE_EXIT_CODE, exitCodeFor, parseCommand, stringValue, type CommandSpec } from './args';
+import { USAGE_EXIT_CODE, exitCodeFor, parseCommand, stringValue, usageError, type CommandSpec } from './args';
 import { missingProviderPeerWarning } from './buildPeers';
 
 export interface BuildArgs {
@@ -29,9 +29,9 @@ export interface BuildArgs {
   help?: boolean;
 }
 
-const USAGE = 'Usage: lousho build <agent-dir|spec|agent.ts> --target=<node-server|cloudflare-worker|docker> [--out=<dir>]   (or --agent=<path>)';
+const BUILD_USAGE = { command: 'build', usage: 'Usage: lousho build <agent-dir|spec|agent.ts> --target=<node-server|cloudflare-worker|docker> [--out=<dir>]   (or --agent=<path>)' };
 
-const HELP = `${USAGE}
+const HELP = `${BUILD_USAGE.usage}
 
 Bundles an agent spec (agent.yaml / agent.json), an agent directory or (node-server, docker) a .ts/.js
 module exporting createAgent() options or an agent, for deployment.
@@ -49,7 +49,7 @@ Options:
 
 const SPEC: CommandSpec = {
   command: 'build',
-  usage: USAGE,
+  usage: BUILD_USAGE.usage,
   positionals: 1,
   options: { target: { type: 'string' }, agent: { type: 'string' }, out: { type: 'string' } },
 };
@@ -110,7 +110,7 @@ export async function runBuild(argv: string[], io: BuildIO = defaultIO): Promise
   try {
     args = parseBuildArgs(argv);
   } catch (error) {
-    io.stderr(`Error: ${(error as Error).message}`);
+    io.stderr((error as Error).message);
     return exitCodeFor(error);
   }
   if (args.help) {
@@ -119,20 +119,18 @@ export async function runBuild(argv: string[], io: BuildIO = defaultIO): Promise
   }
 
   if (!args.target) {
-    io.stderr(`Error: --target is required. ${USAGE}`);
+    io.stderr(usageError(BUILD_USAGE, '--target is required.').message);
     return USAGE_EXIT_CODE;
   }
 
   const adapter = getAdapter(args.target);
   if (!adapter) {
-    io.stderr(
-      `Error: unknown target "${args.target}". Known targets: ${listAdapters().join(', ')}`
-    );
+    io.stderr(usageError(BUILD_USAGE, `unknown target "${args.target}". Known targets: ${listAdapters().join(', ')}.`).message);
     return USAGE_EXIT_CODE;
   }
 
   if (!args.agent) {
-    io.stderr(`Error: an agent path is required. ${USAGE}`);
+    io.stderr(usageError(BUILD_USAGE, 'an agent path is required.').message);
     return USAGE_EXIT_CODE;
   }
 
@@ -140,7 +138,7 @@ export async function runBuild(argv: string[], io: BuildIO = defaultIO): Promise
     io.stdout(await driveAdapter(adapter, args, args.target, io));
     return 0;
   } catch (error) {
-    io.stderr(`Error: ${(error as Error).message}`);
+    io.stderr(`lousho build: ${(error as Error).message}`);
     return 1;
   }
 }

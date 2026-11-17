@@ -198,6 +198,7 @@ function setUpProject(projectDir: string, skipBuild: boolean): void {
           module: 'NodeNext',
           moduleResolution: 'NodeNext',
           strict: true,
+          noUncheckedIndexedAccess: true,
           noEmit: true,
           skipLibCheck: true,
           types: ['node'],
