@@ -74,6 +74,10 @@ function usageOf(reply: { usage?: { promptTokens: number; completionTokens: numb
   };
 }
 
+export function passReasoning(model: string, maxTokens: number) {
+  return providerOf(model).type === 'openrouter' ? { budgetTokens: Math.floor(maxTokens / 2), force: true } : undefined;
+}
+
 /** The reply text as the schema's `T`, or the `PassOutputError`/`PassRefusedError` it earns. */
 function parseReply<T>(text: string, finishReason: string, schema: z.ZodType<T, z.ZodTypeDef, unknown>): T {
   if (finishReason === 'content_filter') throw new PassRefusedError('The model declined this request.');
@@ -101,13 +105,15 @@ export async function callPassModel<T>(input: PassModelInput<T>): Promise<T> {
   input.ctx.record({ model });
 
   const signal = AbortSignal.any([input.ctx.signal, AbortSignal.timeout(input.timeoutMs)]);
+  const maxTokens = input.maxOutputTokens ?? 1024;
   const reply = await provider.generate({
     messages: [
       { role: 'system', content: input.system },
       { role: 'user', content: input.prompt },
     ],
     temperature: 0,
-    maxTokens: input.maxOutputTokens ?? 1024,
+    maxTokens,
+    reasoning: passReasoning(model, maxTokens),
     signal,
   });
 
