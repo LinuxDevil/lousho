@@ -212,10 +212,3 @@
   font-size: 13px;
 }
 
-.template-readme {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font: 13px/1.6 var(--font-ui);
-  color: var(--text);
-}

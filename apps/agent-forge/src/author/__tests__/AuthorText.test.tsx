@@ -13,4 +13,12 @@ describe('AuthorText', () => {
   it('leaves an unpaired ** as text', () => {
     expect(renderToStaticMarkup(<AuthorText text={'2 ** 3 is 8'} />)).toContain('2 ** 3 is 8');
   });
+
+  it('renders # headings and - / 1. lists', () => {
+    const html = renderToStaticMarkup(<AuthorText text={'# Title\n## Needs\n- one `a`\n- two\n  wrapped\n1. first\n\nAfter'} />);
+    expect(html).toContain('<p class="author-heading"><strong>Title</strong></p>');
+    expect(html).toContain('<ul><li>one <code>a</code></li><li>two wrapped</li><li>first</li></ul>');
+    expect(html).toContain('<p>After</p>');
+    expect(html).not.toContain('#');
+  });
 });

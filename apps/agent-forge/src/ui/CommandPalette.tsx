@@ -16,7 +16,7 @@ import {
 import { CREATE_AGENT_DRAFT, openAuthor } from '../author/authorEntry';
 import { navigate } from '../router/router';
 import { agentTabPath } from '../screens/agents/agentTabs';
-import { NAV_ITEMS } from '../shell/NavRail';
+import { NAV_ITEMS, useNavItems, type NavItem } from '../shell/NavRail';
 import { SHORTCUTS, matchShortcut } from '../shell/shortcuts';
 import { toggleTheme } from '../shell/theme';
 import { useAppState } from '../state/AppState';
@@ -40,9 +40,9 @@ interface AgentRef {
 
 const TRACE_ID = /^[0-9a-fA-F-]{8,}$/;
 
-function baseCommands(agents: AgentRef[], openAgent: (id: string) => void): Command[] {
+function baseCommands(navItems: NavItem[], agents: AgentRef[], openAgent: (id: string) => void): Command[] {
   return [
-    ...NAV_ITEMS.map((item) => ({
+    ...navItems.map((item) => ({
       id: `go:${item.id}`,
       label: `Go to ${item.label}`,
       run: () => navigate(item.href),
@@ -75,10 +75,10 @@ function baseCommands(agents: AgentRef[], openAgent: (id: string) => void): Comm
  * (case-insensitive), led by "Open trace <id>" when the query looks like a
  * trace id (8+ characters of hex digits and dashes).
  */
-export function buildCommands(query: string, agents: AgentRef[], openAgent: (id: string) => void): Command[] {
+export function buildCommands(query: string, agents: AgentRef[], openAgent: (id: string) => void, navItems: NavItem[] = NAV_ITEMS): Command[] {
   const q = query.trim();
   const needle = q.toLowerCase();
-  const matches = baseCommands(agents, openAgent).filter((c) => c.label.toLowerCase().includes(needle));
+  const matches = baseCommands(navItems, agents, openAgent).filter((c) => c.label.toLowerCase().includes(needle));
   if (!TRACE_ID.test(q)) return matches;
   const trace: Command = { id: 'trace', label: `Open trace ${q}`, run: () => navigate(`/traces/${q}`), group: 'Trace', icon: TextSearch };
   return [trace, ...matches];
@@ -218,7 +218,8 @@ function Palette({
 }) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
-  const commands = useMemo(() => buildCommands(query, agents, openAgent), [query, agents, openAgent]);
+  const navItems = useNavItems();
+  const commands = useMemo(() => buildCommands(query, agents, openAgent, navItems), [query, agents, openAgent, navItems]);
   const listId = useId();
   const input = useRef<HTMLInputElement>(null);
   const current = Math.min(active, commands.length - 1);
