@@ -7,6 +7,7 @@ import { openRouterModelId } from './openRouterFallback';
 import { resolveAuthorProvider } from './author/provider';
 import { resolveProviderForModel } from './buildAgent';
 import { computeRequirements, requirementDeps } from './author/requirements';
+import { withStoredKeyAvailability } from './routes/catalogRoutes';
 
 describe('OpenRouter fallback for providers without a key', () => {
   const names = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY'] as const;
@@ -26,6 +27,16 @@ describe('OpenRouter fallback for providers without a key', () => {
       else process.env[name] = value;
     }
     fs.rmSync(baseDir, { recursive: true, force: true });
+  });
+
+  it('marks Anthropic and OpenAI models available when only an OpenRouter key exists', () => {
+    const models = [
+      { id: 'anthropic/claude-haiku-5-5', provider: 'anthropic', available: false },
+      { id: 'openai/gpt-4o-mini', provider: 'openai', available: false },
+    ] as Parameters<typeof withStoredKeyAvailability>[0];
+    expect(withStoredKeyAvailability(models, store).map((m) => m.available)).toEqual([false, false]);
+    store.setKey('openrouter', 'sk-or-test');
+    expect(withStoredKeyAvailability(models, store).map((m) => m.available)).toEqual([true, true]);
   });
 
   it('maps Anthropic ids to OpenRouter slugs', () => {
