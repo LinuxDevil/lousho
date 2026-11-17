@@ -28,7 +28,7 @@ permissions:
     action: deny
     reason: A reviewer reads and comments. It never changes the repository.
   - id: p2
-    tool: github_add_pr_comment
+    tool: [github_add_pr_comment, github_submit_review, github_add_issue_comment]
     action: ask
     reason: Check the review before it is posted.
 guardrails:
