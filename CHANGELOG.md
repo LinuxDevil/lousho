@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-alpha.125] - 2026-11-17
+
 ## [1.0.0-alpha.124] - 2026-11-16
 
 - `lousho doctor <spec>` validates version 2 specs (all six Studio templates) instead of reporting v1 schema errors.
