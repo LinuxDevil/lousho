@@ -17,6 +17,7 @@
  * behavior is unchanged, only the seam it's routed through changes.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { SandboxAdapter } from '../../security/sandboxCore';
 import { ToolDescriptor, ToolExecutionContext } from '../../types';
 import { getToolExecute } from '../toolContract';
@@ -24,8 +25,8 @@ import { toolFailure } from './toolFailure';
 
 /**
  * The request shape encoded (as base64 JSON, via the SANDBOX_FETCH_REQUEST
- * env var - not argv, so there's no shell-quoting/argv-length concern for
- * arbitrary headers/bodies) and handed to the sandboxed Node script.
+ * env vars - not argv, so there's no shell-quoting concern; split into
+ * 100k chunks to stay under Linux's per-string limit) and handed to the sandboxed Node script.
  */
 export interface SandboxFetchRequest {
   url: string;
@@ -60,7 +61,9 @@ export interface SandboxFetchRequest {
  * with a `lookup` that only ever answers that address.
  */
 const SANDBOX_FETCH_SCRIPT = `
-const req = JSON.parse(Buffer.from(process.env.SANDBOX_FETCH_REQUEST, 'base64').toString('utf-8'));
+let encoded = process.env.SANDBOX_FETCH_REQUEST;
+for (let i = 1; process.env['SANDBOX_FETCH_REQUEST_' + i] !== undefined; i++) encoded += process.env['SANDBOX_FETCH_REQUEST_' + i];
+const req = JSON.parse(Buffer.from(encoded, 'base64').toString('utf-8'));
 if (req.insecureTLS) {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 }
@@ -192,7 +195,7 @@ export async function sandboxHttpFetch(
 
   const result = await rejectOnAbort(
     sandbox.run('node', ['-e', SANDBOX_FETCH_SCRIPT], {
-      env: { SANDBOX_FETCH_REQUEST: encoded },
+      env: requestEnv(encoded),
       timeoutMs,
       signal,
     }),
@@ -218,6 +221,16 @@ export async function sandboxHttpFetch(
     statusText: parsed.statusText,
     headers: parsed.headers,
   });
+}
+
+const ENV_CHUNK = 100_000;
+
+function requestEnv(encoded: string): Record<string, string> {
+  const env: Record<string, string> = { SANDBOX_FETCH_REQUEST: encoded.slice(0, ENV_CHUNK) };
+  for (let i = 1; i * ENV_CHUNK < encoded.length; i++) {
+    env[`SANDBOX_FETCH_REQUEST_${i}`] = encoded.slice(i * ENV_CHUNK, (i + 1) * ENV_CHUNK);
+  }
+  return env;
 }
 
 /**
@@ -259,37 +272,27 @@ function toSandboxFetchRequest(input: RequestInfo | URL, init: RequestInit | und
   };
 }
 
+const fetchSandbox = new AsyncLocalStorage<SandboxAdapter>();
+let dispatcher: typeof fetch | undefined;
+
+function installFetchDispatcher(): void {
+  if (globalThis.fetch === dispatcher) return;
+  const underlying = globalThis.fetch;
+  dispatcher = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const sandbox = fetchSandbox.getStore();
+    return sandbox ? sandboxHttpFetch(sandbox, toSandboxFetchRequest(input, init)) : underlying(input, init);
+  }) as typeof fetch;
+  globalThis.fetch = dispatcher;
+}
+
 /**
- * Swaps `globalThis.fetch` for a sandbox-routed implementation for the
- * duration of `fn()`, restoring the original afterward (even if `fn`
- * throws). This lets tool code that calls the ambient global `fetch`
- * (github.ts, jira.ts) route its real outbound HTTP call through a
- * SandboxAdapter without every call site inside those tools needing to
- * thread a `sandbox` argument through - see GitHubTools.register() /
- * JiraTools.register(), which wrap each tool's `execute()` with this for
- * `sandboxExecute()`, while leaving `execute()` itself untouched (still a
- * real, directly-callable implementation for callers that invoke
- * `descriptor.tool.execute()` directly rather than through
- * executeToolWithSandboxGuard - e.g. examples/ops-pipeline).
- *
- * NOT safe across concurrent calls that each mutate globalThis.fetch at the
- * same time (a second, interleaved withSandboxedFetch() call would restore
- * the wrong original fetch). This codebase executes one tool call at a time
- * within a given AgentExecutor step today; if that changes, per-call fetch
- * injection (like http.ts's dedicated sandboxExecute) is needed instead of
- * a global monkey-patch.
+ * Routes the ambient `fetch` calls made inside `fn()` (github.ts, jira.ts)
+ * through `sandbox`. Scoped per async context, so a concurrent run's model
+ * request or tool call elsewhere in the process keeps the real `fetch`.
  */
 async function withSandboxedFetch<T>(sandbox: SandboxAdapter, fn: () => Promise<T>): Promise<T> {
-  const original = globalThis.fetch;
-  const sandboxedFetch = ((input: RequestInfo | URL, init?: RequestInit) =>
-    sandboxHttpFetch(sandbox, toSandboxFetchRequest(input, init))) as typeof fetch;
-
-  globalThis.fetch = sandboxedFetch;
-  try {
-    return await fn();
-  } finally {
-    globalThis.fetch = original;
-  }
+  installFetchDispatcher();
+  return fetchSandbox.run(sandbox, fn);
 }
 
 /**
