@@ -638,6 +638,7 @@ export function observeExporter(options: ObserveExporterOptions = {}): ObserveRe
 
   /** span.id -> trace_id; a span whose parent is unknown roots a trace of its own. */
   const targets = new Map<string, string>();
+  const sessions = new Map<string, string>();
 
   const timers: ReturnType<typeof setInterval>[] = [];
   if (flushIntervalMs > 0) {
@@ -749,6 +750,8 @@ export function observeExporter(options: ObserveExporterOptions = {}): ObserveRe
     onSpanStart(span) {
       const parent = span.parentId !== undefined ? targets.get(span.parentId) : undefined;
       targets.set(span.id, parent ?? span.id);
+      const conversation = str(span.attributes[GenAiAttr.CONVERSATION_ID]);
+      if (conversation !== undefined && !sessions.has(parent ?? span.id)) sessions.set(parent ?? span.id, conversation);
       // A parentless span is a run's root `invoke_agent`: reported as it
       // starts (see the header), with one `prompt_use` per run keyed by the
       // root span's id (the run's obs_id). Sub-agent runs arrive with
@@ -767,8 +770,9 @@ export function observeExporter(options: ObserveExporterOptions = {}): ObserveRe
     },
     onSpanEnd(span) {
       const traceId = targets.get(span.id) ?? span.id;
-      const end = enqueue({ type: 'observation', data: observationOf(span, traceId, identity.agentId, fallbackSessionId, now) });
+      const end = enqueue({ type: 'observation', data: observationOf(span, traceId, identity.agentId, sessions.get(traceId) ?? fallbackSessionId, now) });
       if (traceId !== span.id) return;
+      sessions.delete(traceId);
       closeRoot(span.id, end !== undefined);
       // The root ended: forget every span of this trace so the map does not grow forever.
       for (const [id, tid] of targets) if (tid === traceId) targets.delete(id);

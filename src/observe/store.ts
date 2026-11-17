@@ -887,6 +887,14 @@ function traceFilterWhere(filter: TraceFilter): { where: string; having: string;
   return { where, having, params };
 }
 
+function meteredShare(column: 'usage_input_tokens' | 'usage_output_tokens' | 'cost_usd', o = 'o'): string {
+  return (
+    `CASE WHEN ${o}.parent_obs_id IS NULL THEN COALESCE(${o}.${column}, 0) ` +
+    `WHEN ${o}.kind = 'generation' AND NOT EXISTS (SELECT 1 FROM observations r WHERE r.trace_id = ${o}.trace_id ` +
+    `AND r.parent_obs_id IS NULL AND r.${column} IS NOT NULL) THEN COALESCE(${o}.${column}, 0) ELSE 0 END`
+  );
+}
+
 /** Per-trace aggregates; {@link listTraces} splices its WHERE in after the FROM. */
 const TRACE_SELECT = `
   SELECT o.trace_id,
@@ -896,9 +904,9 @@ const TRACE_SELECT = `
     SUM(o.kind = 'generation') AS generations,
     SUM(o.kind = 'tool') AS tools,
     SUM(o.status = 'error') AS error_count,
-    SUM(COALESCE(o.usage_input_tokens, 0)) AS input_tokens,
-    SUM(COALESCE(o.usage_output_tokens, 0)) AS output_tokens,
-    SUM(COALESCE(o.cost_usd, 0)) AS cost_usd,
+    SUM(${meteredShare('usage_input_tokens')}) AS input_tokens,
+    SUM(${meteredShare('usage_output_tokens')}) AS output_tokens,
+    SUM(${meteredShare('cost_usd')}) AS cost_usd,
     MAX(o.agent_id) AS agent_id,
     MAX(o.session_id) AS session_id,
     (SELECT r.name FROM ${ROOT_OF} LIMIT 1) AS name,
@@ -1522,9 +1530,9 @@ const SESSION_SELECT = `
   SELECT s.session_id, s.agent_id, s.status, s.started_at, s.ended_at,
     (SELECT a.name FROM agents a WHERE a.agent_id = s.agent_id) AS agent_name,
     (SELECT COUNT(DISTINCT o.trace_id) FROM observations o WHERE o.session_id = s.session_id) AS traces,
-    (SELECT COALESCE(SUM(o.usage_input_tokens), 0) FROM observations o WHERE o.session_id = s.session_id) AS input_tokens,
-    (SELECT COALESCE(SUM(o.usage_output_tokens), 0) FROM observations o WHERE o.session_id = s.session_id) AS output_tokens,
-    (SELECT COALESCE(SUM(o.cost_usd), 0) FROM observations o WHERE o.session_id = s.session_id) AS cost_usd,
+    (SELECT COALESCE(SUM(${meteredShare('usage_input_tokens')}), 0) FROM observations o WHERE o.session_id = s.session_id) AS input_tokens,
+    (SELECT COALESCE(SUM(${meteredShare('usage_output_tokens')}), 0) FROM observations o WHERE o.session_id = s.session_id) AS output_tokens,
+    (SELECT COALESCE(SUM(${meteredShare('cost_usd')}), 0) FROM observations o WHERE o.session_id = s.session_id) AS cost_usd,
     (SELECT substr(r.input, 1, 200) FROM observations r
       WHERE r.session_id = s.session_id AND r.parent_obs_id IS NULL
       ORDER BY r.start DESC, r.obs_id DESC LIMIT 1) AS last_input_preview
