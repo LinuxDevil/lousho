@@ -706,9 +706,14 @@ export function observeExporter(options: ObserveExporterOptions = {}): ObserveRe
   if (options.registerExitHooks !== false && typeof process !== 'undefined' && typeof process.once === 'function') {
     // 'beforeExit' fires while async work still runs; the in-flight POST keeps the loop
     // alive until it settles (the ~2s cap bounds the wait). Signals get an explicit
-    // exit afterwards because installing a handler replaces the default kill.
+    // exit afterwards because installing a handler replaces the default kill, unless
+    // the host has its own handler for that signal: then the host owns the exit.
     const onBeforeExit = () => void close();
-    const onSignal = (code: number) => () => {
+    const onSignal = (signal: NodeJS.Signals, code: number) => () => {
+      if (process.listenerCount(signal) > 0) {
+        void close();
+        return;
+      }
       void close().finally(() => process.exit(code));
     };
     // 'uncaughtExceptionMonitor' observes a crash without handling it: Node still
@@ -725,8 +730,8 @@ export function observeExporter(options: ObserveExporterOptions = {}): ObserveRe
     };
     const hooks: Array<[string, () => void]> = [
       ['beforeExit', onBeforeExit],
-      ['SIGINT', onSignal(130)],
-      ['SIGTERM', onSignal(143)],
+      ['SIGINT', onSignal('SIGINT', 130)],
+      ['SIGTERM', onSignal('SIGTERM', 143)],
       ['uncaughtExceptionMonitor', onCrash],
     ];
     for (const [signal, handler] of hooks) {
