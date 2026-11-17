@@ -16,8 +16,7 @@ import {
 import { CREATE_AGENT_DRAFT, openAuthor } from '../author/authorEntry';
 import { navigate } from '../router/router';
 import { agentTabPath } from '../screens/agents/agentTabs';
-import { NAV_ITEMS, type NavItem } from '../shell/NavRail';
-import { useNavItems } from '../shell/useNavItems';
+import { NAV_ITEMS, useNavItems, type NavItem } from '../shell/NavRail';
 import { SHORTCUTS, matchShortcut } from '../shell/shortcuts';
 import { toggleTheme } from '../shell/theme';
 import { useAppState } from '../state/AppState';

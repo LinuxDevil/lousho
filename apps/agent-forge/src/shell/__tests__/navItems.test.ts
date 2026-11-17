@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasWorkspaceService } from '../useNavItems';
+import { hasWorkspaceService } from '../NavRail';
 
 const reply = (status: number, type: string) => async () => new Response('{}', { status, headers: { 'content-type': type } });
 

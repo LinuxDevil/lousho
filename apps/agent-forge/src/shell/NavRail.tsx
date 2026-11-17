@@ -1,11 +1,11 @@
 import { Activity, Bot, Boxes, ClipboardCheck, FileText, FlaskConical, Inbox, LayoutTemplate, Library, LineChart, MessagesSquare, Settings, Sparkles, type LucideIcon } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { openAuthor } from '../author/authorEntry';
 import { useInboxCount } from '../state/useInboxCount';
 import { useRoute } from '../router/useRoute';
 import { DaemonStatus } from './DaemonStatus';
 import { NavBrand } from './NavBrand';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
-import { useNavItems } from './useNavItems';
 
 export type NavSection = 'Build' | 'Observe' | 'Evaluate' | 'Assets' | 'Footer';
 
@@ -32,6 +32,31 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'hub', label: 'Context Hub', href: '#/hub', section: 'Assets', icon: Library },
   { id: 'settings', label: 'Settings', href: '#/settings', section: 'Footer', icon: Settings },
 ];
+
+export async function hasWorkspaceService(fetchFn: typeof fetch = fetch): Promise<boolean> {
+  try {
+    const res = await fetchFn('/api/workspaces', { headers: { accept: 'application/json' } });
+    return res.ok && (res.headers.get('content-type') ?? '').includes('json');
+  } catch {
+    return false;
+  }
+}
+
+let probe: Promise<boolean> | undefined;
+const WITHOUT_WORKSPACES = NAV_ITEMS.filter((item) => item.id !== 'workspaces');
+
+export function useNavItems(): NavItem[] {
+  const [service, setService] = useState(false);
+  useEffect(() => {
+    let live = true;
+    probe ??= hasWorkspaceService();
+    void probe.then((ok) => live && setService(ok));
+    return () => {
+      live = false;
+    };
+  }, []);
+  return service ? NAV_ITEMS : WITHOUT_WORKSPACES;
+}
 
 const SECTION_ORDER: NavSection[] = ['Build', 'Observe', 'Evaluate', 'Assets', 'Footer'];
 
