@@ -54,3 +54,42 @@ it('keeps a run in one session and counts its tokens and cost once', async () =>
     db.close();
   }
 });
+
+it('previews a run by its last user message, not the raw message JSON', async () => {
+  const sent: IngestEvent[] = [];
+  const fetchFn = (async (_url: string, init: { body: string }) => {
+    sent.push(...(JSON.parse(init.body) as { batch: IngestEvent[] }).batch);
+    return new Response('{}', { status: 200 });
+  }) as unknown as typeof fetch;
+  const reporter = observeExporter({
+    cwd: fs.mkdtempSync(path.join(os.tmpdir(), 'lousho-observe-')),
+    fetchFn,
+    heartbeatIntervalMs: 0,
+    flushIntervalMs: 0,
+    registerExitHooks: false,
+    now: () => T0 + 10,
+  });
+  const messages = [
+    { role: 'system', parts: [{ type: 'text', content: 'You are a helper.' }] },
+    { role: 'user', parts: [{ type: 'text', content: 'first question' }] },
+    { role: 'assistant', parts: [{ type: 'text', content: 'answer' }] },
+    { role: 'user', parts: [{ type: 'text', content: 'Design a URL shortener' }] },
+  ];
+  const root = span('root', 'invoke_agent a', {
+    'gen_ai.operation.name': 'invoke_agent',
+    'gen_ai.conversation.id': 'chat-2',
+    'gen_ai.input.messages': JSON.stringify(messages),
+  });
+  reporter.onSpanStart(root);
+  reporter.onSpanEnd({ ...root, endTime: T0 + 10 });
+  await reporter.close();
+
+  const db = openDb(':memory:');
+  try {
+    ingestBatch(db, sent, T0 + 20);
+    expect(listTraces(db, { limit: 10, offset: 0 }).traces[0]?.input_preview).toBe('Design a URL shortener');
+    expect(listSessions(db, { limit: 10, offset: 0 }).sessions[0]?.last_input_preview).toBe('Design a URL shortener');
+  } finally {
+    db.close();
+  }
+});
