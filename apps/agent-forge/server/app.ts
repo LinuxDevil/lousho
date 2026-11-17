@@ -1038,7 +1038,7 @@ function registerStaticClient(app: Express, staticDir: string | undefined): void
     // `App.tsx` view state, but still refresh-safe) - serve `index.html` and
     // let the client app take over, the same as `vite preview`/most SPA
     // hosts do.
-    app.get(/^(?!\/health|\/agents|\/runs|\/workspaces|\/observe|\/playground|\/catalog|\/assistant|\/templates|\/events|\/inbox|\/hooks|\/serve).*/, (_req, res) => {
+    app.get(/^(?!\/api\/|\/health|\/agents|\/runs|\/workspaces|\/observe|\/playground|\/catalog|\/assistant|\/templates|\/events|\/inbox|\/hooks|\/serve).*/, (_req, res) => {
       res.sendFile(indexHtml);
     });
   }

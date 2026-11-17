@@ -104,7 +104,12 @@ export function WorkspacesScreen() {
           value={q}
           onChange={(event) => navigate(workspacesHref({ q: event.target.value }), { replace: true })}
         />
-        {failed ? (
+        {state.notFound ? (
+          <EmptyState
+            title="No workspace service here"
+            hint="This Studio does not run the workspace service. Pick a project folder from the workspace switcher instead."
+          />
+        ) : failed ? (
           <EmptyState
             icon={CircleAlert}
             title="Could not load workspaces"

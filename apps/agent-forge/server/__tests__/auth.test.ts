@@ -42,6 +42,13 @@ describe('studio access control', () => {
     expect(health.headers.get('access-control-allow-origin')).toBeNull();
   });
 
+  it('answers an unknown /api/ route with 404, not the app shell', async () => {
+    const res = await fetch(`${origin}/api/workspaces`);
+    expect(res.status).toBe(404);
+    expect(await res.text()).not.toContain('<title>forge</title>');
+    expect((await fetch(`${origin}/settings`)).status).toBe(200);
+  });
+
   it('refuses a cross-origin provider-key write even with a valid-looking body', async () => {
     const res = await fetch(`${origin}/settings/providers/openai`, {
       method: 'PUT',
