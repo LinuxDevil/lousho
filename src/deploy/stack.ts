@@ -47,14 +47,15 @@ export function assertValidConfig(config: DeployConfig): void {
 export function studioDockerfile(source: StudioSource): string {
   const install =
     source.kind === 'npm'
-      ? `RUN npm install --omit=dev lousho@${source.sdk} lousho-studio@${source.studio}`
-      : 'COPY *.tgz ./\nRUN npm install --omit=dev ./lousho-*.tgz && rm -f ./*.tgz';
+      ? `RUN npm install --omit=dev lousho@${source.sdk} lousho-studio@${source.studio} isolated-vm@^6`
+      : 'COPY *.tgz ./\nRUN npm install --omit=dev ./lousho-*.tgz isolated-vm@^6 && rm -f ./*.tgz';
   return `FROM node:22-slim
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/lousho
 RUN npm init -y >/dev/null
 ${install}
 ENV PATH=/opt/lousho/node_modules/.bin:$PATH
+ENV NODE_OPTIONS=--no-node-snapshot
 RUN ln -s /opt/lousho/node_modules /node_modules
 RUN mkdir -p /workspace /home/node/.lousho && chown node:node /workspace /home/node/.lousho
 USER node
