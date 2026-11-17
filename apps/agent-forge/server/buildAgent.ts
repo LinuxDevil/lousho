@@ -32,6 +32,7 @@ import {
 import type { AgentFlow } from 'lousho/flows';
 import { compileHooksFromSpecPolicy } from './compileHooks';
 import { PROVIDER_KEY_ENV, isSecretProvider, type SecretsStore } from './secretsStore';
+import { openRouterModelId } from './openRouterFallback';
 
 /**
  * Local, server-only tools available to a spec's `tools` list in ADDITION
@@ -123,6 +124,10 @@ function resolveProviderForSpec(type: string, model: string, secretsStore?: Secr
   if (isSecretProvider(lower)) {
     const storedKey = secretsStore?.getKey(lower);
     const key = storedKey || process.env[PROVIDER_KEY_ENV[lower]];
+    const routerKey = secretsStore?.getKey('openrouter') || process.env[PROVIDER_KEY_ENV.openrouter];
+    if (!key && routerKey) {
+      return LLMProviderRegistry.create('openrouter', { defaultModel: openRouterModelId(lower, model), apiKey: routerKey });
+    }
     if (!key) throw missingProviderKey(lower, PROVIDER_KEY_ENV[lower]);
     return LLMProviderRegistry.create(lower, { defaultModel: model, apiKey: key });
   }

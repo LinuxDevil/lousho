@@ -93,7 +93,11 @@ function modelIdsOf(spec: AgentSpecV2): string[] {
 function providerRow(provider: string, deps: RequirementDeps): Requirement | undefined {
   if (KEYLESS_PROVIDERS.has(provider)) return undefined;
   if (isSecretProvider(provider)) {
-    const ok = Boolean(deps.secrets.getKey(provider)) || Boolean(deps.env[PROVIDER_KEY_ENV[provider]]);
+    const ok =
+      Boolean(deps.secrets.getKey(provider)) ||
+      Boolean(deps.env[PROVIDER_KEY_ENV[provider]]) ||
+      Boolean(deps.secrets.getKey('openrouter')) ||
+      Boolean(deps.env[PROVIDER_KEY_ENV.openrouter]);
     return {
       id: `provider:${provider}`,
       kind: 'provider_key',
