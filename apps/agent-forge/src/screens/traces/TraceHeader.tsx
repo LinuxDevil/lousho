@@ -16,17 +16,22 @@ function latestEnd(rows: ObserveObservationRow[]): number | undefined {
   return latest;
 }
 
-/** Trace-wide totals, summed over every observation the way the daemon's trace list does. */
-function traceTotals(rows: ObserveObservationRow[]): { tokens: number | null; cost: number | null } {
-  let tokens: number | null = null;
-  let cost: number | null = null;
-  for (const row of rows) {
-    if (row.usage_input_tokens !== null || row.usage_output_tokens !== null) {
-      tokens = (tokens ?? 0) + (row.usage_input_tokens ?? 0) + (row.usage_output_tokens ?? 0);
-    }
-    if (row.cost_usd !== null) cost = (cost ?? 0) + row.cost_usd;
-  }
-  return { tokens, cost };
+type Metered = 'usage_input_tokens' | 'usage_output_tokens' | 'cost_usd';
+
+/** One metered column the daemon's way: the root's rolled-up value, else the sum over generations. */
+function metered(rows: ObserveObservationRow[], column: Metered): number | null {
+  const root = rows.find((row) => row.parent_obs_id === null);
+  if (root && root[column] !== null) return root[column];
+  let total: number | null = null;
+  for (const row of rows) if (row.kind === 'generation' && row[column] !== null) total = (total ?? 0) + (row[column] ?? 0);
+  return total;
+}
+
+/** Trace-wide totals, counting each model call once like the daemon's trace list. */
+export function traceTotals(rows: ObserveObservationRow[]): { tokens: number | null; cost: number | null } {
+  const input = metered(rows, 'usage_input_tokens');
+  const output = metered(rows, 'usage_output_tokens');
+  return { tokens: input === null && output === null ? null : (input ?? 0) + (output ?? 0), cost: metered(rows, 'cost_usd') };
 }
 
 /** The root's own model, else the first generation's. */
