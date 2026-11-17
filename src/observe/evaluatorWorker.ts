@@ -219,7 +219,9 @@ export function startEvaluatorWorker(db: SqlDatabase, opts: EvaluatorWorkerOptio
       const box = makeSandbox({ driver: 'isolate', timeoutMs: CODE_TIMEOUT_MS });
       return toEvaluatorResult(await box.run(rule.config.source, { args: [trace] }));
     } catch (error) {
-      return { value: null, comment: sandboxErrorKind(error) ?? 'driver' };
+      const kind = sandboxErrorKind(error);
+      if (kind !== undefined) return { value: null, comment: kind };
+      return { value: null, comment: error instanceof Error && error.message ? `driver: ${error.message}` : 'driver' };
     }
   };
 
