@@ -40,5 +40,9 @@ describe('deploy stack', () => {
     expect(envLine('HASH', '$2a$14$x')).toBe("HASH='$2a$14$x'");
     expect(studioDockerfile({ kind: 'npm', sdk: '1.0.0', studio: 'latest' })).toContain('USER node');
     expect(studioDockerfile({ kind: 'local' })).toContain('RUN ln -s /opt/lousho/node_modules /node_modules');
+    for (const dockerfile of [studioDockerfile({ kind: 'npm', sdk: '1.0.0', studio: 'latest' }), studioDockerfile({ kind: 'local' })]) {
+      expect(dockerfile).toContain('isolated-vm@^6');
+      expect(dockerfile).toContain('ENV NODE_OPTIONS=--no-node-snapshot');
+    }
   });
 });
