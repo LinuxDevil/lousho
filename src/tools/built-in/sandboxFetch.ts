@@ -24,8 +24,8 @@ import { toolFailure } from './toolFailure';
 
 /**
  * The request shape encoded (as base64 JSON, via the SANDBOX_FETCH_REQUEST
- * env var - not argv, so there's no shell-quoting/argv-length concern for
- * arbitrary headers/bodies) and handed to the sandboxed Node script.
+ * env vars - not argv, so there's no shell-quoting concern; split into
+ * 100k chunks to stay under Linux's per-string limit) and handed to the sandboxed Node script.
  */
 export interface SandboxFetchRequest {
   url: string;
@@ -60,7 +60,9 @@ export interface SandboxFetchRequest {
  * with a `lookup` that only ever answers that address.
  */
 const SANDBOX_FETCH_SCRIPT = `
-const req = JSON.parse(Buffer.from(process.env.SANDBOX_FETCH_REQUEST, 'base64').toString('utf-8'));
+let encoded = process.env.SANDBOX_FETCH_REQUEST;
+for (let i = 1; process.env['SANDBOX_FETCH_REQUEST_' + i] !== undefined; i++) encoded += process.env['SANDBOX_FETCH_REQUEST_' + i];
+const req = JSON.parse(Buffer.from(encoded, 'base64').toString('utf-8'));
 if (req.insecureTLS) {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 }
@@ -192,7 +194,7 @@ export async function sandboxHttpFetch(
 
   const result = await rejectOnAbort(
     sandbox.run('node', ['-e', SANDBOX_FETCH_SCRIPT], {
-      env: { SANDBOX_FETCH_REQUEST: encoded },
+      env: requestEnv(encoded),
       timeoutMs,
       signal,
     }),
@@ -218,6 +220,16 @@ export async function sandboxHttpFetch(
     statusText: parsed.statusText,
     headers: parsed.headers,
   });
+}
+
+const ENV_CHUNK = 100_000;
+
+function requestEnv(encoded: string): Record<string, string> {
+  const env: Record<string, string> = { SANDBOX_FETCH_REQUEST: encoded.slice(0, ENV_CHUNK) };
+  for (let i = 1; i * ENV_CHUNK < encoded.length; i++) {
+    env[`SANDBOX_FETCH_REQUEST_${i}`] = encoded.slice(i * ENV_CHUNK, (i + 1) * ENV_CHUNK);
+  }
+  return env;
 }
 
 /**

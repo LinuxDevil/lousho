@@ -320,6 +320,38 @@ describe('makeHttpRequest', () => {
       }
     }, 15000);
 
+    it('sends a body bigger than one env string allows (Linux E2BIG) in chunks the script reassembles', async () => {
+      const localServer = http.createServer((req, res) => {
+        let size = 0;
+        req.on('data', (chunk: Buffer) => (size += chunk.length));
+        req.on('end', () => res.end(`got ${size}`));
+      });
+      const baseUrl = await listen(localServer);
+      const envSizes: number[] = [];
+      const recording: SandboxAdapter = {
+        name: 'recording-noop',
+        writeFile: NoopSandbox.writeFile.bind(NoopSandbox),
+        run: (cmd, args, opts) => {
+          envSizes.push(...Object.values(opts?.env ?? {}).map((v) => v.length));
+          return NoopSandbox.run(cmd, args, opts);
+        },
+      };
+      try {
+        const body = 'x'.repeat(300_000);
+        const result = await executeToolWithSandboxGuard(
+          'http',
+          createHttpTool(LOCAL),
+          { url: baseUrl, method: 'POST', body },
+          recording
+        );
+        expect(result).toBe('got 300000');
+        expect(envSizes.length).toBeGreaterThan(1);
+        expect(Math.max(...envSizes)).toBeLessThan(128 * 1024);
+      } finally {
+        await new Promise<void>((resolve) => localServer.close(() => resolve()));
+      }
+    }, 15000);
+
     it('(b) a custom SandboxAdapter actually gets invoked for the outbound request', async () => {
       const runSpy = vi.fn(async (cmd: string, args: string[]) => {
         expect(cmd).toBe('node');
