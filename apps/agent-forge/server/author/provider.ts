@@ -8,6 +8,7 @@
  */
 import { LLMProviderRegistry, type LLMProvider } from 'lousho';
 import { PROVIDER_KEY_ENV, isSecretProvider, type SecretsStore } from '../secretsStore';
+import { openRouterModelId } from '../openRouterFallback';
 
 /** The outcome of {@link resolveAuthorProvider}: a ready provider, or why the Author cannot run. */
 export type AuthorProviderResult =
@@ -61,6 +62,11 @@ export function resolveAuthorProvider(model: string, secrets: SecretsStore): Aut
   let apiKey: string | undefined;
   if (isSecretProvider(provider)) {
     apiKey = secrets.getKey(provider) || process.env[PROVIDER_KEY_ENV[provider]];
+    const routerKey = secrets.getKey('openrouter') || process.env[PROVIDER_KEY_ENV.openrouter];
+    if (!apiKey && routerKey) {
+      const routed = openRouterModelId(provider, modelId);
+      return { ok: true, provider: LLMProviderRegistry.create('openrouter', { defaultModel: routed, apiKey: routerKey }), modelId: routed };
+    }
     if (!apiKey) return missingKey(provider);
   } else if (provider !== 'ollama') {
     return notUsable(provider, model);
