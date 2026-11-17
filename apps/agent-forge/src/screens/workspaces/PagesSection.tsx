@@ -58,7 +58,7 @@ function AddPageDialog({ open, onClose }: { open: boolean; onClose(): void }) {
       onClose={onClose}
       title="Add page"
       size="sm"
-      description="Creates a single-agent page; the draft shows PRD018 until an agent with that alias is attached (P2.8)."
+      description="Creates a single-agent page; the draft shows PRD018 until an agent with that alias is attached."
       footer={
         <>
           <button type="button" className="btn" onClick={onClose}>
