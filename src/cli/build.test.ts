@@ -35,7 +35,7 @@ describe('runBuild', () => {
     const code = await runBuild(['--target=doesnotexist'], io);
 
     expect(code).toBe(2);
-    expect(io.err.join('\n')).toContain('Error: unknown target "doesnotexist"');
+    expect(io.err.join('\n')).toContain('lousho build: unknown target "doesnotexist"');
     expect(stubAdapterCalls).toEqual([]);
   });
 
@@ -46,7 +46,7 @@ describe('runBuild', () => {
     expect(await runBuild(['--target=stub', '--bogus'], captureIO())).toBe(2);
     const noAgent = captureIO();
     expect(await runBuild(['--target=stub'], noAgent)).toBe(2);
-    expect(noAgent.err.join('\n')).toContain('an agent path is required. Usage: lousho build <agent-dir|spec|agent.ts> --target=');
+    expect(noAgent.err.join('\n')).toMatch(/^lousho build: an agent path is required.\n\[LOUSHO_CONFIG_INVALID\] Usage: lousho build/);
     expect(stubAdapterCalls).toEqual([]);
   });
 

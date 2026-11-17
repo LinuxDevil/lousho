@@ -19,6 +19,13 @@ function tmpFile(name: string, content: string): string {
 
 describe('loadSpec', () => {
 
+  it('tells a v2-shaped spec without `version: 2` to add it', () => {
+    const v2 = tmpFile('v2.yaml', 'name: a\nmodel: openrouter/x\ninstructions: hi\n');
+    expect(() => loadSpec(v2)).toThrow(
+      expect.objectContaining({ code: 'LOUSHO_SPEC_INVALID', message: expect.stringContaining('add `version: 2`') })
+    );
+  });
+
   it('suggests the spec field a top-level typo meant', () => {
     const typo = tmpFile(
       'typo.yaml',

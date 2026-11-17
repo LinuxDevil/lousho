@@ -161,8 +161,22 @@ function usageError(message) {
   process.exitCode = USAGE_EXIT_CODE;
 }
 
+function editDistance(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = row;
+  }
+  return prev[b.length];
+}
+
 function unknownCommand(command) {
-  usageError(`unknown command '${command ?? ''}'.`);
+  const name = command ?? '';
+  const guess = [...COMMANDS.keys()].map((c) => [c, editDistance(name, c)]).sort((x, y) => x[1] - y[1])[0];
+  const hint = guess && guess[1] <= 2 ? ` Did you mean '${guess[0]}'?` : '';
+  console.error(`lousho: unknown command '${name}'.${hint} Run 'lousho --help' to see every command.`);
+  process.exitCode = USAGE_EXIT_CODE;
 }
 
 /**
