@@ -28,12 +28,14 @@ export function workspaceProjects(list: readonly WorkspaceListItem[] | undefined
 
 /**
  * project → workspace name. Two workspaces can share a project (same
- * `package.json` name or `LOUSHO_OBSERVE_PROJECT`); the FIRST name wins -
- * the map shows a name, it never guesses (W09b gotcha).
+ * `package.json` name, `LOUSHO_OBSERVE_PROJECT`, or the `default`
+ * fallback); the launch workspace wins, then the first available one. A
+ * workspace whose folder is missing never claims a project.
  */
 export function projectWorkspaceNames(list: readonly WorkspaceListItem[] | undefined): Map<string, string> {
+  const ranked = [...(list ?? [])].filter((w) => w.available).sort((a, b) => Number(b.isLaunch) - Number(a.isLaunch));
   const names = new Map<string, string>();
-  for (const { project, workspaceName } of workspaceProjects(list)) {
+  for (const { project, workspaceName } of workspaceProjects(ranked)) {
     if (!names.has(project)) names.set(project, workspaceName);
   }
   return names;
