@@ -29,8 +29,14 @@ function blocks(text: string): Block[] {
 function inlineCode(text: string): ReactNode[] {
   return text.split('`').map((seg, i) => {
     if (i % 2 === 1) return <code key={i}>{seg}</code>;
-    return seg === '' ? null : <Fragment key={i}>{seg}</Fragment>;
+    return seg === '' ? null : <Fragment key={i}>{bold(seg)}</Fragment>;
   });
+}
+
+function bold(text: string): ReactNode[] {
+  const parts = text.split('**');
+  if (parts.length % 2 === 0) return [text];
+  return parts.map((seg, i) => (i % 2 === 1 ? <strong key={i}>{seg}</strong> : seg));
 }
 
 /**

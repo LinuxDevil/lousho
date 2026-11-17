@@ -20,6 +20,7 @@ import { CornerDownRight, Play, Plus, Sparkles, User, Wrench, type LucideIcon } 
 import { useAppState } from '../state/AppState';
 import type { ChatMessage } from '../../shared/wireTypes';
 import { ApprovalCard } from './ApprovalCard';
+import { AuthorText } from '../author/AuthorText';
 import { QuestionCard } from './test/QuestionCard';
 import { ChatComposer } from './ChatComposer';
 import { formatTime } from './formatTime';
@@ -91,6 +92,7 @@ function ToolCallCard({ toolCall, result }: { toolCall: NonNullable<ChatMessage[
 
 /** A message's text: a mono tool block (Wrench header) for a tool result, else a plain bubble. */
 function MessageContent({ kind, message }: { kind: BubbleKind; message: ChatMessage }) {
+  if (kind === 'agent') return <div className="chat-bubble"><AuthorText text={message.content} /></div>;
   if (kind !== 'tool') return <div className="chat-bubble">{message.content}</div>;
   return (
     <div className="chat-bubble chat-bubble-tool">
