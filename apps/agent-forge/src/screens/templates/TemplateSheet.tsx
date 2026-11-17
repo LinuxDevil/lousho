@@ -30,6 +30,7 @@ export interface TemplateSheetProps {
   templateId: string | null;
   /** The card's summary when the list already loaded it (title/category fallbacks). */
   summary: TemplateSummary | undefined;
+  workspaceId?: string;
   onClose(): void;
 }
 
@@ -68,7 +69,7 @@ function useTemplateDetail(templateId: string | null) {
   };
 }
 
-function useCreateFromTemplate(templateId: string | null, title: string) {
+function useCreateFromTemplate(templateId: string | null, title: string, workspaceId: string | undefined) {
   const toast = useToast();
   const [creating, setCreating] = useState(false);
 
@@ -76,11 +77,12 @@ function useCreateFromTemplate(templateId: string | null, title: string) {
     if (templateId === null || creating) return;
     const id = templateId;
     setCreating(true);
-    runtimeClient
+    const client = workspaceId === undefined ? runtimeClient : runtimeClient.forWorkspace(workspaceId);
+    client
       .createAgentRecord({ from: { template: id } })
       .then((record) => {
         toast.show({ message: `Created “${record.spec.name}” from ${title}`, tone: 'success' });
-        navigate(agentTabPath(record.id, 'canvas'));
+        navigate(agentTabPath(record.id, 'canvas', workspaceId));
       })
       .catch((error: unknown) => toast.show({ message: messageOf(error), tone: 'error' }))
       .finally(() => setCreating(false));
@@ -116,12 +118,12 @@ function TemplateSheetDetail({ detail }: { detail: TemplateDetail }) {
   );
 }
 
-export function TemplateSheet({ templateId, summary, onClose }: TemplateSheetProps) {
+export function TemplateSheet({ templateId, summary, workspaceId, onClose }: TemplateSheetProps) {
   const { status, detail, detailError, retry } = useTemplateDetail(templateId);
 
   const title = detail?.summary.title ?? summary?.title ?? templateId ?? '';
   const category = detail?.summary.category ?? summary?.category;
-  const { creating, create } = useCreateFromTemplate(templateId, title);
+  const { creating, create } = useCreateFromTemplate(templateId, title, workspaceId);
 
   return (
     <Sheet
