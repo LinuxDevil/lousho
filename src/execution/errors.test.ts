@@ -247,4 +247,15 @@ describe('provider error classification fixes', () => {
     expect(compactProviderError(apiError(503, 'authentication service unavailable'))).toMatchObject({ category: 'unknown', retryable: true });
     expect(compactProviderError(apiError(400, 'authentication header malformed'))).toMatchObject({ category: 'auth-failure', retryable: false });
   });
+
+  it('reads the wait from X-RateLimit-Reset when Retry-After is absent', () => {
+    const inMs = (headers: Record<string, string>) =>
+      compactProviderError(apiError(429, 'Rate limit exceeded: free-models-per-min.', headers)).retryAfterMs;
+    expect(inMs({ 'X-RateLimit-Reset': String(Date.now() + 20_000) })).toBeGreaterThan(19_000);
+    expect(inMs({ 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 20) })).toBeGreaterThan(18_000);
+    expect(inMs({ 'x-ratelimit-reset': '5' })).toBe(5000);
+    expect(inMs({ 'x-ratelimit-reset': String(Date.now() - 1000) })).toBe(0);
+    expect(inMs({ 'retry-after': '2', 'x-ratelimit-reset': String(Date.now() + 20_000) })).toBe(2000);
+    expect(inMs({})).toBeUndefined();
+  });
 });
