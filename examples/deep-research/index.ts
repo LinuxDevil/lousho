@@ -27,7 +27,7 @@ import { z } from 'zod';
 import { createAgent, defineTool, textOf, toolResultText, type LLMProvider } from 'lousho';
 import { mockModel } from 'lousho/testing';
 
-export const LIVE_MODEL = 'openrouter/openai/gpt-4o-mini';
+export const LIVE_MODEL = process.env.LOUSHO_EXAMPLE_MODEL ?? 'openrouter/openai/gpt-4o-mini';
 export const DEFAULT_QUESTION =
   'How do multi-agent deep research systems work, and when do they outperform a single agent?';
 const DEFAULT_SUBTOPICS = [

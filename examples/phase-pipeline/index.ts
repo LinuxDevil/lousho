@@ -35,7 +35,7 @@ import {
 import { ToolRegistry } from 'lousho/executor';
 import { mockModel } from 'lousho/testing';
 
-export const LIVE_MODEL = 'openrouter/openai/gpt-4o-mini';
+export const LIVE_MODEL = process.env.LOUSHO_EXAMPLE_MODEL ?? 'openrouter/openai/gpt-4o-mini';
 
 /** What the proof gate runs and how the verdict reaches `oneOf`. */
 export interface ProofGate {

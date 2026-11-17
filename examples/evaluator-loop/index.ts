@@ -31,9 +31,9 @@ import {
 } from 'lousho';
 import { mockModel } from 'lousho/testing';
 
-export const LIVE_MODEL = 'openrouter/openai/gpt-4o-mini';
+export const LIVE_MODEL = process.env.LOUSHO_EXAMPLE_MODEL ?? 'openrouter/openai/gpt-4o-mini';
 /** Bare model id, as `judge.provider.generate({ model })` expects it. */
-const LIVE_JUDGE_MODEL = 'openai/gpt-4o-mini';
+const LIVE_JUDGE_MODEL = LIVE_MODEL.slice(LIVE_MODEL.indexOf('/') + 1);
 
 /**
  * The rubric the judge's critique prompt grades against.

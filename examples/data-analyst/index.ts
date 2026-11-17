@@ -43,7 +43,7 @@ import { z } from 'zod';
 import { allow, createAgent, defineTool, type AgentHook, type LLMProvider } from 'lousho';
 import { mockModel } from 'lousho/testing';
 
-export const LIVE_MODEL = 'openrouter/openai/gpt-4o-mini';
+export const LIVE_MODEL = process.env.LOUSHO_EXAMPLE_MODEL ?? 'openrouter/openai/gpt-4o-mini';
 
 /** The demo question; "last month" is fixed by the demo clock in the instructions. */
 export const QUESTION = 'Which customer tier had the highest revenue last month?';

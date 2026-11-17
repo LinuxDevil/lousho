@@ -34,7 +34,7 @@ const live = Boolean(process.env.OPENROUTER_API_KEY);
 const agent = createAgent({
   name: 'plan-mode',
   instructions: 'You are a careful coding agent. Work only on the files in the workspace. Keep answers short.',
-  ...(live ? { model: 'openrouter/openai/gpt-4o-mini' } : { provider: scripted }),
+  ...(live ? { model: process.env.LOUSHO_EXAMPLE_MODEL ?? 'openrouter/openai/gpt-4o-mini' } : { provider: scripted }),
   maxSteps: 6,
   // write_file and edit_file ask before they run; acceptEdits lets them through.
   tools: createFsTools(workspace, { needsApproval: { write_file: true, edit_file: true } }),

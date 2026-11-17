@@ -34,7 +34,7 @@ import { ToolRegistry } from 'lousho/executor';
 import { FlowBuilder, FlowExecutor, type EditorStep, type FlowExecutionResult } from 'lousho/flows';
 import { mockModel } from 'lousho/testing';
 
-export const LIVE_MODEL = 'openrouter/openai/gpt-4o-mini';
+export const LIVE_MODEL = process.env.LOUSHO_EXAMPLE_MODEL ?? 'openrouter/openai/gpt-4o-mini';
 
 // ---------------------------------------------------------------------------
 // The typed decision - the Jev-style step.
