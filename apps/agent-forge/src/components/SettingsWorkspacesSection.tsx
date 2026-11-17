@@ -10,7 +10,7 @@
  * folder cannot be rescanned - both stay listed with the reason as the
  * disabled control's `title`.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Folders, RefreshCw, Trash2 } from 'lucide-react';
 
 import type { WorkspaceListItem } from '../../shared/wireTypes';
@@ -108,6 +108,10 @@ export function WorkspacesSection(): JSX.Element {
 
   const workspaces = state?.list;
   const refresh = state?.refresh;
+
+  useEffect(() => {
+    void refresh?.();
+  }, [refresh]);
 
   const rescan = async (ws: WorkspaceListItem) => {
     setRescanningId(ws.id);
