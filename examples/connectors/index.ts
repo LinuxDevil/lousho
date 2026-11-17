@@ -64,11 +64,14 @@ async function main() {
   });
 
   console.log(live ? `Live on ${LIVE_MODEL}` : 'Offline (mock MCP connector)');
-  const result = await agent.send(
-    'List the documents, read the launch plan, and post a one-line summary to the eng channel.'
-  );
-  console.log(result.text);
-  await agent.close();
+  try {
+    const result = await agent.send(
+      'List the documents, read the launch plan, and post a one-line summary to the eng channel.'
+    );
+    console.log(result.text);
+  } finally {
+    await agent.close();
+  }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {

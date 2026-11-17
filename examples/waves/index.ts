@@ -131,6 +131,12 @@ export async function runWaves(options: WaveOptions): Promise<WaveResult> {
 // Offline scripts + demo
 // ---------------------------------------------------------------------------
 
+const FIELD_REPORT = `Field report: valley survey.
+Chapter 1 (setup): the survey team deployed to the valley site on Monday with two trucks and a week of supplies.
+Chapter 2 (incident): on day three a flash flood severed the only access road and cut the team off.
+Chapter 3 (resolution): supply drops resumed via helicopter by Friday and nobody was hurt.
+Residual risks: the road stays single-lane until the culvert is rebuilt, and another storm would cut access again.`;
+
 const CHAPTERS = [
   'Summarize chapter 1 (setup) of the field report.',
   'Summarize chapter 2 (incident) of the field report.',
@@ -155,7 +161,7 @@ async function main() {
   const makeWorker = () =>
     createAgent({
       name: 'wave-worker',
-      instructions: 'You are a terse summarizer. Reply with one sentence.',
+      instructions: `You are a terse summarizer. Reply with one sentence, using only this report.\n\n${FIELD_REPORT}`,
       ...(live ? { model: LIVE_MODEL } : { provider: mockModel(workerScripts[workerCalls.i++ % workerScripts.length].map((t) => ({ text: t }))) }),
     });
 
