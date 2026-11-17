@@ -671,14 +671,16 @@ export function observeExporter(options: ObserveExporterOptions = {}): ObserveRe
     return true;
   };
 
-  const close = async (): Promise<void> => {
-    if (!shutdown()) return;
-    // Graceful exit: one final flush with the ~2s cap. Aborting `closing` fails
-    // a regular flush still in flight at once - its batch is requeued and
-    // rides along in the final attempt.
-    closing.abort();
-    await flush(EXIT_FLUSH_TIMEOUT_MS, true);
-  };
+  let closed$: Promise<void> | undefined;
+  const close = (): Promise<void> =>
+    (closed$ ??= (async () => {
+      if (!shutdown()) return;
+      // Graceful exit: one final flush with the ~2s cap. Aborting `closing` fails
+      // a regular flush still in flight at once - its batch is requeued and
+      // rides along in the final attempt.
+      closing.abort();
+      await flush(EXIT_FLUSH_TIMEOUT_MS, true);
+    })());
 
   /**
    * The process is dying of an uncaught exception or unhandled rejection:

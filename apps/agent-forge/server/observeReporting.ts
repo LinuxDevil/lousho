@@ -15,6 +15,7 @@ import {
   observeExporter,
   observeExporterFromEnv,
   type ObserveExporterOptions,
+  type ObserveReporter,
   type Span,
   type TraceExporter,
 } from 'lousho/traces';
@@ -63,6 +64,19 @@ function envTargetIsLoopback(): boolean {
   return /^(1|true|on|yes)$/i.test(value) || isLoopbackUrl(value);
 }
 
+const reporters = new Set<ObserveReporter>();
+
+function opened(reporter: ObserveReporter): ObserveReporter {
+  reporters.add(reporter);
+  return reporter;
+}
+
+/** Sends every reporter's goodbye; await it before stopping the collector they report to. */
+export async function closeObserveReporters(): Promise<void> {
+  await Promise.all([...reporters].map((reporter) => reporter.close()));
+  reporters.clear();
+}
+
 /** The observe reporting for runs under `options.agentName`. */
 export function observeReporting(options: ObserveReportingOptions): ObserveReporting {
   let own: TraceExporter | undefined;
@@ -73,14 +87,14 @@ export function observeReporting(options: ObserveReportingOptions): ObserveRepor
   return {
     exporter: () =>
       fromEnv() ??
-      (own ??= observeExporter({
+      (own ??= opened(observeExporter({
         cwd: options.baseDir,
         // Parity with the LOUSHO_OBSERVE reporter: a daemon bound beyond loopback demands the bearer.
         ...(token() ? { token: token() } : {}),
         ...overrides,
         url: url(),
         agentName,
-      })),
+      }))),
     captureContent: () => (fromEnv() ? envTargetIsLoopback() : isLoopbackUrl(url())),
   };
 }

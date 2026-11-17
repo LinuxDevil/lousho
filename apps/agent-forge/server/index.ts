@@ -15,6 +15,7 @@ import { attachWebSocketServer } from './wsServer';
 import { attachEventsWebSocket } from './events/eventsWs';
 import { createUpgradeRouter, type UpgradeRouter } from './ws/upgradeRouter';
 import { RunManager } from './runRegistry';
+import { closeObserveReporters } from './observeReporting';
 import { SecretsStore } from './secretsStore';
 import { SettingsStore } from './settingsStore';
 import { startJudgeLoop, type JudgeLoopOptions } from './judge';
@@ -391,6 +392,7 @@ export async function startStudioServer(
       unsubMcpRefresh();
       // Stop every running MCP server (X03) before the HTTP socket closes.
       await mcpServers.closeAll();
+      await closeObserveReporters();
       // A daemon this Studio started stops with it; an attached one is left alone.
       await collector.stop();
       return new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
