@@ -14,9 +14,10 @@
  * binary verdict), and `oneOf` branches on its result. The model never
  * decides whether the work passed - the gate does.
  *
- * Offline (default) the model is scripted and the check tool is a stubbed
- * command runner. With OPENROUTER_API_KEY set the phases run live; the gate
- * still runs the real `node -e` check.
+ * Offline (default) the model is scripted: its first implementation has a
+ * syntax error, so the gate fails once and the retry passes. With
+ * OPENROUTER_API_KEY set the phases run live; the gate parses whatever the
+ * model wrote with `node --check`.
  *
  * Run with: npx tsx examples/phase-pipeline/index.ts
  */
@@ -71,14 +72,17 @@ export const runCheck = defineTool({
   description: 'Runs the project check command and reports pass/fail.',
   input: z.object({ implementation: z.string() }),
   execute: async ({ implementation }) => {
-    // A real gate runs tests/lint/a build; this demo gate requires the
-    // implementation to define a function, checked by an actual node run.
-    const ok =
-      /function|=>\s*[{(]/.test(implementation) &&
-      (await new Promise<boolean>((resolve) => {
-        execFile(process.execPath, ['-e', 'process.exit(0)'], (err) => resolve(!err));
-      }));
-    return ok ? 'PASS: check ok' : 'FAIL: no function definition found';
+    // A real gate runs tests/lint/a build. This demo gate parses the code with
+    // `node --check`, which never executes it, so model-written code stays inert.
+    const code = /```(?:\w+)?\n([\s\S]*?)```/.exec(implementation)?.[1] ?? implementation;
+    if (!/function|=>\s*[{(]/.test(code)) return 'FAIL: no function definition found';
+    const syntaxError = await new Promise<string | undefined>((resolve) => {
+      const child = execFile(process.execPath, ['--input-type=module', '--check'], (err, _out, stderr) =>
+        resolve(err ? stderr.split('\n').find((line) => line.startsWith('SyntaxError')) ?? 'SyntaxError' : undefined)
+      );
+      child.stdin?.end(code);
+    });
+    return syntaxError ? `FAIL: ${syntaxError}` : 'PASS: node --check parsed the module';
   },
 });
 
@@ -219,7 +223,7 @@ async function main() {
   const result = await runPhasePipeline({
     provider: live
       ? resolveProvider(LIVE_MODEL)
-      : scriptedPhases(['export function greet(name) { return `hello ${name}` }']),
+      : scriptedPhases(['export function greet(name) { return `hello ${name}`', 'export function greet(name = "world") { return `hello ${name}` }']),
     model: live ? LIVE_MODEL.split('/').slice(1).join('/') : 'mock',
     task: 'Add a greet(name) function with a default greeting.',
     gate: { toolName: 'run_check', toolRegistry },

@@ -45,7 +45,8 @@ async function main(): Promise<void> {
   const { values } = parseArgs({ options: { page: { type: 'string' }, mock: { type: 'boolean', default: false }, model: { type: 'string' } } });
   const results = await runMarketing({ mock: values.mock, ...(values.page !== undefined && { page: values.page }), ...(values.model !== undefined && { model: values.model }) });
   for (const [pageId, result] of Object.entries(results)) {
-    console.log(`${pageId}: ${result.status} ${JSON.stringify(result.output)} artifacts=${result.artifacts.map((ref) => ref.uri).join(', ')}`);
+    const detail = result.status === 'ok' ? JSON.stringify(result.output) : result.summary;
+    console.log(`${pageId}: ${result.status} ${detail} artifacts=${result.artifacts.map((ref) => ref.uri).join(', ')}`);
   }
 }
 

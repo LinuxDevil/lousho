@@ -59,10 +59,11 @@ const SECOND_STATEMENT = /;\s*\S/;
 /**
  * Write/DDL keywords anywhere refuse the statement - this also covers a CTE
  * that ends in a write (`WITH x AS (...) DELETE ...`). Word boundaries keep
- * column names like `created_at` from tripping `create`.
+ * column names like `created_at` from tripping `create`, and SQLite's
+ * `REPLACE(...)` string function is not `REPLACE INTO`.
  */
 const WRITE_KEYWORD =
-  /\b(insert|update|delete|drop|alter|create|replace|truncate|pragma|attach|detach|vacuum|reindex|grant|revoke)\b/i;
+  /\b(insert|update|delete|drop|alter|create|replace(?!\s*\()|truncate|pragma|attach|detach|vacuum|reindex|grant|revoke)\b/i;
 
 /** Whether `sql` is a single read-only SELECT/WITH statement. */
 export function isReadOnlyQuery(sql: string): boolean {
