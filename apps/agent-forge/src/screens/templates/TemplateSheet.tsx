@@ -1,7 +1,6 @@
 /**
  * The template detail sheet (A10, on the U04 Sheet at size lg): what the
- * template needs and its README as plain text (never markdown - the Studio
- * has no renderer), with Use template creating the agent through
+ * template needs and its README (through the safe `AuthorText` renderer), with Use template creating the agent through
  * `POST /agents { from: { template } }` and opening its canvas. The detail
  * itself comes from `GET /templates/:id`; the sheet's own loading/error
  * states are separate from the list's.
@@ -10,6 +9,7 @@ import { useEffect, useState } from 'react';
 import { CircleAlert } from 'lucide-react';
 import type { TemplateDetail, TemplateSummary } from '../../../shared/wireTypes';
 import { runtimeClient } from '../../runtime/runtimeClient';
+import { AuthorText } from '../../author/AuthorText';
 import { navigate } from '../../router/router';
 import { agentTabPath } from '../agents/agentTabs';
 import { Sheet } from '../../ui/Sheet';
@@ -112,7 +112,7 @@ function TemplateSheetDetail({ detail }: { detail: TemplateDetail }) {
       </section>
       <section className="template-sheet-section" aria-label="About">
         <h3 className="overline">About</h3>
-        <pre className="template-readme">{detail.readme}</pre>
+        <AuthorText text={detail.readme} />
       </section>
     </>
   );

@@ -5,6 +5,7 @@ import { useRoute } from '../router/useRoute';
 import { DaemonStatus } from './DaemonStatus';
 import { NavBrand } from './NavBrand';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
+import { useNavItems } from './useNavItems';
 
 export type NavSection = 'Build' | 'Observe' | 'Evaluate' | 'Assets' | 'Footer';
 
@@ -87,6 +88,7 @@ export function NavRail({
 }) {
   const { path } = useRoute();
   const inboxCount = useInboxCount();
+  const navItems = useNavItems();
   const rail = drawer === undefined && collapsed;
   return (
     <nav id="primary-nav" className="nav-rail" aria-label="Primary" data-drawer={drawer} data-collapsed={rail || undefined}>
@@ -99,7 +101,7 @@ export function NavRail({
               {rail ? null : section}
             </li>
           )}
-          {NAV_ITEMS.filter((i) => i.section === section).map((item) => (
+          {navItems.filter((i) => i.section === section).map((item) => (
             <li key={item.id}>
               <NavLink item={item} active={isActive(item, path)} collapsed={rail} badge={item.id === 'inbox' ? inboxCount : 0} onNavigate={onNavigate} />
             </li>

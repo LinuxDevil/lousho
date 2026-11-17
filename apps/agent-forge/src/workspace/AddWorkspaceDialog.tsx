@@ -70,7 +70,7 @@ export function AddWorkspaceDialog({ open, onClose, onAdded }: AddWorkspaceDialo
       <form id="add-workspace-form" onSubmit={(e) => void submit(e)}>
         <Field
           label="Folder path"
-          hint="For example /home/me/support-bot or C:\\code\\support-bot."
+          hint="For example /home/me/support-bot or C:\code\support-bot."
           error={error}
         >
           <Input

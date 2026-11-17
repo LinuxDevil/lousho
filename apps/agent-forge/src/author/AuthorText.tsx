@@ -1,3 +1,4 @@
+import './authorPanel.css';
 import { Fragment, type ReactNode } from 'react';
 
 type Block = { type: 'text' | 'code'; text: string };
@@ -39,10 +40,53 @@ function bold(text: string): ReactNode[] {
   return parts.map((seg, i) => (i % 2 === 1 ? <strong key={i}>{seg}</strong> : seg));
 }
 
+const HEADING = /^#{1,6}\s+/;
+const BULLET = /^\s*(?:[-*]|\d+[.)])\s+/;
+
+function paragraph(text: string, key: string): JSX.Element[] {
+  const out: JSX.Element[] = [];
+  let lines: string[] = [];
+  let items: string[] = [];
+  const flush = () => {
+    if (lines.length > 0) out.push(<p key={`${key}-${out.length}`}>{inlineCode(lines.join('\n'))}</p>);
+    if (items.length > 0)
+      out.push(
+        <ul key={`${key}-${out.length}`}>
+          {items.map((item, n) => (
+            <li key={n}>{inlineCode(item)}</li>
+          ))}
+        </ul>
+      );
+    lines = [];
+    items = [];
+  };
+  for (const line of text.split('\n')) {
+    if (HEADING.test(line)) {
+      flush();
+      out.push(
+        <p key={`${key}-${out.length}`} className="author-heading">
+          <strong>{inlineCode(line.replace(HEADING, ''))}</strong>
+        </p>
+      );
+    } else if (BULLET.test(line)) {
+      if (lines.length > 0) flush();
+      items.push(line.replace(BULLET, ''));
+    } else if (items.length > 0 && /^\s+\S/.test(line)) {
+      items[items.length - 1] += ` ${line.trim()}`;
+    } else {
+      if (items.length > 0) flush();
+      lines.push(line);
+    }
+  }
+  flush();
+  return out;
+}
+
 /**
  * Renders assistant text as plain markup: paragraphs on blank lines,
- * fenced blocks as `pre.author-code`, `inline code` as `code`. Deliberately
- * not markdown - no HTML injection path, no new dependency. Single
+ * `#` headings, `-`/`1.` lists, fenced blocks as `pre.author-code`,
+ * `inline code` as `code`. Deliberately not full markdown - no HTML
+ * injection path, no new dependency. Single
  * newlines inside a paragraph render via `white-space: pre-wrap`.
  */
 export function AuthorText({ text }: { text: string }): JSX.Element {
@@ -57,7 +101,7 @@ export function AuthorText({ text }: { text: string }): JSX.Element {
           block.text
             .split(/\n\s*\n/)
             .filter((p) => p.trim() !== '')
-            .map((p, j) => <p key={`${i}-${j}`}>{inlineCode(p)}</p>)
+            .flatMap((p, j) => paragraph(p, `${i}-${j}`))
         )
       )}
     </div>

@@ -204,9 +204,11 @@
   white-space: pre-wrap;
   overflow-wrap: break-word;
 }
-.author-text p + p,
-.author-text p + .author-code,
-.author-text .author-code + p {
+.author-text ul {
+  margin: 0;
+  padding-left: var(--space-4);
+}
+.author-text > * + * {
   margin-top: var(--space-2);
 }
 .author-text code {
