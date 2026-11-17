@@ -366,7 +366,8 @@ function headerValue(headers: Record<string, string> | undefined, name: string):
 
 /** Best-effort extraction of the server's wait hint, in ms, from an
  * APICallError's response headers: `retry-after-ms` (OpenAI, Azure) first,
- * then `Retry-After` (seconds or an HTTP-date). */
+ * then `Retry-After` (seconds or an HTTP-date), then `X-RateLimit-Reset`
+ * (OpenRouter's epoch ms, epoch seconds, or seconds to wait). */
 function extractRetryAfterMs(err: APICallError): number | undefined {
   const ms = Number(headerValue(err.responseHeaders, 'retry-after-ms'));
   if (headerValue(err.responseHeaders, 'retry-after-ms') && Number.isFinite(ms)) {
@@ -374,7 +375,7 @@ function extractRetryAfterMs(err: APICallError): number | undefined {
   }
   const header = headerValue(err.responseHeaders, 'retry-after');
   if (!header) {
-    return undefined;
+    return extractRateLimitResetMs(err);
   }
   const seconds = Number(header);
   if (Number.isFinite(seconds)) {
@@ -383,6 +384,16 @@ function extractRetryAfterMs(err: APICallError): number | undefined {
   }
   const dateMs = Date.parse(header);
   return Number.isNaN(dateMs) ? undefined : Math.max(0, dateMs - Date.now());
+}
+
+function extractRateLimitResetMs(err: APICallError): number | undefined {
+  const reset = Number(headerValue(err.responseHeaders, 'x-ratelimit-reset'));
+  if (!headerValue(err.responseHeaders, 'x-ratelimit-reset') || !Number.isFinite(reset)) {
+    return undefined;
+  }
+  if (reset > 1e12) return Math.max(0, reset - Date.now());
+  if (reset > 1e9) return Math.max(0, reset * 1000 - Date.now());
+  return Math.max(0, reset * 1000);
 }
 
 function categorizeMessage(message: string): {
