@@ -11,6 +11,13 @@ your app would, so you can copy a file out as it is. Inside this repo the
 `paths` in `tsconfig.json` (and a resolver in `vitest.config.ts`) point those
 imports at `src/`, so nothing needs building first.
 
+Examples that run live with `OPENROUTER_API_KEY` use `openrouter/openai/gpt-4o-mini`
+unless you set `LOUSHO_EXAMPLE_MODEL`, for example to a free model:
+
+```bash
+LOUSHO_EXAMPLE_MODEL=openrouter/nvidia/nemotron-3-ultra-550b-a55b:free npx tsx examples/waves/index.ts
+```
+
 ## [agent-dir](./agent-dir)
 
 An agent defined as a directory (`instructions.md`, `tools/`, `skills/`, `agent.json`) and loaded with `loadAgentDir()`; runs offline with a mock model.

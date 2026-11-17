@@ -12,6 +12,8 @@ import { LLMProviderRegistry, Message } from 'lousho';
 import { AgentBuilder } from 'lousho/executor';
 
 const apiKey = process.env.OPENROUTER_API_KEY || '';
+const OVERRIDE = process.env.LOUSHO_EXAMPLE_MODEL?.replace(/^openrouter\//, '');
+const pick = (model: string) => OVERRIDE ?? model;
 
 function createProvider(config: { defaultModel?: string; apiKey?: string } = {}) {
   return LLMProviderRegistry.create('openrouter', { apiKey, ...config });
@@ -19,10 +21,10 @@ function createProvider(config: { defaultModel?: string; apiKey?: string } = {})
 
 /** Basic text generation. */
 async function basicGeneration() {
-  const provider = createProvider({ defaultModel: 'openai/gpt-4o-mini' });
+  const provider = createProvider({ defaultModel: pick('openai/gpt-4o-mini') });
 
   const result = await provider.generate({
-    model: 'openai/gpt-4o-mini',
+    model: pick('openai/gpt-4o-mini'),
     messages: [{ role: 'user', content: 'What is the capital of France?' }],
     temperature: 0.7,
     maxTokens: 100,
@@ -37,7 +39,7 @@ async function streamingGeneration() {
   const provider = createProvider();
 
   const stream = await provider.stream({
-    model: 'anthropic/claude-sonnet-4.5',
+    model: pick('anthropic/claude-sonnet-4.5'),
     messages: [
       { role: 'user', content: 'Write a short story about a robot learning to paint.' },
     ],
@@ -60,10 +62,10 @@ async function multiModelComparison() {
 
   const question = 'Explain quantum computing in simple terms.';
   const models = [
-    'openai/gpt-4o-mini',
-    'anthropic/claude-haiku-4.5',
-    'google/gemini-2.5-flash',
-    'meta-llama/llama-3.1-8b-instruct',
+    pick('openai/gpt-4o-mini'),
+    pick('anthropic/claude-haiku-4.5'),
+    pick('google/gemini-2.5-flash'),
+    pick('meta-llama/llama-3.1-8b-instruct'),
   ];
 
   console.log('Comparing responses from different models:\n');
@@ -88,7 +90,7 @@ async function toolCalling() {
   const provider = createProvider();
 
   const result = await provider.generate({
-    model: 'openai/gpt-4o',
+    model: pick('openai/gpt-4o'),
     messages: [{ role: 'user', content: "What's the weather like in Paris and Tokyo?" }],
     tools: [
       {
@@ -127,7 +129,7 @@ async function toolCalling() {
 async function agentBuilder() {
   const providerConfig = {
     apiKey,
-    defaultModel: 'anthropic/claude-sonnet-4.5',
+    defaultModel: pick('anthropic/claude-sonnet-4.5'),
     siteUrl: 'https://myapp.com',
     siteName: 'Travel App',
   };
@@ -181,7 +183,7 @@ async function costOptimizedGeneration() {
   const provider = createProvider();
 
   const simpleTask = await provider.generate({
-    model: 'openai/gpt-4o-mini', // Much cheaper than gpt-4o
+    model: pick('openai/gpt-4o-mini'), // Much cheaper than gpt-4o
     messages: [{ role: 'user', content: 'Translate "Hello" to Spanish' }],
     maxTokens: 10,
   });
@@ -190,7 +192,7 @@ async function costOptimizedGeneration() {
   console.log('Tokens used:', simpleTask.usage?.totalTokens);
 
   const complexTask = await provider.generate({
-    model: 'anthropic/claude-sonnet-4.5',
+    model: pick('anthropic/claude-sonnet-4.5'),
     messages: [
       {
         role: 'user',
@@ -230,7 +232,7 @@ async function errorHandling() {
 
   try {
     const result = await provider.generate({
-      model: 'openai/gpt-4o',
+      model: pick('openai/gpt-4o'),
       messages: [{ role: 'user', content: 'Hello' }],
     });
     console.log(result.text);
@@ -249,13 +251,13 @@ async function conversation() {
     { role: 'user', content: 'What is recursion?' },
   ];
 
-  const response1 = await provider.generate({ model: 'openai/gpt-4o-mini', messages });
+  const response1 = await provider.generate({ model: pick('openai/gpt-4o-mini'), messages });
   console.log('Assistant:', response1.text);
 
   messages.push({ role: 'assistant', content: response1.text });
   messages.push({ role: 'user', content: 'Can you give me an example in Python?' });
 
-  const response2 = await provider.generate({ model: 'openai/gpt-4o-mini', messages });
+  const response2 = await provider.generate({ model: pick('openai/gpt-4o-mini'), messages });
   console.log('\nAssistant:', response2.text);
   console.log('\nTotal tokens used:', response2.usage?.totalTokens);
 }

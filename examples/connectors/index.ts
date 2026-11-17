@@ -27,7 +27,7 @@ import { createAgent, resolveProvider, type LLMProvider } from 'lousho';
 import { mockModel } from 'lousho/testing';
 import { type McpServerSpec } from 'lousho';
 
-export const LIVE_MODEL = 'openrouter/openai/gpt-4o-mini';
+export const LIVE_MODEL = process.env.LOUSHO_EXAMPLE_MODEL ?? 'openrouter/openai/gpt-4o-mini';
 
 /** The one line that swaps mock for real: a stdio command or an HTTP url+oauth. */
 export function connectorSpecs(): Record<string, McpServerSpec> {

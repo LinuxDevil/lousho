@@ -42,7 +42,7 @@ export const FIXTURE: Record<string, string> = {
     "const test = require('node:test');\nconst assert = require('node:assert');\nconst { add } = require('./math');\n\ntest('add', () => assert.strictEqual(add(2, 3), 5));\n",
 };
 
-export const LIVE_MODEL = 'openrouter/openai/gpt-4o-mini';
+export const LIVE_MODEL = process.env.LOUSHO_EXAMPLE_MODEL ?? 'openrouter/openai/gpt-4o-mini';
 
 // 1. Instructions per model family. Harnesses such as OpenCode keep one prompt per family;
 //    here a shared core plus a short family-specific tail.
