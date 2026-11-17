@@ -17,6 +17,7 @@
  * behavior is unchanged, only the seam it's routed through changes.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { SandboxAdapter } from '../../security/sandboxCore';
 import { ToolDescriptor, ToolExecutionContext } from '../../types';
 import { getToolExecute } from '../toolContract';
@@ -271,37 +272,27 @@ function toSandboxFetchRequest(input: RequestInfo | URL, init: RequestInit | und
   };
 }
 
+const fetchSandbox = new AsyncLocalStorage<SandboxAdapter>();
+let dispatcher: typeof fetch | undefined;
+
+function installFetchDispatcher(): void {
+  if (globalThis.fetch === dispatcher) return;
+  const underlying = globalThis.fetch;
+  dispatcher = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const sandbox = fetchSandbox.getStore();
+    return sandbox ? sandboxHttpFetch(sandbox, toSandboxFetchRequest(input, init)) : underlying(input, init);
+  }) as typeof fetch;
+  globalThis.fetch = dispatcher;
+}
+
 /**
- * Swaps `globalThis.fetch` for a sandbox-routed implementation for the
- * duration of `fn()`, restoring the original afterward (even if `fn`
- * throws). This lets tool code that calls the ambient global `fetch`
- * (github.ts, jira.ts) route its real outbound HTTP call through a
- * SandboxAdapter without every call site inside those tools needing to
- * thread a `sandbox` argument through - see GitHubTools.register() /
- * JiraTools.register(), which wrap each tool's `execute()` with this for
- * `sandboxExecute()`, while leaving `execute()` itself untouched (still a
- * real, directly-callable implementation for callers that invoke
- * `descriptor.tool.execute()` directly rather than through
- * executeToolWithSandboxGuard - e.g. examples/ops-pipeline).
- *
- * NOT safe across concurrent calls that each mutate globalThis.fetch at the
- * same time (a second, interleaved withSandboxedFetch() call would restore
- * the wrong original fetch). This codebase executes one tool call at a time
- * within a given AgentExecutor step today; if that changes, per-call fetch
- * injection (like http.ts's dedicated sandboxExecute) is needed instead of
- * a global monkey-patch.
+ * Routes the ambient `fetch` calls made inside `fn()` (github.ts, jira.ts)
+ * through `sandbox`. Scoped per async context, so a concurrent run's model
+ * request or tool call elsewhere in the process keeps the real `fetch`.
  */
 async function withSandboxedFetch<T>(sandbox: SandboxAdapter, fn: () => Promise<T>): Promise<T> {
-  const original = globalThis.fetch;
-  const sandboxedFetch = ((input: RequestInfo | URL, init?: RequestInit) =>
-    sandboxHttpFetch(sandbox, toSandboxFetchRequest(input, init))) as typeof fetch;
-
-  globalThis.fetch = sandboxedFetch;
-  try {
-    return await fn();
-  } finally {
-    globalThis.fetch = original;
-  }
+  installFetchDispatcher();
+  return fetchSandbox.run(sandbox, fn);
 }
 
 /**
