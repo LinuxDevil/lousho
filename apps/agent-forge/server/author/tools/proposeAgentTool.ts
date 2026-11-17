@@ -28,7 +28,7 @@ export const proposeAgentTool: AuthorToolFactory = (turn, deps) =>
   defineTool({
     name: 'proposeAgent',
     description:
-      'Show the user a proposal card for a NEW agent. Nothing is saved. After calling it, end your turn and wait for the user to confirm or press Apply.',
+      'Show the user a proposal card for a NEW agent. Nothing is saved. After calling it, end your turn and wait for the user to press Save agent on the card.',
     input: z.object({ draft: authorDraftSchema.describe('The complete new agent. Fields you leave out stay unset.') }),
     execute: ({ draft }, ctx) =>
       guardedToolCall('proposeAgent', async () => {
