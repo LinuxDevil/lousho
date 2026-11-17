@@ -369,6 +369,7 @@ export type StudioEvent =
   | { type: 'version.summary'; agentId: string; version: number; summary: string }
   | { type: 'draft.changed'; agentId: string; draftId: string; status: ChangeDraft['status'] }
   | { type: 'suggestion.new'; agentId: string; suggestionId: string }
+  | { type: 'suggestion.settled'; agentId: string; suggestionId: string; outcome: 'none' | 'failed' }
   | { type: 'inbox.count'; count: number }
   | { type: 'host.status'; payload: HostStatus };
 

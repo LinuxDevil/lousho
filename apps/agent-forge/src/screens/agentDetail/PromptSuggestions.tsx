@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 
 import { useRoute } from '../../router/useRoute';
@@ -7,6 +7,8 @@ import { Skeleton } from '../../ui/Skeleton';
 import { EmptyState } from '../../ui/EmptyState';
 import { SuggestionCard } from './SuggestionCard';
 import { useSuggestions } from './useSuggestions';
+import { useStudioEvents } from '../../state/useStudioEvents';
+import type { StudioEvent } from '../../../shared/wireTypes';
 
 /** How long the "Working on a suggestion…" skeleton waits for `suggestion.new` before warning (R06). */
 const PENDING_TIMEOUT_MS = 90_000;
@@ -19,20 +21,30 @@ const PENDING_TIMEOUT_MS = 90_000;
  */
 function usePendingSuggestion(pendingId: string | null, arrived: boolean): boolean {
   const toast = useToast();
-  const [expired, setExpired] = useState(false);
+  const [ended, setEnded] = useState<'none' | 'failed' | undefined>();
 
   useEffect(() => {
     if (pendingId === null || arrived) return;
-    setExpired(false);
-    const timer = setTimeout(() => setExpired(true), PENDING_TIMEOUT_MS);
+    setEnded(undefined);
+    const timer = setTimeout(() => setEnded('failed'), PENDING_TIMEOUT_MS);
     return () => clearTimeout(timer);
   }, [pendingId, arrived]);
 
-  useEffect(() => {
-    if (expired) toast.show({ message: "Couldn't make a suggestion for this run.", tone: 'warning' });
-  }, [expired, toast]);
+  useStudioEvents(
+    useCallback(
+      (event: StudioEvent) => {
+        if (event.type === 'suggestion.settled' && event.suggestionId === pendingId) setEnded(event.outcome);
+      },
+      [pendingId]
+    )
+  );
 
-  return pendingId !== null && !arrived && !expired;
+  useEffect(() => {
+    if (ended === 'failed') toast.show({ message: "Couldn't make a suggestion for this run.", tone: 'warning' });
+    if (ended === 'none') toast.show({ message: 'No change suggested: the instructions already fit this run.' });
+  }, [ended, toast]);
+
+  return pendingId !== null && !arrived && ended === undefined;
 }
 
 /** Props for {@link PromptSuggestions}. */
