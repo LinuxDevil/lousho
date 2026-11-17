@@ -2094,6 +2094,10 @@ export class AgentExecutor {
   ): Promise<ExecutionResult> {
     state.finishReason = 'guardrail';
     state.finalText = '';
+    if (guardrail.kind === 'input') {
+      while (state.messages.at(-1)?.role === 'user') state.messages.pop();
+      state.queuedInput = [];
+    }
     runEventsOf(options)?.guardrail({ type: 'guardrail.tripped', ...guardrail });
     if (options.guardrails?.onTripped === 'throw') {
       await saveStepCheckpoint(options, state, 'finished');
