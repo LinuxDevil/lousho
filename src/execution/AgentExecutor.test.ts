@@ -228,6 +228,16 @@ describe('AgentExecutor', () => {
       expect(typeof toolSpan?.attributes.latencyMs).toBe('number');
     });
 
+    it('records the run answer as the invoke_agent span output when content is captured', async () => {
+      const { exporter, ends } = createSpyExporter();
+      const agent = AgentBuilder.create().setName('Test Agent').build();
+      await AgentExecutor.execute({ agent, input: 'hi', provider, toolRegistry, exporter, captureContent: true });
+      const root = ends.find((s) => s.name.startsWith('invoke_agent'));
+      expect(JSON.parse(String(root?.attributes['gen_ai.output.messages']))).toEqual([
+        { role: 'assistant', parts: [{ type: 'text', content: 'Hello! How can I help you today?' }] },
+      ]);
+    });
+
     it('omits content from span attributes when redactContent is true, while keeping non-content fields', async () => {
       const { tool } = await import('ai');
       const { z } = await import('zod');

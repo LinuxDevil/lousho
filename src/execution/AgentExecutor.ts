@@ -29,6 +29,7 @@ import { TraceExporter, withSpan } from './tracing';
 import { withObserveExporter } from '../observe/reporter';
 import {
   agentRunSpanInit,
+  recordAgentOutput,
   contentRedactor,
   recordToolOutcome,
   resolveCaptureContent,
@@ -862,10 +863,8 @@ export class AgentExecutor {
       // and 'tool.call' spans, giving the 3-level span tree its parent/child
       // relationships without any instance state.
       if (observed.agentSpanId) return this.runWithEnd(observed, observed.agentSpanId);
-      const init = agentRunSpanInit(observed, {
-        redactContent: observed.redactContent,
-        captureContent: resolveCaptureContent(observed.captureContent),
-      });
+      const content = { redactContent: observed.redactContent, captureContent: resolveCaptureContent(observed.captureContent) };
+      const init = agentRunSpanInit(observed, content);
       return withSpan(
         observed.exporter,
         init.name,
@@ -873,6 +872,7 @@ export class AgentExecutor {
         async (agentSpan) => {
           const result = await this.runWithEnd(observed, agentSpan.id);
           agentSpan.attributes = { ...agentSpan.attributes, 'lousho.run.finish_reason': result.finishReason };
+          recordAgentOutput(agentSpan, result.text, content);
           return result;
         },
         observed.parentSpanId,

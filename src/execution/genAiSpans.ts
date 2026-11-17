@@ -233,6 +233,14 @@ export function llmSpanInit(
   };
 }
 
+export function recordAgentOutput(span: Span, text: string | undefined, content: ContentOptions & { captureContent: boolean }): void {
+  if (!content.captureContent || !text) return;
+  span.attributes = {
+    ...span.attributes,
+    [GenAiAttr.OUTPUT_MESSAGES]: JSON.stringify([{ role: 'assistant', parts: [textPart(text, contentRedactor(content))] }]),
+  };
+}
+
 /** The spec's `tool_call` finish reason is singular; ours is `tool_calls`. */
 function genAiFinishReason(reason: GenerateResult['finishReason']): string {
   return reason === 'tool_calls' ? 'tool_call' : reason;
