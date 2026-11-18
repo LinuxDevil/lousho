@@ -16,6 +16,8 @@ export interface TraceSummary {
   name: string;
   /** `gen_ai.agent.name` of the root span. */
   agent?: string;
+  /** `gen_ai.conversation.id` of the root span: the session the run belonged to. */
+  conversationId?: string;
   /** `lousho.harness.revision` of the root span: the harness revision the run used. */
   revision?: string;
   startTime: number;
@@ -140,11 +142,13 @@ function summarize(entry: TraceFile, lines: TraceLine[]): TraceSummary | undefin
   const end = Math.max(...lines.map((line) => line.endTime ?? line.startTime));
   const agent = root.attributes?.[GenAiAttr.AGENT_NAME];
   const revision = root.attributes?.[SdkAttr.HARNESS_REVISION];
+  const conversationId = root.attributes?.[GenAiAttr.CONVERSATION_ID];
   return {
     traceId: entry.traceId,
     name: root.name,
     ...(typeof agent === 'string' && { agent }),
     ...(typeof revision === 'string' && { revision }),
+    ...(typeof conversationId === 'string' && { conversationId }),
     startTime: root.startTime,
     durationMs: (root.id === entry.traceId ? root.endTime : end) - root.startTime,
     status: root.status?.code === 'error' ? 'error' : 'ok',

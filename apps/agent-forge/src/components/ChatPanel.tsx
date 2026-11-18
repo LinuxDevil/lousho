@@ -163,13 +163,22 @@ function isInputDisabled(viewing: boolean, { isRunning, pendingApproval }: LiveR
 }
 
 function ChatSessionBar({ viewedChatSession }: { viewedChatSession: ViewedChatSession }) {
-  const { chat, chatSessions, startNewChat, viewChatSession, returnToLiveChat } = useAppState();
+  const { chat, chatSessions, startNewChat, viewChatSession, returnToLiveChat, continueChat, runStatus } = useAppState();
 
   if (viewedChatSession) {
+    const busy = runStatus?.status === 'running' || runStatus?.status === 'paused';
     return (
       <div className="chat-session-bar">
         <span>
           Viewing past conversation from {new Date(viewedChatSession.startedAt).toLocaleString()}
+          <button
+            className="btn btn-sm"
+            disabled={busy}
+            title={busy ? 'Finish or stop the current run first' : undefined}
+            onClick={() => void continueChat(viewedChatSession.sessionId)}
+          >
+            Continue this chat
+          </button>
           <button className="btn btn-ghost btn-sm" onClick={returnToLiveChat}>
             Back to live chat
           </button>

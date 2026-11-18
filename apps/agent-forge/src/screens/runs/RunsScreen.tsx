@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CircleAlert, Play, RefreshCw, Square } from 'lucide-react';
+import { CircleAlert, ListTree, MessageSquare, RefreshCw, Square } from 'lucide-react';
 
 import type { RunListRow } from '../../../shared/wireTypes';
 import { errorMessage } from '../../components/errorMessage';
-import { fmtCost, fmtDuration, fmtInt, fmtStarted } from '../../observe/format';
+import { fmtCost, fmtInt, fmtStarted } from '../../observe/format';
 import { navigate } from '../../router/router';
 import { runtimeClient } from '../../runtime/runtimeClient';
 import { Card } from '../../ui/Card';
@@ -26,9 +26,11 @@ const FILTERS: { value: Filter; label: string }[] = [
   { value: 'error', label: 'Failed' },
 ];
 
-const rowKey = (r: RunListRow) => `${r.workspaceId}/${r.agentId}/${r.live ? 'live' : r.traceId}`;
+const rowKey = (r: RunListRow) => `${r.workspaceId}/${r.agentId}/${r.chatId ?? r.traceId ?? 'live'}`;
 
 const agentHref = (r: RunListRow) => `#/w/${encodeURIComponent(r.workspaceId)}/agents/${encodeURIComponent(r.agentId)}/canvas`;
+
+const chatHref = (r: RunListRow) => (r.chatId !== undefined ? `${agentHref(r)}?chat=${encodeURIComponent(r.chatId)}` : agentHref(r));
 
 function useRuns() {
   const [rows, setRows] = useState<RunListRow[] | undefined>(undefined);
@@ -69,13 +71,11 @@ export function RunsScreen(): JSX.Element {
   const toast = useToast();
 
   const act = useCallback(
-    async (r: RunListRow, action: 'stop' | 'run') => {
+    async (r: RunListRow) => {
       setBusy(rowKey(r));
       try {
-        const client = runtimeClient.forWorkspace(r.workspaceId);
-        if (action === 'stop') await client.abort(r.agentId, 'Stopped from the Runs screen');
-        else await client.runSaved(r.agentId, 'Run the agent.');
-        toast.show({ message: action === 'stop' ? `Stopped ${r.agentName}` : `Started ${r.agentName}`, tone: 'success' });
+        await runtimeClient.forWorkspace(r.workspaceId).abort(r.agentId, 'Stopped from the Runs screen');
+        toast.show({ message: `Stopped ${r.agentName}`, tone: 'success' });
         refresh();
       } catch (cause) {
         toast.show({ message: errorMessage(cause), tone: 'error' });
@@ -94,21 +94,24 @@ export function RunsScreen(): JSX.Element {
         width: 120,
         render: (r) => (
           <span className="runs-status">
-            <StatusBadge status={statusKey(r.status)} size="sm" />
+            {!r.live && r.turns === 0 ? <span className="runs-id">no runs</span> : <StatusBadge status={statusKey(r.status)} size="sm" />}
             {r.bypass === true && <StatusPill status="bypass" title="This run skips approvals" />}
           </span>
         ),
       },
       {
-        key: 'agent',
-        header: 'Agent',
-        minWidth: 200,
+        key: 'chat',
+        header: 'Chat',
+        minWidth: 240,
         render: (r) => (
-          <span className="runs-cell">
-            <a className="runs-name" href={agentHref(r)} onClick={(e) => e.stopPropagation()}>
-              {r.agentName}
-            </a>
-            <span className="runs-id">{r.workspaceName}</span>
+          <span className="runs-cell runs-cell-stack" title={r.preview || undefined}>
+            <span className="runs-name">{r.preview || '(no messages)'}</span>
+            <span className="runs-id">
+              <a href={agentHref(r)} onClick={(e) => e.stopPropagation()}>
+                {r.agentName}
+              </a>
+              {` · ${r.workspaceName}`}
+            </span>
           </span>
         ),
       },
@@ -119,8 +122,8 @@ export function RunsScreen(): JSX.Element {
         hideBelow: 720,
         render: (r) => (r.live ? (r.source === 'trigger' ? (r.triggerId ?? 'trigger') : 'manual') : '—'),
       },
-      { key: 'start', header: 'Started', width: 140, render: (r) => (r.startTime !== undefined ? fmtStarted(r.startTime) : '—') },
-      { key: 'duration', header: 'Duration', align: 'right', width: 96, hideBelow: 640, render: (r) => (r.durationMs !== undefined ? fmtDuration(r.durationMs) : '—') },
+      { key: 'turns', header: 'Turns', align: 'right', width: 72, render: (r) => fmtInt(r.turns ?? 0) },
+      { key: 'activity', header: 'Last activity', width: 140, render: (r) => (r.lastActivity !== undefined ? fmtStarted(r.lastActivity) : '—') },
       {
         key: 'tokens',
         header: 'Tokens',
@@ -135,16 +138,17 @@ export function RunsScreen(): JSX.Element {
         header: <span className="visually-hidden">Actions</span>,
         label: 'Actions',
         align: 'right',
-        width: 56,
+        width: 80,
         render: (r) => (
           <span className={r.live ? 'dt-actions' : 'dt-actions dt-hover'} onClick={(e) => e.stopPropagation()}>
-            {r.live ? (
-              <button type="button" className="btn btn-ghost btn-sm btn-icon btn-danger-text" disabled={busy === rowKey(r)} onClick={() => void act(r, 'stop')} title="Stop" aria-label={`Stop ${r.agentName}`}>
+            {r.live && (
+              <button type="button" className="btn btn-ghost btn-sm btn-icon btn-danger-text" disabled={busy === rowKey(r)} onClick={() => void act(r)} title="Stop" aria-label={`Stop ${r.agentName}`}>
                 <Square size={14} aria-hidden="true" />
               </button>
-            ) : (
-              <button type="button" className="btn btn-ghost btn-sm btn-icon" disabled={busy === rowKey(r)} onClick={() => void act(r, 'run')} title="Run again" aria-label={`Run ${r.agentName} again`}>
-                <Play size={14} aria-hidden="true" />
+            )}
+            {r.traceId !== undefined && (
+              <button type="button" className="btn btn-ghost btn-sm btn-icon" onClick={() => navigate(`/traces/${r.traceId}`)} title="Open the latest trace" aria-label={`Open the latest trace of this ${r.agentName} chat`}>
+                <ListTree size={14} aria-hidden="true" />
               </button>
             )}
           </span>
@@ -173,7 +177,7 @@ export function RunsScreen(): JSX.Element {
             </button>
           ))}
         </div>
-        <p className="runs-count">{`${visible.length} runs · ${liveCount} live`}</p>
+        <p className="runs-count">{`${visible.length} chats · ${liveCount} live`}</p>
         <button type="button" className="btn btn-sm" onClick={refresh}>
           <RefreshCw size={14} aria-hidden="true" />
           Refresh
@@ -199,10 +203,10 @@ export function RunsScreen(): JSX.Element {
             columns={columns}
             rows={visible}
             rowKey={rowKey}
-            onRowOpen={(r) => (r.traceId !== undefined ? navigate(`/traces/${r.traceId}`) : undefined)}
+            onRowOpen={(r) => navigate(chatHref(r).slice(1))}
             loading={rows === undefined}
             density="compact"
-            empty={<EmptyState icon={Play} title="No runs yet" hint="Runs of every agent in every workspace show here." />}
+            empty={<EmptyState icon={MessageSquare} title="No runs yet" hint="Every chat with every agent shows here, one row per chat." />}
           />
         </Card>
       )}

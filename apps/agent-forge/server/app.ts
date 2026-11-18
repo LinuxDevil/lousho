@@ -101,6 +101,7 @@ import {
   AlreadyRunningError,
   NoActiveRunError,
   ApprovalPendingError,
+  ChatNotFoundError,
   SteerUnsupportedError,
 } from './runRegistry';
 import { ChatTriggerAdapter } from './chatTriggerAdapter';
@@ -845,6 +846,23 @@ function registerChatRoutes(app: Express): void {
       return;
     }
     res.json(record);
+  });
+
+  app.post('/agents/:id/chats/:sessionId/open', (req, res) => {
+    const sessionId = Array.isArray(req.params.sessionId) ? req.params.sessionId[0] : req.params.sessionId;
+    if (!isValidAgentId(sessionId)) {
+      res.status(400).json({ error: 'Invalid session id' });
+      return;
+    }
+    try {
+      res.json(workspaceOf(req).runs.openChat(paramId(req), sessionId));
+    } catch (error) {
+      respondWithMappedError(res, error, [
+        [AlreadyRunningError, 409],
+        [ApprovalPendingError, 409],
+        [ChatNotFoundError, 404],
+      ]);
+    }
   });
 }
 

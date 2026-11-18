@@ -28,6 +28,7 @@ import { useWorkspaces } from '../workspace/WorkspacesProvider';
 import { useAgentStatuses, useAgentStream } from './useAgentStream';
 import { useActiveProfile, useChatControls, useRunControls } from './useAgentControls';
 import { usePins } from './usePins';
+import { useRoute } from '../router/useRoute';
 
 type RailTab = 'agents' | 'nodes';
 export type DrawerTab = 'test' | 'problems' | 'logs' | 'trace' | 'output' | 'history' | 'settings';
@@ -263,6 +264,8 @@ interface AppState {
   viewChatSession: (sessionId: string) => Promise<void>;
   /** Switches the Test tab back to the live session. */
   returnToLiveChat: () => void;
+  /** Makes a saved chat the current one, so the next message continues it. */
+  continueChat: (sessionId: string) => Promise<void>;
 
   /**
    * The currently-active settings profile (env/provider/deploy-adapter
@@ -387,6 +390,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setDrawerTab,
   });
   const chatControls = useChatControls({ agentId, spec, ...stream });
+  const linkedChat = useRoute().query.get('chat');
+  const { continueChat } = chatControls;
+  useEffect(() => {
+    if (linkedChat === null || agentRouteId(window.location.hash) !== agentId) return;
+    setDrawerTab('test');
+    void continueChat(linkedChat);
+  }, [linkedChat, agentId, continueChat]);
   const { activeProfile, refreshActiveProfile } = useActiveProfile();
 
   const value: AppState = {
