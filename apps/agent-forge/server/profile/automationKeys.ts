@@ -3,7 +3,7 @@ import type { Express } from 'express';
 import type { AutomationKey, CreateAutomationKeyRequest, CreatedAutomationKey } from '../../shared/profileWire';
 import { asyncRoute, paramId, sendError } from '../http/routeUtils';
 import type { WorkspaceResolver } from '../workspace/context';
-import { bearerOf, parseTargets, readJson, startTargetRun, writeJson } from './profileFiles';
+import { bearerOf, parseTargets, rateLimit, readJson, startTargetRun, writeJson } from './profileFiles';
 
 interface StoredKey extends AutomationKey {
   hash: string;
@@ -115,6 +115,7 @@ export function registerAutomationKeyRoutes(app: Express, store: AutomationKeySt
 
   app.post(
     '/hooks/_trigger',
+    rateLimit(60),
     asyncRoute(async (req, res) => {
       const header = req.headers['x-api-key'];
       const token = bearerOf(req.headers.authorization) ?? (Array.isArray(header) ? header[0] : header);

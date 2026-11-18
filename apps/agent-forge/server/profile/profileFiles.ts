@@ -1,8 +1,10 @@
 import * as fs from 'node:fs';
+import type { RequestHandler } from 'express';
 import * as path from 'node:path';
 import { isValidAgentId } from '../../shared/agentId';
 import type { AgentTarget, DeliveryOutcome } from '../../shared/profileWire';
 import { WORKSPACE_ID_RE } from '../../shared/workspace';
+import { sendError } from '../http/routeUtils';
 import { AlreadyRunningError } from '../runRegistry';
 import type { WorkspaceResolver } from '../workspace/context';
 
@@ -56,4 +58,25 @@ export async function startTargetRun(
     if (error instanceof AlreadyRunningError) return { outcome: 'busy', detail: 'Agent is already running' };
     return { outcome: 'error', detail: error instanceof Error ? error.message : String(error) };
   }
+}
+
+export function rateLimit(max: number, windowMs = 60_000): RequestHandler {
+  const hits = new Map<string, { count: number; resetAt: number }>();
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = req.ip ?? 'unknown';
+    let entry = hits.get(key);
+    if (entry === undefined || entry.resetAt <= now) {
+      if (hits.size > 10_000) hits.clear();
+      entry = { count: 0, resetAt: now + windowMs };
+      hits.set(key, entry);
+    }
+    entry.count += 1;
+    if (entry.count > max) {
+      res.setHeader('Retry-After', String(Math.ceil((entry.resetAt - now) / 1000)));
+      sendError(res, 429, 'Too many requests', 'LOUSHO_RATE_LIMITED');
+      return;
+    }
+    next();
+  };
 }

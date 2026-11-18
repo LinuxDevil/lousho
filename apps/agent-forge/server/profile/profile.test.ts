@@ -11,6 +11,7 @@ import type { WorkspaceContext, WorkspaceResolver } from '../workspace/context';
 import { AutomationKeyStore, registerAutomationKeyRoutes } from './automationKeys';
 import { ConnectorService } from './connectors';
 import { InboundService, registerInboundRoutes } from './inbound';
+import { rateLimit } from './profileFiles';
 import { eventFor, parseNotificationSettings } from './notifications';
 import { CONNECTORS } from '../../shared/profileWire';
 
@@ -183,5 +184,20 @@ describe('connectors', () => {
 
     expect(service.disconnect(atlassian).connected).toBe(false);
     expect(secrets.getSecret('JIRA_BASE_URL')).toBeUndefined();
+  });
+});
+
+describe('rateLimit', () => {
+  it('answers 429 with Retry-After once a client goes over the limit', async () => {
+    const app = express();
+    app.post('/x', rateLimit(2), (_req, res) => {
+      res.status(204).end();
+    });
+    expect((await request(app).post('/x')).status).toBe(204);
+    expect((await request(app).post('/x')).status).toBe(204);
+    const limited = await request(app).post('/x');
+    expect(limited.status).toBe(429);
+    expect(limited.body.code).toBe('LOUSHO_RATE_LIMITED');
+    expect(Number(limited.headers['retry-after'])).toBeGreaterThan(0);
   });
 });

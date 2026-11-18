@@ -7,7 +7,7 @@ import { asyncRoute, paramId, sendError } from '../http/routeUtils';
 import type { SecretsStore } from '../secretsStore';
 import { renderTemplate } from '../triggers/template';
 import type { WorkspaceResolver } from '../workspace/context';
-import { bearerOf, parseTargets, readJson, startTargetRun, writeJson } from './profileFiles';
+import { bearerOf, parseTargets, rateLimit, readJson, startTargetRun, writeJson } from './profileFiles';
 
 const DEFAULT_TEMPLATE = 'An event arrived:\n\n{{event}}';
 const MAX_SKEW_S = 300;
@@ -199,6 +199,7 @@ export function registerInboundRoutes(app: Express, service: InboundService, res
 
   app.post(
     '/hooks/_in/:id',
+    rateLimit(120),
     asyncRoute(async (req, res) => {
       const id = paramId(req);
       const endpoint = service.get(id);
