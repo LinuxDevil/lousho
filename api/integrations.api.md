@@ -32,16 +32,47 @@ type ApprovalPredicate = {
 export function buildSlackAlertPayload(channel: string, message: string, approvalId: string): SlackAlertPayload;
 
 // @public
+export interface ConfluenceConfig {
+    apiToken: string;
+    baseUrl: string;
+    email: string;
+}
+
+// @public
+export class ConfluenceTools extends ToolRegistry {
+    constructor(config: ConfluenceConfig);
+    // (undocumented)
+    register(tool: DefinedTool): void;
+    // (undocumented)
+    register(name: string, descriptor: ToolDescriptor): void;
+}
+
+// @public
 type ContentPart = TextContentPart | ImageContentPart | FileContentPart;
+
+// @public
+export function createConfluenceTools(config: ConfluenceConfig): ConfluenceTools;
 
 // @public
 export function createEmailTool(options: EmailToolOptions): ToolDescriptor;
 
+// @public
+export function createFigmaTools(config: FigmaConfig): FigmaTools;
+
 // @public (undocumented)
 export function createGitHubTools(config: GitHubConfig): GitHubTools;
 
+// @public
+export function createGoogleWorkspaceTools(config: GoogleWorkspaceConfig): GoogleWorkspaceTools;
+
+// @public
+export function createJenkinsTools(config: JenkinsConfig): JenkinsTools;
+
 // @public (undocumented)
 export function createJiraTools(config: JiraConfig): JiraTools;
+
+// @public
+export function createSlackApiTools(config: SlackApiConfig): SlackApiTools;
 
 // @public
 export function createSlackTool(options?: SlackToolOptions): ToolDescriptor;
@@ -89,6 +120,20 @@ export interface EmailToolOptions {
     apiKey: string;
     apiUrl?: string;
     defaultFrom?: string;
+}
+
+// @public
+export interface FigmaConfig {
+    token: string;
+}
+
+// @public
+export class FigmaTools extends ToolRegistry {
+    constructor(config: FigmaConfig);
+    // (undocumented)
+    register(tool: DefinedTool): void;
+    // (undocumented)
+    register(name: string, descriptor: ToolDescriptor): void;
 }
 
 // @public
@@ -187,6 +232,22 @@ export class GitHubTools extends ToolRegistry {
 }
 
 // @public
+export interface GoogleWorkspaceConfig {
+    clientId: string;
+    clientSecret: string;
+    refreshToken: string;
+}
+
+// @public
+export class GoogleWorkspaceTools extends ToolRegistry {
+    constructor(config: GoogleWorkspaceConfig);
+    // (undocumented)
+    register(tool: DefinedTool): void;
+    // (undocumented)
+    register(name: string, descriptor: ToolDescriptor): void;
+}
+
+// @public
 interface HostedTool {
     readonly aiSdkTool?: unknown;
     // (undocumented)
@@ -213,6 +274,22 @@ interface ImageContentPart {
 
 // @public
 type InferSchemaOutput<S extends StandardSchemaV1> = NonNullable<S['~standard']['types']>['output'];
+
+// @public
+export interface JenkinsConfig {
+    apiToken: string;
+    baseUrl: string;
+    username: string;
+}
+
+// @public
+export class JenkinsTools extends ToolRegistry {
+    constructor(config: JenkinsConfig);
+    // (undocumented)
+    register(tool: DefinedTool): void;
+    // (undocumented)
+    register(name: string, descriptor: ToolDescriptor): void;
+}
 
 // @public (undocumented)
 export interface JiraComment {
@@ -502,6 +579,20 @@ export interface SlackAlertPayload {
     channel: string;
     // (undocumented)
     text: string;
+}
+
+// @public
+export interface SlackApiConfig {
+    botToken: string;
+}
+
+// @public
+export class SlackApiTools extends ToolRegistry {
+    constructor(config: SlackApiConfig);
+    // (undocumented)
+    register(tool: DefinedTool): void;
+    // (undocumented)
+    register(name: string, descriptor: ToolDescriptor): void;
 }
 
 // @public

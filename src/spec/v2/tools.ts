@@ -34,7 +34,7 @@ export interface ToolRefCommon {
 }
 
 /** The credentialed integrations an `{ integration }` ref names (S05). */
-export type IntegrationName = 'github' | 'jira' | 'slack' | 'email';
+export type IntegrationName = 'github' | 'jira' | 'confluence' | 'slack' | 'email' | 'google' | 'jenkins' | 'figma';
 
 /** The credential keys one integration takes: `required` must be set, `optional` may be. */
 export interface IntegrationCredentialKeys {
@@ -53,8 +53,12 @@ export interface IntegrationCredentialKeys {
 export const INTEGRATION_CREDENTIALS: Record<IntegrationName, IntegrationCredentialKeys> = {
   github: { required: ['owner', 'repo'], optional: ['token', 'appId', 'privateKey'] },
   jira: { required: ['baseUrl', 'email', 'apiToken'], optional: [] },
+  confluence: { required: ['baseUrl', 'email', 'apiToken'], optional: [] },
   email: { required: ['apiKey'], optional: ['apiUrl', 'defaultFrom'] },
-  slack: { required: ['webhookUrl'], optional: [] },
+  slack: { required: [], optional: ['webhookUrl', 'botToken'] },
+  google: { required: ['clientId', 'clientSecret', 'refreshToken'], optional: [] },
+  jenkins: { required: ['baseUrl', 'username', 'apiToken'], optional: [] },
+  figma: { required: ['token'], optional: [] },
 };
 
 /**
@@ -64,8 +68,12 @@ export const INTEGRATION_CREDENTIALS: Record<IntegrationName, IntegrationCredent
 export const SECRET_CREDENTIALS: Record<IntegrationName, readonly string[]> = {
   github: ['token', 'privateKey'],
   jira: ['apiToken'],
+  confluence: ['apiToken'],
   email: ['apiKey'],
-  slack: ['webhookUrl'],
+  slack: ['webhookUrl', 'botToken'],
+  google: ['clientSecret', 'refreshToken'],
+  jenkins: ['apiToken'],
+  figma: ['token'],
 };
 
 /** Options of an `{ openapi }` ref: one tool per selected operation (S05). */
@@ -107,7 +115,7 @@ export type ToolRef =
       file: string;
     })
   | (ToolRefCommon & {
-      /** A credentialed connector (`github`, `jira`, `slack`, `email`). */
+      /** A credentialed connector (`github`, `jira`, `confluence`, `slack`, `email`, `google`, `jenkins`, `figma`). */
       integration: IntegrationName;
       /** Credential values as strings or SecretRefs (never literals in git). */
       credentials: Record<string, string | SecretRef>;
@@ -242,7 +250,7 @@ export const HOSTED_TOOL_OPTIONS: { web_search: z.ZodTypeAny; code_interpreter: 
   file_search: fileSearchOptions,
 };
 
-const INTEGRATION_NAMES: readonly string[] = ['github', 'jira', 'slack', 'email'];
+const INTEGRATION_NAMES: readonly string[] = ['github', 'jira', 'confluence', 'slack', 'email', 'google', 'jenkins', 'figma'];
 
 const COMMON = {
   id: specIdSchema.optional(),
@@ -295,7 +303,7 @@ function httpsOrLocal(url: string): boolean {
 const integrationVariant = z
   .object({
     ...COMMON,
-    integration: z.enum(['github', 'jira', 'slack', 'email']),
+    integration: z.enum(['github', 'jira', 'confluence', 'slack', 'email', 'google', 'jenkins', 'figma']),
     credentials: z.record(z.string(), stringOrSecretSchema),
   })
   .strict();
@@ -439,6 +447,9 @@ function refineIntegration(entry: Record<string, unknown>, ctx: z.RefinementCtx)
   }
   if (integration === 'github' && !('token' in credentials) && !('appId' in credentials && 'privateKey' in credentials)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "'github' needs credentials.token, or credentials.appId and credentials.privateKey", path: ['credentials'] });
+  }
+  if (integration === 'slack' && !('webhookUrl' in credentials) && !('botToken' in credentials)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "'slack' needs credentials.webhookUrl, credentials.botToken, or both", path: ['credentials'] });
   }
 }
 

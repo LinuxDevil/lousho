@@ -5,6 +5,7 @@ import { ScreenHeader, ScreenHeaderHost } from '../shell/ScreenHeader';
 import { SettingsPanel } from '../components/SettingsPanel';
 import { TracesScreen } from './traces/TracesScreen';
 import { RunsScreen } from './runs/RunsScreen';
+import { ProfileScreen } from './profile/ProfileScreen';
 import { ThreadsScreen } from './threads/ThreadsScreen';
 import { PromptsScreen } from './prompts/PromptsScreen';
 import { HubScreen } from './hub/HubScreen';
@@ -95,6 +96,7 @@ const SCREENS: Partial<Record<ScreenId, () => ReactNode>> = {
   inbox: InboxScreen,
   templates: TemplatesScreen,
   runs: RunsScreen,
+  profile: ProfileScreen,
   traces: TracesScreen,
   trace: TraceRoute,
   monitoring: MonitoringScreen,

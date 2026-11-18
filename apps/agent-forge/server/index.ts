@@ -320,6 +320,7 @@ export async function startStudioServer(
     settingsStore,
     workspaceRegistry: registry,
     workspaces,
+    onBuilt: (listener) => workspaces.onBuilt(listener),
     warm: () => workspaces.warm(),
     staticDir,
     docsDir,

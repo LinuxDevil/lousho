@@ -205,7 +205,7 @@ function InlineError({ message }: { message: string | undefined }) {
   ) : null;
 }
 
-function ProviderKeysSection() {
+export function ProviderKeysSection() {
   const { providers, keyDrafts, providerError, setDraft, saveKey, removeKey } = useProviderKeys();
   return (
     <SettingsCard

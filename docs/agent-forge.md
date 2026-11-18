@@ -672,6 +672,45 @@ when it is down) and **Keyboard shortcuts** (the same list as the `?` sheet).
 The builder drawer's **Settings** tab shows only the provider keys, profile
 and deploy cards; see [Settings, secrets and deploy wiring](#settings-secrets-and-deploy-wiring).
 
+### Profile
+
+`#/profile` (the person icon at the bottom of the navigation) holds the
+accounts, keys and endpoints Studio uses to act for you. Everything here is
+Studio-wide, stored under `~/.lousho/studio/profile/`, with secret values in
+the encrypted secrets store.
+
+- **Connectors**: connect GitHub, Atlassian (Jira and Confluence), Slack,
+  Google Workspace, Jenkins, Figma and Email (Resend). Studio checks each
+  connection with the service first and shows the account and scopes, then
+  saves the credentials as named secrets (`GITHUB_TOKEN`, `JIRA_API_TOKEN`,
+  `SLACK_BOT_TOKEN`, …). Google signs in with OAuth: create a "Web
+  application" OAuth client in Google Cloud and add the redirect URI the
+  Connect sheet shows. In the canvas, an integration tool's **Use connected
+  account** button fills its credentials with these secrets.
+- **AI access**: the model provider keys, the same card as in Settings.
+- **Secrets**: every named secret, with add, replace and delete.
+- **Automation keys**: keys that start agents from scripts, CI or other
+  services. Each key may start only the agents you pick, and Studio keeps
+  only its SHA-256 hash. Call `POST /hooks/_trigger` with
+  `Authorization: Bearer <key>` (or `x-api-key`) and a JSON body
+  `{ "agentId": "…", "workspaceId": "…", "input": "…" }`. It answers `202`
+  when the run started, `409` when the agent is busy or turned off, `401`
+  for an unknown key and `403` for an agent the key may not start.
+- **Inbound events**: URLs at `/hooks/_in/<id>` that start one or more
+  agents per event. A signed endpoint accepts GitHub's
+  `X-Hub-Signature-256`, Slack's `X-Slack-Signature`, or
+  `X-Lousho-Signature: sha256=HMAC(secret, "<timestamp>." + body)` with
+  `X-Lousho-Timestamp` within 5 minutes. A token endpoint accepts the secret
+  as a bearer token, an `x-lousho-token` header or `?token=`. The prompt
+  template sees `{{event}}` (the body) and `{{headers.<name>}}`. Every
+  delivery, accepted or rejected, is logged and listed under **Deliveries**.
+- **Notifications**: a Slack message (the connected bot token and a
+  channel, or the incoming webhook) or an email (the connected Resend key)
+  when a run starts, finishes or fails, with per-agent overrides.
+
+On a [deployed Studio](./hostinger-vps.md) these two URLs skip the Studio
+login, like every other `/hooks/` path; the key or secret is their only guard.
+
 ## First-agent walkthrough
 
 1. **Create an agent.** On the agents list (`#/agents`) click **New agent**

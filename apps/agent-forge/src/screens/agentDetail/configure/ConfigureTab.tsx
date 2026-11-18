@@ -6,6 +6,7 @@ import { useQueryState } from '../../../router/useRoute';
 import { useAppState } from '../../../state/AppState';
 import { Card } from '../../../ui/Card';
 import { SchemaForm } from '../../../ui/schemaForm/SchemaForm';
+import { ModelPicker } from '../../../canvas/kinds/agent/ModelPicker';
 import type { JsonSchema } from '../../../ui/schemaForm/types';
 import { useAgentDetail } from '../AgentDetailContext';
 import {
@@ -194,8 +195,16 @@ export function ConfigureTab(): JSX.Element {
             title={section.title}
             description={section.description}
           >
+            {section.id === 'model' && (
+              <ModelPicker
+                id="configure-model-model"
+                value={typeof draft.model === 'string' ? draft.model : undefined}
+                onChange={(model) => applySection(['model'], { model })}
+              />
+            )}
             <SchemaForm
               schema={sectionSchemas[section.id]}
+              hiddenKeys={section.id === 'model' ? ['model'] : undefined}
               value={pickSection(draft, section.keys)}
               onChange={(next) => applySection(section.keys, next)}
               idPrefix={`configure-${section.id}`}

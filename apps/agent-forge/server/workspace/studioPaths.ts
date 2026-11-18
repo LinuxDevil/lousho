@@ -52,6 +52,16 @@ export interface StudioPaths {
   serve: string;
   /** One-time legacy settings/secrets import records, per workspace id. */
   legacyImports: string;
+  /** Connected-account metadata (no secret values). */
+  connectors: string;
+  /** Hashed automation keys. */
+  automationKeys: string;
+  /** Inbound webhook endpoints. */
+  inbound: string;
+  /** Inbound delivery log. */
+  inboundLog: string;
+  /** Run notification preferences. */
+  notifications: string;
 }
 
 /** The `StudioPaths` for a given home directory - pure; sets nothing. */
@@ -67,6 +77,11 @@ export function studioPathsFor(home: string): StudioPaths {
     alerts: path.join(home, 'inbox', 'alerts.json'),
     serve: path.join(home, 'serve.json'),
     legacyImports: path.join(home, 'legacy-imports.json'),
+    connectors: path.join(home, 'profile', 'connectors.json'),
+    automationKeys: path.join(home, 'profile', 'automation-keys.json'),
+    inbound: path.join(home, 'profile', 'inbound.json'),
+    inboundLog: path.join(home, 'profile', 'inbound-deliveries.jsonl'),
+    notifications: path.join(home, 'profile', 'notifications.json'),
   };
 }
 

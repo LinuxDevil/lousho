@@ -134,6 +134,17 @@ interface JiraWorklogResource {
 }
 
 /** A Jira user's display name, or `fallback` when there is no such user. */
+const ATTACHMENT_MAX_BYTES = 1024 * 1024;
+
+interface JiraSprintResource {
+  id: number;
+  name: string;
+  state: string;
+  goal?: string;
+  startDate?: string;
+  endDate?: string;
+}
+
 function displayNameOr(user: { displayName?: string } | null | undefined, fallback: string): string {
   return user?.displayName || fallback;
 }
@@ -201,6 +212,10 @@ export class JiraTools extends ToolRegistry {
     this.registerAddAttachment();
     this.registerAddWorklog();
     this.registerGetWorklogs();
+    this.registerGetAttachment();
+    this.registerGetSprint();
+    this.registerListFields();
+    this.registerGetTicketHistory();
   }
 
   // ========================================================================
@@ -1048,6 +1063,172 @@ export class JiraTools extends ToolRegistry {
           }));
 
           return JSON.stringify({ worklogs }, null, 2);
+        },
+      })
+    );
+  }
+
+  private registerGetAttachment() {
+    this.register(
+      defineTool({
+        name: 'jira_get_attachment',
+        displayName: 'Get Jira Attachment',
+        description: 'Get a Jira attachment by id: metadata plus content (text for small text files, otherwise base64; capped at 1MB)',
+        input: z.object({
+          attachmentId: z.string().describe('The attachment id'),
+        }),
+        execute: async ({ attachmentId }) => {
+          const metaResponse = await fetch(`${this.config.baseUrl}/rest/api/3/attachment/${attachmentId}`, {
+            headers: this.jsonHeaders(),
+          });
+          await assertOk(metaResponse, 'Failed to get attachment metadata');
+          const meta = await metaResponse.json() as { id: string; filename: string; mimeType: string; size: number; created: string; author?: { displayName?: string }; content: string };
+          const metadata = {
+            id: meta.id,
+            filename: meta.filename,
+            mimeType: meta.mimeType,
+            size: meta.size,
+            created: meta.created,
+            author: meta.author?.displayName,
+          };
+          if (meta.size > ATTACHMENT_MAX_BYTES) {
+            return JSON.stringify({ ...metadata, content: null, truncated: true, reason: `Attachment exceeds ${ATTACHMENT_MAX_BYTES} bytes` }, null, 2);
+          }
+          const contentResponse = await fetch(meta.content, {
+            headers: { 'Authorization': this.authHeader },
+          });
+          await assertOk(contentResponse, 'Failed to download attachment');
+          const bytes = Buffer.from(await contentResponse.arrayBuffer());
+          const isText = /^text\/|json|xml|yaml|csv|javascript/.test(meta.mimeType ?? '');
+          return JSON.stringify({
+            ...metadata,
+            encoding: isText ? 'utf8' : 'base64',
+            content: bytes.toString(isText ? 'utf8' : 'base64'),
+          }, null, 2);
+        },
+      })
+    );
+  }
+
+  private registerGetSprint() {
+    this.register(
+      defineTool({
+        name: 'jira_get_sprint',
+        displayName: 'Get Jira Sprint',
+        description: "Get a sprint and its issues, either by sprint id or a board's active sprint",
+        input: z.object({
+          boardId: z.number().optional().describe("Board id; returns the board's active sprint"),
+          sprintId: z.number().optional().describe('Sprint id'),
+          maxResults: z.number().optional().default(50).describe('Maximum number of issues to return'),
+        }),
+        execute: async ({ boardId, sprintId, maxResults = 50 }) => {
+          let id = sprintId;
+          let sprint: JiraSprintResource | undefined;
+          if (id === undefined) {
+            if (boardId === undefined) throw toolFailure('Provide boardId or sprintId');
+            const response = await fetch(`${this.config.baseUrl}/rest/agile/1.0/board/${boardId}/sprint?state=active`, {
+              headers: this.jsonHeaders(),
+            });
+            await assertOk(response, 'Failed to get active sprint');
+            const data = await response.json() as { values: JiraSprintResource[] };
+            sprint = data.values[0];
+            if (!sprint) return JSON.stringify({ sprint: null, issues: [] }, null, 2);
+            id = sprint.id;
+          } else {
+            const response = await fetch(`${this.config.baseUrl}/rest/agile/1.0/sprint/${id}`, {
+              headers: this.jsonHeaders(),
+            });
+            await assertOk(response, 'Failed to get sprint');
+            sprint = await response.json() as JiraSprintResource;
+          }
+          const issuesResponse = await fetch(
+            `${this.config.baseUrl}/rest/agile/1.0/sprint/${id}/issue?maxResults=${maxResults}&fields=summary,status,assignee,issuetype,priority`,
+            { headers: this.jsonHeaders() }
+          );
+          await assertOk(issuesResponse, 'Failed to get sprint issues');
+          const issuesData = await issuesResponse.json() as { total: number; issues: JiraIssueResource[] };
+          return JSON.stringify({
+            sprint: {
+              id: sprint.id,
+              name: sprint.name,
+              state: sprint.state,
+              goal: sprint.goal,
+              startDate: sprint.startDate,
+              endDate: sprint.endDate,
+            },
+            total: issuesData.total,
+            issues: issuesData.issues.map((issue) => ({
+              key: issue.key,
+              summary: issue.fields.summary,
+              status: issue.fields.status?.name,
+              issueType: issue.fields.issuetype?.name,
+              priority: issue.fields.priority?.name || 'None',
+              assignee: displayNameOr(issue.fields.assignee, 'Unassigned'),
+            })),
+          }, null, 2);
+        },
+      })
+    );
+  }
+
+  private registerListFields() {
+    this.register(
+      defineTool({
+        name: 'jira_list_fields',
+        displayName: 'List Jira Fields',
+        description: 'List all Jira fields (system and custom) with id, name and schema type',
+        input: z.object({
+          customOnly: z.boolean().optional().default(false).describe('Only return custom fields'),
+        }),
+        execute: async ({ customOnly = false }) => {
+          const response = await fetch(`${this.config.baseUrl}/rest/api/3/field`, {
+            headers: this.jsonHeaders(),
+          });
+          await assertOk(response, 'Failed to list fields');
+          const data = await response.json() as Array<{ id: string; name: string; custom: boolean; schema?: { type?: string } }>;
+          const fields = data
+            .filter((field) => !customOnly || field.custom)
+            .map((field) => ({ id: field.id, name: field.name, custom: field.custom, type: field.schema?.type }));
+          return JSON.stringify({ fields }, null, 2);
+        },
+      })
+    );
+  }
+
+  private registerGetTicketHistory() {
+    this.register(
+      defineTool({
+        name: 'jira_get_ticket_history',
+        displayName: 'Get Jira Ticket History',
+        description: 'Get the change history (changelog) of a Jira ticket',
+        input: z.object({
+          ticketKey: z.string().describe('The Jira ticket key (e.g., PROJ-123)'),
+          startAt: z.number().optional().default(0).describe('Index of the first entry'),
+          maxResults: z.number().optional().default(100).describe('Maximum number of entries'),
+        }),
+        execute: async ({ ticketKey, startAt = 0, maxResults = 100 }) => {
+          const response = await fetch(
+            `${this.config.baseUrl}/rest/api/3/issue/${ticketKey}/changelog?startAt=${startAt}&maxResults=${maxResults}`,
+            { headers: this.jsonHeaders() }
+          );
+          await assertOk(response, 'Failed to get ticket history');
+          const data = await response.json() as {
+            total: number;
+            isLast?: boolean;
+            values: Array<{
+              id: string;
+              created: string;
+              author?: { displayName?: string };
+              items: Array<{ field: string; fromString: string | null; toString: string | null }>;
+            }>;
+          };
+          const history = data.values.map((entry) => ({
+            id: entry.id,
+            author: displayNameOr(entry.author, 'Unknown'),
+            created: entry.created,
+            changes: entry.items.map((item) => ({ field: item.field, from: item.fromString, to: item.toString })),
+          }));
+          return JSON.stringify({ total: data.total, isLast: data.isLast, history }, null, 2);
         },
       })
     );

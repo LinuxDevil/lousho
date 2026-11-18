@@ -3845,7 +3845,7 @@ export interface InputSteeredEvent extends AgentEventBase<'input.steered'> {
 }
 
 // @public
-type IntegrationName = 'github' | 'jira' | 'slack' | 'email';
+type IntegrationName = 'github' | 'jira' | 'confluence' | 'slack' | 'email' | 'google' | 'jenkins' | 'figma';
 
 // @public
 export interface IoGuardrail {

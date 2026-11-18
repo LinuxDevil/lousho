@@ -486,7 +486,7 @@ interface IntegrationCredentialKeys {
 }
 
 // @public
-export type IntegrationName = 'github' | 'jira' | 'slack' | 'email';
+export type IntegrationName = 'github' | 'jira' | 'confluence' | 'slack' | 'email' | 'google' | 'jenkins' | 'figma';
 
 // @public
 export function isNodeIdExporter(exporter: TraceExporter | undefined): boolean;

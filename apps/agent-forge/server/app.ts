@@ -175,6 +175,10 @@ import { AlertStore } from './inbox/alertStore';
 import { InboxService } from './inbox/inboxService';
 import { registerInboxRoutes } from './inbox/inboxRoutes';
 import { registerRunsListRoute } from './runsList';
+import { AutomationKeyStore, registerAutomationKeyRoutes } from './profile/automationKeys';
+import { ConnectorService, registerConnectorRoutes } from './profile/connectors';
+import { InboundService, registerInboundRoutes } from './profile/inbound';
+import { NotificationService, registerNotificationRoutes } from './profile/notifications';
 import { registerWebhookRoutes } from './triggers/webhookRoute';
 import { createTriggerRuntime } from './triggers/runtime';
 import { attachChainTriggers } from './triggers/chainTriggers';
@@ -222,6 +226,8 @@ interface CreateAppBaseOptions {
    * `() => manager.warm()`; the default is the launch context alone.
    */
   warm?: () => WorkspaceContext[];
+  /** Subscribes to workspace contexts built after startup (run notifications follow them). */
+  onBuilt?: (listener: (ctx: WorkspaceContext) => void) => () => void;
   /**
    * The app's one AuthorTurnRunner (turns are in-flight memory, so tests
    * pass their own to control the provider seam); defaults to
@@ -1556,6 +1562,13 @@ export function createApp(options: CreateAppOptions): Express {
   // Named secrets (`/settings/secrets`) - Studio-global like the provider
   // keys, sharing the app's one store (routes/secretRoutes.ts).
   registerSecretRoutes(app, secrets);
+  registerConnectorRoutes(app, new ConnectorService(paths.connectors, secrets));
+  registerAutomationKeyRoutes(app, new AutomationKeyStore(paths.automationKeys), workspaceResolver);
+  registerInboundRoutes(app, new InboundService(paths.inbound, paths.inboundLog, secrets), workspaceResolver);
+  const notifications = new NotificationService(paths.notifications, secrets);
+  registerNotificationRoutes(app, notifications);
+  for (const ctx of (options.warm ?? (() => [workspace]))()) notifications.attach(ctx);
+  options.onBuilt?.((ctx) => notifications.attach(ctx));
   registerProfileRoutes(app, settings);
   // The collector the whole app reports to and reads through (collector.ts).
   registerCollectorRoutes(app, collector);

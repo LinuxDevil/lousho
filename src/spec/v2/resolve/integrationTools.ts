@@ -7,10 +7,15 @@
  * schemas stay in `../tools.ts`.
  */
 import type { ToolDescriptor } from '../../../types';
+import { createConfluenceTools } from '../../../tools/built-in/confluence';
 import { createEmailTool } from '../../../tools/built-in/email';
+import { createFigmaTools } from '../../../tools/built-in/figma';
 import { createGitHubTools } from '../../../tools/built-in/github';
+import { createGoogleWorkspaceTools } from '../../../tools/built-in/google';
+import { createJenkinsTools } from '../../../tools/built-in/jenkins';
 import { createJiraTools } from '../../../tools/built-in/jira';
 import { createSlackTool } from '../../../tools/built-in/slack';
+import { createSlackApiTools } from '../../../tools/built-in/slackApi';
 import { openApiTools } from '../../../tools/openapi/openApiTools';
 import type { IntegrationName, ToolRef } from '../tools';
 import { resolveSecretRef, resolveStringOrSecret, type SecretHost } from './secrets';
@@ -42,7 +47,29 @@ const INTEGRATION_BUILDERS: Record<IntegrationName, (credentials: Record<string,
       ...(credentials['defaultFrom'] !== undefined && { defaultFrom: credentials['defaultFrom'] }),
     }),
   }),
-  slack: (credentials) => ({ slack_alert: createSlackTool({ webhookUrl: credentials['webhookUrl'] }) }),
+  confluence: (credentials) =>
+    createConfluenceTools({
+      baseUrl: credentials['baseUrl'],
+      email: credentials['email'],
+      apiToken: credentials['apiToken'],
+    }).getAll(),
+  slack: (credentials) => ({
+    ...(credentials['webhookUrl'] !== undefined && { slack_alert: createSlackTool({ webhookUrl: credentials['webhookUrl'] }) }),
+    ...(credentials['botToken'] !== undefined && createSlackApiTools({ botToken: credentials['botToken'] }).getAll()),
+  }),
+  google: (credentials) =>
+    createGoogleWorkspaceTools({
+      clientId: credentials['clientId'],
+      clientSecret: credentials['clientSecret'],
+      refreshToken: credentials['refreshToken'],
+    }).getAll(),
+  jenkins: (credentials) =>
+    createJenkinsTools({
+      baseUrl: credentials['baseUrl'],
+      username: credentials['username'],
+      apiToken: credentials['apiToken'],
+    }).getAll(),
+  figma: (credentials) => createFigmaTools({ token: credentials['token'] }).getAll(),
 };
 
 /**
