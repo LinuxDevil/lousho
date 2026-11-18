@@ -21,7 +21,6 @@ import {
   listGuardrails,
   listModels,
   listTriggerTypes,
-  SDKError,
   VERSION,
   type AgentRun,
   type ExecutionResult,
@@ -177,7 +176,7 @@ export class InProcessAgentHost implements AgentHost {
           type: 'failed',
           error: {
             message: (error as Error)?.message ?? String(error),
-            ...(error instanceof SDKError && { code: error.code }),
+            ...(typeof (error as { code?: unknown } | null)?.code === 'string' && { code: (error as { code: string }).code }),
             name: (error as Error)?.name,
           },
         });
@@ -186,9 +185,8 @@ export class InProcessAgentHost implements AgentHost {
 
   private async adoptOrphanedPause(record: RunRecord, error: unknown): Promise<boolean> {
     const sessionId = record.input.sessionId;
-    if (!(error instanceof SDKError) || error.code !== 'LOUSHO_SESSION_AWAITING_APPROVAL' || sessionId === undefined) return false;
-    const approvalId = (error as SDKError & { approvalId?: string }).approvalId;
-    if (approvalId === undefined) return false;
+    const { code, approvalId } = (error ?? {}) as { code?: unknown; approvalId?: unknown };
+    if (code !== 'LOUSHO_SESSION_AWAITING_APPROVAL' || sessionId === undefined || typeof approvalId !== 'string') return false;
     const [pending, checkpoint] = await Promise.all([
       this.deps.approvalStore.peek(record.input.agentId, approvalId),
       this.deps.checkpointStore.load(sessionId),
