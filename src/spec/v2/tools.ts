@@ -51,7 +51,7 @@ export interface IntegrationCredentialKeys {
  * unknown by name.
  */
 export const INTEGRATION_CREDENTIALS: Record<IntegrationName, IntegrationCredentialKeys> = {
-  github: { required: ['owner', 'repo'], optional: ['token', 'appId', 'privateKey'] },
+  github: { required: [], optional: ['owner', 'repo', 'token', 'appId', 'privateKey'] },
   jira: { required: ['baseUrl', 'email', 'apiToken'], optional: [] },
   confluence: { required: ['baseUrl', 'email', 'apiToken'], optional: [] },
   email: { required: ['apiKey'], optional: ['apiUrl', 'defaultFrom'] },
@@ -447,6 +447,12 @@ function refineIntegration(entry: Record<string, unknown>, ctx: z.RefinementCtx)
   }
   if (integration === 'github' && !('token' in credentials) && !('appId' in credentials && 'privateKey' in credentials)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "'github' needs credentials.token, or credentials.appId and credentials.privateKey", path: ['credentials'] });
+  }
+  if (integration === 'github' && ('owner' in credentials) !== ('repo' in credentials)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "'github' needs credentials.owner and credentials.repo together, or neither for account-wide tools", path: ['credentials'] });
+  }
+  if (integration === 'github' && !('owner' in credentials) && !('token' in credentials)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "'github' without owner and repo builds account-wide tools, which need credentials.token", path: ['credentials', 'token'] });
   }
   if (integration === 'slack' && !('webhookUrl' in credentials) && !('botToken' in credentials)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "'slack' needs credentials.webhookUrl, credentials.botToken, or both", path: ['credentials'] });
