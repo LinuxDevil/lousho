@@ -1,6 +1,6 @@
 {
   "name": "lousho-studio",
-  "version": "0.1.0-alpha.14",
+  "version": "0.1.0-alpha.15",
   "description": "Lousho Studio: build, test and watch every agent across your projects. A local web app for lousho.",
   "type": "module",
   "bin": {
