@@ -37,6 +37,8 @@ export interface TurnContextInput {
   };
   /** The session's still-open proposal cards, oldest first (the block labels them "newest last"). */
   openProposals: Array<{ proposalId: string; kind: 'create' | 'update'; agentId?: string; name: string }>;
+  /** One line per connected account: the `{ integration }` tool ref that uses its saved secrets. */
+  connectedAccounts?: string[];
   /** The turn's clock; only `toISOString().slice(0, 10)` is used, so the date changes at most daily. */
   now: Date;
 }
@@ -71,6 +73,10 @@ export function buildTurnContext(input: TurnContextInput): string {
   ];
   if (input.focusedAgent !== undefined) {
     lines.push(`Agent summary: ${input.focusedAgent.summary}`);
+  }
+  if (input.connectedAccounts !== undefined && input.connectedAccounts.length > 0) {
+    lines.push('Connected accounts (Profile > Connectors). Every run already gets their tools behind tool search; add the ref to spec.tools when the agent should always see them or to pin settings:');
+    lines.push(...input.connectedAccounts);
   }
   if (input.openProposals.length > 0) {
     lines.push('Open proposal cards (newest last):');

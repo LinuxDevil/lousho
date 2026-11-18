@@ -2,7 +2,7 @@
  * The Agent Author's entry points (AA19): one tiny external store that lets
  * any screen ask the docked panel to open - Ctrl/Cmd+J, the nav trigger, the
  * agents list's "Describe with AI", the empty canvas, the command palette and
- * the agent header's "Change with AI" all funnel through {@link openAuthor}.
+ * the agent header's "Edit with AI" all funnel through {@link openAuthor}.
  *
  * `openAuthor` opens the dock (through the control the shell registers once
  * via {@link registerAuthorDock}) and queues the request; the mounted panel

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
-import { CircleAlert, CircleCheck, CircleDashed, Clock, Cpu, Play, Wrench, Zap, type LucideIcon } from 'lucide-react';
+import { CircleAlert, CircleCheck, CircleDashed, Clock, Cpu, Play, Sparkles, Wrench, Zap, type LucideIcon } from 'lucide-react';
 
+import { openAuthor } from '../../author/authorEntry';
 import type { AgentRecord, Requirement } from '../../../shared/wireTypes';
 import { fmtAge } from '../../observe/format';
 import { agentListPath, agentTabItems, agentTabPath, type AgentTab } from '../agents/agentTabs';
@@ -11,6 +12,8 @@ import { AgentTile } from '../../ui/AgentTile';
 import { StatusBadge } from '../../ui/StatusBadge';
 import { Tabs } from '../../ui/Tabs';
 import './agentDetail.css';
+
+const EDIT_WITH_AI_DRAFT = 'Add the tools, connectors and MCP servers this agent needs to ';
 
 /** One facts-row entry: a decorative icon, its accessible label and the shown value. */
 export interface HeaderFact {
@@ -170,6 +173,16 @@ export function AgentDetailHeader({ record, tab, menu, enabledControl, labelsIte
         <div className="agent-detail-actions">
           {enabledControl ?? <StatusBadge status={meta.enabled ? 'enabled' : 'disabled'} />}
           <PublishStatePill state={record.publishState} />
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={readOnlyTitle !== undefined}
+            title={readOnlyTitle}
+            onClick={() => openAuthor({ source: 'agent-header', focus: { mode: 'edit', agentId: id }, draft: EDIT_WITH_AI_DRAFT })}
+          >
+            <Sparkles size={14} strokeWidth={1.75} aria-hidden="true" />
+            Edit with AI
+          </button>
           {readOnlyTitle === undefined ? (
             <a className="btn btn-primary btn-sm" href={`#${agentTabPath(id, 'canvas')}?test=1`}>
               <Play size={14} strokeWidth={1.75} aria-hidden="true" />

@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import type { AgentSpecV2, ToolDescriptor } from 'lousho';
 import { describe, expect, it } from 'vitest';
-import { connectorShellEnv, guardConnectorWrites, withConnectedIntegrations, withShellEnv } from './connectorRunTools';
+import { buildTurnContext } from './author/turnContext';
+import { connectedAccountsForAuthor, connectorShellEnv, githubAccountTools, guardConnectorWrites, withConnectedIntegrations, withShellEnv } from './connectorRunTools';
 
 const store = (values: Record<string, string>) => ({ getSecret: (name: string) => values[name] });
 const base = { version: 2, name: 'a', model: 'mock/mock-1', instructions: 'x' } as unknown as AgentSpecV2;
@@ -28,6 +29,38 @@ describe('connectorRunTools', () => {
     expect(tools.confluence_search.needsApproval).toBeUndefined();
     expect(tools.jira_create_ticket.needsApproval).toBe(true);
     expect(tools.send_email.needsApproval).toBe(true);
+  });
+
+  it('gives GitHub account tools that ask before writing and call the API as the token', async () => {
+    const tools = githubAccountTools('ghp_x');
+    const predicate = tools.github_api.needsApproval as (input: { method: string }) => Promise<boolean>;
+    expect(await predicate({ method: 'GET' })).toBe(false);
+    expect(await predicate({ method: 'POST' })).toBe(true);
+    expect(tools.github_create_repository.needsApproval).toBe(true);
+
+    const calls: Array<[string, RequestInit]> = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      calls.push([url, init]);
+      return new Response(JSON.stringify({ full_name: 'me/r', html_url: 'h', clone_url: 'c' }), { status: 201 });
+    }) as typeof fetch;
+    try {
+      const out = await tools.github_create_repository.execute!({ name: 'r', private: true } as never, {} as never);
+      expect(String(out)).toContain('me/r');
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    expect(calls[0][0]).toBe('https://api.github.com/user/repos');
+    expect((calls[0][1].headers as Record<string, string>).Authorization).toBe('Bearer ghp_x');
+  });
+
+  it('tells the Author which accounts are connected and how to reference them', () => {
+    const lines = connectedAccountsForAuthor(store({ FIGMA_TOKEN: 'f', GITHUB_TOKEN: 'g' }));
+    expect(lines).toHaveLength(2);
+    expect(lines.join('\n')).toContain('"integration": "figma", "credentials": {"token":{"secret":"FIGMA_TOKEN"}}');
+    expect(lines.join('\n')).toContain('github_create_repository');
+    expect(lines.join('\n')).not.toContain('"f"');
+    expect(buildTurnContext({ focus: { mode: 'create' }, openProposals: [], connectedAccounts: lines, now: new Date(0) })).toContain('Connected accounts');
   });
 
   it('gives the shell the connector secrets and git auth for github.com', async () => {
