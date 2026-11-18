@@ -373,7 +373,7 @@
     "./dist/index.mjs"
   ],
   "scripts": {
-    "build": "node --max-old-space-size=12288 node_modules/tsup/dist/cli-default.js",
+    "build": "node scripts/patch-tsup.mjs && node --max-old-space-size=12288 node_modules/tsup/dist/cli-default.js",
     "dev": "node --max-old-space-size=12288 node_modules/tsup/dist/cli-default.js --watch",
     "pre-release": "npm version prerelease --preid=alpha --no-git-tag-version && node scripts/sync-version.mjs && npm publish --access public --tag alpha",
     "pre-release:create-lousho": "npm version prerelease --preid=alpha --no-git-tag-version -w create-lousho && npm run build -w create-lousho && npm publish -w create-lousho --access public --tag alpha",
