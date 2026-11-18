@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import type { AgentSpecV2, ToolDescriptor } from 'lousho';
 import { describe, expect, it } from 'vitest';
 import { buildTurnContext } from './author/turnContext';
-import { connectedAccountsForAuthor, connectorShellEnv, githubAccountTools, guardConnectorWrites, withConnectedIntegrations, withShellEnv } from './connectorRunTools';
+import { addMissingTools, connectedAccountsForAuthor, connectorShellEnv, githubAccountTools, guardConnectorWrites, withConnectedIntegrations, withShellEnv } from './connectorRunTools';
 
 const store = (values: Record<string, string>) => ({ getSecret: (name: string) => values[name] });
 const base = { version: 2, name: 'a', model: 'mock/mock-1', instructions: 'x' } as unknown as AgentSpecV2;
@@ -52,6 +52,14 @@ describe('connectorRunTools', () => {
     }
     expect(calls[0][0]).toBe('https://api.github.com/user/repos');
     expect((calls[0][1].headers as Record<string, string>).Authorization).toBe('Bearer ghp_x');
+  });
+
+  it('adds the GitHub account tools without replacing a same-named spec tool', () => {
+    const mine = { description: 'mine' } as unknown as ToolDescriptor;
+    const tools: Record<string, ToolDescriptor> = { github_api: mine };
+    addMissingTools(tools, githubAccountTools('ghp_x'));
+    expect(tools.github_api).toBe(mine);
+    expect(Object.keys(tools).sort()).toEqual(['github_api', 'github_create_repository', 'github_list_my_repositories']);
   });
 
   it('tells the Author which accounts are connected and how to reference them', () => {

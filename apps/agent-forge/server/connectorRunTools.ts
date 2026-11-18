@@ -122,6 +122,10 @@ export function githubAccountTools(token: string): Record<string, ToolDescriptor
   return Object.fromEntries(tools.map((tool) => [tool.name, tool]));
 }
 
+export function addMissingTools(tools: Record<string, ToolDescriptor>, extra: Record<string, ToolDescriptor>): void {
+  for (const [name, tool] of Object.entries(extra)) if (!(name in tools)) tools[name] = tool;
+}
+
 export function connectedAccountsForAuthor(secrets: SecretSource): string[] {
   if (secrets === undefined) return [];
   const lines: string[] = [];
