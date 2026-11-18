@@ -38,8 +38,8 @@ export const SHORTCUTS: Shortcut[] = [
  */
 export function matchShortcut(e: KeyboardEvent): ShortcutId | null {
   const ctrl = e.ctrlKey || e.metaKey;
-  const isK = e.key.toLowerCase() === 'k' || e.code === 'KeyK';
-  const isJ = e.key.toLowerCase() === 'j' || e.code === 'KeyJ';
+  const isK = (e.key ?? '').toLowerCase() === 'k' || e.code === 'KeyK';
+  const isJ = (e.key ?? '').toLowerCase() === 'j' || e.code === 'KeyJ';
   if (ctrl && !e.altKey && !e.shiftKey && isK) return 'palette';
   if (ctrl && !e.altKey && !e.shiftKey && isJ) return 'author';
   if (e.key === '?' && !ctrl && !e.altKey && !isEditableTarget(e.target)) return 'help';

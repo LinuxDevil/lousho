@@ -40,7 +40,7 @@ export function useSaveVersionShortcut(): void {
   const toast = useToast();
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 's') return;
+      if (!(event.ctrlKey || event.metaKey) || (event.key ?? '').toLowerCase() !== 's') return;
       event.preventDefault();
       saveVersionAction().catch((error: unknown) => {
         toast.show({ message: errorMessage(error), tone: 'error' });

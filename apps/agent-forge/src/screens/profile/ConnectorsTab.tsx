@@ -82,7 +82,7 @@ function ConnectSheet({ def, status, onClose, onSaved }: { def: ConnectorDef; st
               spellCheck={false}
               placeholder={filled.has(field.key) ? '••••••••' : field.placeholder}
               value={values[field.key] ?? ''}
-              onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.currentTarget.value }))}
+              onChange={(e) => { const value = e.currentTarget.value; setValues((v) => ({ ...v, [field.key]: value })); }}
             />
           </Field>
         ))}
