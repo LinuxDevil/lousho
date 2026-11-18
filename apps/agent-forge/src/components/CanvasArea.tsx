@@ -732,7 +732,7 @@ function useToolbarActions(
   // there the keystroke belongs to the field.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd' && !isEditableTarget(e.target)) {
+      if ((e.ctrlKey || e.metaKey) && (e.key ?? '').toLowerCase() === 'd' && !isEditableTarget(e.target)) {
         e.preventDefault();
         handleDuplicate();
       }
@@ -835,7 +835,7 @@ export function useUndoRedoShortcuts(undo: () => void, redo: () => void) {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (!(e.ctrlKey || e.metaKey) || e.altKey || isEditableTarget(e.target)) return;
-      const key = e.key.toLowerCase();
+      const key = (e.key ?? '').toLowerCase();
       if (key === 'z') {
         e.preventDefault();
         if (e.shiftKey) redo();
