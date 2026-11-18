@@ -16,6 +16,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import {
+  emptyRunUsage,
   listBuiltinTools,
   listGuardrails,
   listModels,
@@ -168,8 +169,9 @@ export class InProcessAgentHost implements AgentHost {
         }
         record.input.onEvent({ type: 'settled', result: this.hostResult(result, pending) });
       })
-      .catch((error: unknown) => {
+      .catch(async (error: unknown) => {
         record.live = undefined;
+        if (await this.adoptOrphanedPause(record, error)) return;
         this.runs.delete(runId);
         record.input.onEvent({
           type: 'failed',
@@ -180,6 +182,32 @@ export class InProcessAgentHost implements AgentHost {
           },
         });
       });
+  }
+
+  private async adoptOrphanedPause(record: RunRecord, error: unknown): Promise<boolean> {
+    const sessionId = record.input.sessionId;
+    if (!(error instanceof SDKError) || error.code !== 'LOUSHO_SESSION_AWAITING_APPROVAL' || sessionId === undefined) return false;
+    const approvalId = (error as SDKError & { approvalId?: string }).approvalId;
+    if (approvalId === undefined) return false;
+    const [pending, checkpoint] = await Promise.all([
+      this.deps.approvalStore.peek(record.input.agentId, approvalId),
+      this.deps.checkpointStore.load(sessionId),
+    ]);
+    if (!pending || !checkpoint) return false;
+    record.pausedApprovalIds = [approvalId];
+    record.input.onEvent({
+      type: 'settled',
+      result: {
+        finishReason: 'awaiting-approval',
+        text: '',
+        messages: checkpoint.messages,
+        usage: emptyRunUsage(),
+        steps: checkpoint.stepIndex,
+        approvalId,
+        pendingApproval: pending.pending,
+      },
+    });
+    return true;
   }
 
   /** The pending record of an `awaiting-approval` settle, or undefined for any other finish (or a missing file). */
