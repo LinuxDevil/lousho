@@ -1,4 +1,3 @@
-import { VERSION } from '../version';
 
 export interface DeployAgent {
   name: string;
@@ -18,7 +17,7 @@ export interface DeployConfig {
   githubApp?: { agent: string; prefix: string };
 }
 
-export type StudioSource = { kind: 'npm'; sdk: string; studio: string } | { kind: 'local' };
+export type StudioSource = { kind: 'npm'; studio: string } | { kind: 'local' };
 
 export const STUDIO_PORT = 4750;
 export const AGENT_PORT = 3000;
@@ -47,7 +46,7 @@ export function assertValidConfig(config: DeployConfig): void {
 export function studioDockerfile(source: StudioSource): string {
   const install =
     source.kind === 'npm'
-      ? `RUN npm install --omit=dev lousho@${source.sdk} lousho-studio@${source.studio} isolated-vm@^6`
+      ? `RUN npm install --omit=dev lousho-studio@${source.studio} isolated-vm@^6`
       : 'COPY *.tgz ./\nRUN npm install --omit=dev ./lousho-*.tgz isolated-vm@^6 && rm -f ./*.tgz';
   return `FROM node:22-slim
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
@@ -66,7 +65,7 @@ CMD ["lousho-studio", "--workspace", "/workspace", "--host", "0.0.0.0", "--port"
 }
 
 export function npmSource(studio = 'latest'): StudioSource {
-  return { kind: 'npm', sdk: VERSION, studio };
+  return { kind: 'npm', studio };
 }
 
 function traefikLabels(config: DeployConfig, service: string, port: number, auth: boolean): string[] {
