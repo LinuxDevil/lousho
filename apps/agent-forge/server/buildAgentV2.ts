@@ -49,6 +49,7 @@ import {
 } from 'lousho';
 import type { AgentFlow } from 'lousho/flows';
 import { studioAutoApprover } from './autoApproval';
+import { addMissingTools, connectorShellEnv, githubAccountTools, guardConnectorWrites, withConnectedIntegrations, withShellEnv } from './connectorRunTools';
 import { asAgentFlow, LOCAL_TOOLS, resolveProviderForModel } from './buildAgent';
 import type { FileApprovalStore } from './approvalStore';
 import type { SpendLog } from './passes/spendLog';
@@ -224,7 +225,8 @@ export async function buildRunnableAgent(
   deps: StudioRunDeps,
   wiring: RunWiring
 ): Promise<RunnableAgent> {
-  const spec = withWorkspaceRoots(savedSpec, deps.baseDir);
+  const connected = withConnectedIntegrations(withWorkspaceRoots(savedSpec, deps.baseDir), deps.secretsStore);
+  const spec = connected.spec;
   const approvals = scopedApprovalStore(deps.approvalStore, agentId);
   const autoApprover =
     deps.settings !== undefined && deps.spend !== undefined
@@ -280,6 +282,13 @@ export async function buildRunnableAgent(
   config.model = spec.model.slice(spec.model.indexOf('/') + 1);
   if (Object.keys(localTools).length > 0) {
     config.tools = mergeLocalTools(config.tools, localTools) as typeof config.tools;
+  }
+  const tools = config.tools as Record<string, ToolDescriptor> | undefined;
+  if (tools !== undefined && typeof tools === 'object' && !Array.isArray(tools)) {
+    if (connected.added > 0) guardConnectorWrites(tools, compiled.toolNamesByRef.slice(-connected.added));
+    const githubToken = deps.secretsStore?.getSecret('GITHUB_TOKEN');
+    if (githubToken !== undefined) addMissingTools(tools, githubAccountTools(githubToken));
+    withShellEnv(tools, spec, connectorShellEnv(deps.secretsStore));
   }
   config.onEvent = wiring.onEvent;
   if (wiring.captureContent !== undefined) config.captureContent = wiring.captureContent;
