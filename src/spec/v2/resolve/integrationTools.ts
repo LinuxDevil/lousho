@@ -11,6 +11,7 @@ import { createConfluenceTools } from '../../../tools/built-in/confluence';
 import { createEmailTool } from '../../../tools/built-in/email';
 import { createFigmaTools } from '../../../tools/built-in/figma';
 import { createGitHubTools } from '../../../tools/built-in/github';
+import { createGitHubAccountTools } from '../../../tools/built-in/githubAccount';
 import { createGoogleWorkspaceTools } from '../../../tools/built-in/google';
 import { createJenkinsTools } from '../../../tools/built-in/jenkins';
 import { createJiraTools } from '../../../tools/built-in/jira';
@@ -27,13 +28,15 @@ import { resolveSecretRef, resolveStringOrSecret, type SecretHost } from './secr
  */
 const INTEGRATION_BUILDERS: Record<IntegrationName, (credentials: Record<string, string>) => Record<string, ToolDescriptor>> = {
   github: (credentials) =>
-    createGitHubTools({
-      owner: credentials['owner'],
-      repo: credentials['repo'],
-      ...(credentials['appId'] !== undefined && credentials['privateKey'] !== undefined
-        ? { app: { appId: credentials['appId'], privateKey: credentials['privateKey'].replace(/\\n/g, '\n') } }
-        : { token: credentials['token'] }),
-    }).getAll(),
+    credentials['owner'] === undefined || credentials['repo'] === undefined
+      ? createGitHubAccountTools(credentials['token'])
+      : createGitHubTools({
+          owner: credentials['owner'],
+          repo: credentials['repo'],
+          ...(credentials['appId'] !== undefined && credentials['privateKey'] !== undefined
+            ? { app: { appId: credentials['appId'], privateKey: credentials['privateKey'].replace(/\\n/g, '\n') } }
+            : { token: credentials['token'] }),
+        }).getAll(),
   jira: (credentials) =>
     createJiraTools({
       baseUrl: credentials['baseUrl'],

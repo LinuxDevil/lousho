@@ -13,7 +13,7 @@ import { StatusBadge } from '../../ui/StatusBadge';
 import { Tabs } from '../../ui/Tabs';
 import './agentDetail.css';
 
-const EDIT_WITH_AI_DRAFT = 'Add the tools, connectors and MCP servers this agent needs to ';
+const EDIT_WITH_AI_DRAFT = 'Add the tools and connected accounts this agent needs for its job.';
 
 /** One facts-row entry: a decorative icon, its accessible label and the shown value. */
 export interface HeaderFact {

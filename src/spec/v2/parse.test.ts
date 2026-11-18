@@ -31,6 +31,13 @@ describe('parseAgentSpecV2', () => {
     expect(thrown({ ...base, tools: [{ integration: 'github', credentials: { owner: 'o', repo: 'r', appId: { env: 'A' } } }] }).message).toMatch(/credentials\.token, or credentials\.appId/);
   });
 
+  it('takes github without owner and repo as account-wide with a token, and owner and repo only together', () => {
+    const token = { secret: 'GITHUB_TOKEN' };
+    expect(parseAgentSpecV2({ ...base, tools: [{ integration: 'github', credentials: { token } }] }).tools).toHaveLength(1);
+    expect(thrown({ ...base, tools: [{ integration: 'github', credentials: { owner: 'o', token } }] }).message).toMatch(/owner and credentials\.repo together/);
+    expect(thrown({ ...base, tools: [{ integration: 'github', credentials: { appId: { env: 'A' }, privateKey: { env: 'K' } } }] }).message).toMatch(/account-wide tools, which need credentials\.token/);
+  });
+
   it('accepts the Confluence, Google, Jenkins and Figma integrations and Slack with a bot token', () => {
     const secret = (name: string) => ({ secret: name });
     const tools = [

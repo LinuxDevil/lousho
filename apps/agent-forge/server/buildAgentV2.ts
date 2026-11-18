@@ -49,7 +49,7 @@ import {
 } from 'lousho';
 import type { AgentFlow } from 'lousho/flows';
 import { studioAutoApprover } from './autoApproval';
-import { addMissingTools, connectorShellEnv, githubAccountTools, guardConnectorWrites, withConnectedIntegrations, withShellEnv } from './connectorRunTools';
+import { connectorShellEnv, guardConnectorWrites, withConnectedIntegrations, withShellEnv } from './connectorRunTools';
 import { asAgentFlow, LOCAL_TOOLS, resolveProviderForModel } from './buildAgent';
 import type { FileApprovalStore } from './approvalStore';
 import type { SpendLog } from './passes/spendLog';
@@ -286,8 +286,6 @@ export async function buildRunnableAgent(
   const tools = config.tools as Record<string, ToolDescriptor> | undefined;
   if (tools !== undefined && typeof tools === 'object' && !Array.isArray(tools)) {
     if (connected.added > 0) guardConnectorWrites(tools, compiled.toolNamesByRef.slice(-connected.added));
-    const githubToken = deps.secretsStore?.getSecret('GITHUB_TOKEN');
-    if (githubToken !== undefined) addMissingTools(tools, githubAccountTools(githubToken));
     withShellEnv(tools, spec, connectorShellEnv(deps.secretsStore));
   }
   config.onEvent = wiring.onEvent;

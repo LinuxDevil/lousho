@@ -2988,10 +2988,15 @@ tools:
 - `{ builtin }` names come from `listBuiltinTools()` (`current_date`,
   `day_name`, `http_request`, `web_fetch`, `todo`); `options` is checked
   against the tool's own schema.
-- `{ integration }` is one of `github`, `jira`, `slack` or `email`; its
-  secret credentials must be SecretRefs, never literal strings. `github`
-  takes `owner`, `repo` and either `token` or a GitHub App's `appId` and
-  `privateKey` (PEM; `\n` escapes are accepted).
+- `{ integration }` is one of `github`, `jira`, `confluence`, `slack`,
+  `email`, `google`, `jenkins` or `figma`; its secret credentials must be
+  SecretRefs, never literal strings. `github` with `owner` and `repo` gives
+  the tools for that one repository and takes either `token` or a GitHub
+  App's `appId` and `privateKey` (PEM; `\n` escapes are accepted). Without
+  `owner` and `repo` it takes `token` and gives account-wide tools:
+  `github_list_my_repositories`, `github_create_repository` and `github_api`
+  (any REST call; anything but `GET` asks for approval, as does creating a
+  repository).
 - Every ref may also carry `id` (its `tool:<id>` node id; the default is the
   builtin, registry or hosted name, or the file's basename), `approval`
   (`'always'` asks on every call, `'never'` never asks; `'auto'` is not
