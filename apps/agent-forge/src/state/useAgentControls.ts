@@ -158,7 +158,22 @@ export function useChatControls({
     setViewedChatSession(undefined);
   }, []);
 
-  return { sendChatMessage, startNewChat, viewChatSession, returnToLiveChat };
+  const continueChat = useCallback(
+    async (sessionId: string) => {
+      setChatActionError(undefined);
+      try {
+        const next = await runtimeClient.openChat(agentId, sessionId);
+        setViewedChatSession(undefined);
+        setChat({ sessionId: next.sessionId, messages: next.messages });
+        setChatSessions(await runtimeClient.listChats(agentId));
+      } catch (error) {
+        setChatActionError((error as Error).message);
+      }
+    },
+    [agentId]
+  );
+
+  return { sendChatMessage, startNewChat, viewChatSession, returnToLiveChat, continueChat };
 }
 
 /** The currently-active settings profile, fetched on mount and re-fetchable after Settings mutations. */

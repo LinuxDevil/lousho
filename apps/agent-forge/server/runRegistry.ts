@@ -232,6 +232,7 @@ export class NoActiveRunError extends Error {}
 export class SteerUnsupportedError extends Error {}
 /** A chat message was sent while the run was paused awaiting a tool approval decision - resolve that first via approve(). */
 export class ApprovalPendingError extends Error {}
+export class ChatNotFoundError extends Error {}
 
 /**
  * The settled run's full message list, with the assistant's final text
@@ -350,27 +351,16 @@ export class RunManager extends EventEmitter {
 
   private freshEntry(agentId: string): RunEntry {
     const now = new Date().toISOString();
-    // A brand-new (never-touched-this-process) agent id picks up any
-    // chat transcript persisted under its default session id (`agentId`
-    // itself, mirroring AgentExecutor's `sessionId = agentId`) from a
-    // previous server run, so chat history survives a restart the same way
-    // saved agent specs do.
-    //
-    // Known limitation: if the LAST thing that happened before the restart
-    // was a newChat() (which moves the live session to a fresh randomUUID()
-    // id), that new session id isn't recovered here - only the default
-    // `agentId`-named session is. A restart in that state resumes the
-    // agent's FIRST session rather than whichever one was live; every
-    // session is still fully intact and browsable via listChats()/
-    // loadChatSession(), just not auto-selected as "current". Left for
-    // A small "current session pointer" file would close this gap.
-    const persisted = this.chatStore.load(agentId, agentId);
+    // A restart reopens the agent's most recently active chat; its id is also the SDK session id its checkpoints live under.
+    const latest = this.chatStore.list(agentId)[0];
+    const persisted = latest ? this.chatStore.load(agentId, latest.sessionId) : null;
+    const chatSessionId = persisted?.sessionId ?? agentId;
     return {
       status: 'idle' as RunStatus,
-      sessionId: agentId,
+      sessionId: chatSessionId,
       updatedAt: now,
       messages: persisted?.messages ?? [],
-      chatSessionId: agentId,
+      chatSessionId,
       chatStartedAt: persisted?.startedAt ?? now,
     };
   }
@@ -417,6 +407,23 @@ export class RunManager extends EventEmitter {
    * session it started under; sendMessage() rejects new input meanwhile
    * regardless of which session id is "current").
    */
+  /** Makes a saved chat the agent's current one, so the next message continues it (its own SDK session). */
+  openChat(agentId: string, sessionId: string): ChatStatePayload {
+    const existing = this.entries.get(agentId);
+    if (existing?.status === 'running') throw new AlreadyRunningError(`Agent '${agentId}' is running - stop it before switching chats`);
+    if (existing?.status === 'paused') throw new ApprovalPendingError(`Agent '${agentId}' is paused awaiting an approval decision - resolve it before switching chats`);
+    const record = this.chatStore.load(agentId, sessionId);
+    if (!record) throw new ChatNotFoundError(`No chat '${sessionId}' for agent '${agentId}'`);
+    const next = this.setEntry(agentId, { messages: record.messages, chatSessionId: record.sessionId, chatStartedAt: record.startedAt, sessionId: record.sessionId });
+    this.emitChat(agentId, next);
+    return this.chatState(agentId);
+  }
+
+  /** The SDK session a run id names: an agent's current chat, else the id itself (a fork). */
+  private sessionFor(runId: string): string {
+    return this.entries.get(runId)?.chatSessionId ?? runId;
+  }
+
   newChat(agentId: string): ChatStatePayload {
     const now = new Date().toISOString();
     const next = this.setEntry(agentId, {
@@ -753,7 +760,7 @@ export class RunManager extends EventEmitter {
     existing: RunEntry | undefined,
     options: { runInput?: string; source?: 'manual' | 'trigger'; triggerId?: string; pins?: ToolPin[]; permissionMode?: 'bypassPermissions' }
   ): Promise<void> {
-    const sessionId = agentId;
+    const sessionId = this.chatState(agentId).sessionId;
     const debugSession = this.makeDebugSession(agentId);
     const exporter = this.makeTraceExporter(agentId);
     // The launch's own run id, filled in once host.start() resolves, so a
@@ -1327,7 +1334,7 @@ export class RunManager extends EventEmitter {
    */
   // fallow-ignore-next-line unused-class-member -- called as `workspaceOf(req).runs.history(...)` in app.ts route handlers
   async history(runId: string): Promise<RunHistoryStep[] | undefined> {
-    const entries = (await getCheckpointHistory(this.opts.checkpointStore, runId)) ?? [];
+    const entries = (await getCheckpointHistory(this.opts.checkpointStore, this.sessionFor(runId))) ?? [];
     const rows: CheckpointHistoryEntry[] = [];
     for (const entry of entries) {
       const last = rows.at(-1);
@@ -1348,7 +1355,7 @@ export class RunManager extends EventEmitter {
     const spec = this.entries.get(runId)?.lastSpec ?? (await this.opts.loadSpec(runId));
     if (!spec) throw new AgentNotFoundError(`No agent spec for run '${runId}'`);
     const { checkpointStore } = this.opts;
-    const fork = await AgentExecutor.fork({ sessionId: runId, fromStep, checkpointStore, patch });
+    const fork = await AgentExecutor.fork({ sessionId: this.sessionFor(runId), fromStep, checkpointStore, patch });
     // Not via launch()'s `spec` argument, which would save the fork as an agent.
     this.setEntry(fork.sessionId, { lastSpec: spec });
     await this.launch(fork.sessionId, []);
@@ -1358,7 +1365,7 @@ export class RunManager extends EventEmitter {
   /** `compareTrajectories()` of two runs' latest checkpoints, or undefined when either has none. */
   // fallow-ignore-next-line unused-class-member -- called as `workspaceOf(req).runs.compare(...)` in app.ts route handlers
   async compare(a: string, b: string): Promise<TrajectoryComparison | undefined> {
-    const [left, right] = await Promise.all([this.opts.checkpointStore.load(a), this.opts.checkpointStore.load(b)]);
+    const [left, right] = await Promise.all([this.opts.checkpointStore.load(this.sessionFor(a)), this.opts.checkpointStore.load(this.sessionFor(b))]);
     return left && right ? compareTrajectories(left, right) : undefined;
   }
 

@@ -206,6 +206,7 @@ export interface TraceSummaryPayload {
   traceId: string;
   name: string;
   agent?: string;
+  conversationId?: string;
   startTime: number;
   durationMs: number;
   status: 'ok' | 'error';
@@ -235,6 +236,10 @@ export interface RunListRow {
   source?: 'manual' | 'trigger';
   triggerId?: string;
   bypass?: boolean;
+  chatId?: string;
+  preview?: string;
+  turns?: number;
+  lastActivity?: number;
 }
 
 /** `GET /agents/:id/traces/:traceId`. */

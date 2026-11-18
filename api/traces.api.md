@@ -190,6 +190,7 @@ export interface TraceLine {
 // @public
 export interface TraceSummary {
     agent?: string;
+    conversationId?: string;
     costUsd?: number;
     // (undocumented)
     durationMs: number;

@@ -1,5 +1,9 @@
-import { useCallback, useMemo, useState } from 'react';
-import { CircleAlert, Info, Play, RefreshCw, Sparkles } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { CircleAlert, Info, MessageSquare, Play, RefreshCw, Sparkles } from 'lucide-react';
+
+import type { ChatSessionMeta } from '../../../../shared/wireTypes';
+import { groupRunsByChat, type ChatRunGroup } from '../../../../shared/chatRuns';
+import { runtimeClient } from '../../../runtime/runtimeClient';
 
 import { agentTabPath } from '../../agents/agentTabs';
 import { fmtCost, fmtDuration, fmtInt, fmtStarted } from '../../../observe/format';
@@ -109,6 +113,48 @@ const columnsFor = (
   },
 ];
 
+const chatColumns = (agentId: string): Column<ChatRunGroup<RunRow>>[] => [
+  {
+    key: 'status',
+    header: 'Status',
+    width: 92,
+    render: (g) => (g.status === 'empty' ? <span className="runs-id">no runs</span> : <StatusBadge status={statusKey(g.status)} size="sm" />),
+  },
+  {
+    key: 'chat',
+    header: 'Chat',
+    minWidth: 220,
+    render: (g) => (
+      <span className="runs-cell" title={g.preview || undefined}>
+        <span className="runs-name">{g.preview || '(no messages)'}</span>
+        <span className="runs-id">{shortId(g.chatId)}</span>
+      </span>
+    ),
+  },
+  { key: 'turns', header: 'Turns', align: 'right', width: 72, render: (g) => fmtInt(g.turns) },
+  { key: 'activity', header: 'Last activity', width: 132, render: (g) => fmtStarted(g.lastActivity) },
+  { key: 'tokens', header: 'Tokens', align: 'right', width: 88, hideBelow: 720, render: (g) => fmtInt(g.inputTokens + g.outputTokens) },
+  { key: 'cost', header: 'Cost', align: 'right', width: 72, hideBelow: 720, render: (g) => (g.costUsd === undefined ? '—' : fmtCost(g.costUsd)) },
+  {
+    key: 'open',
+    header: <span className="visually-hidden">Open chat</span>,
+    label: 'Open chat',
+    align: 'right',
+    width: 48,
+    render: (g) => (
+      <span className="dt-actions" onClick={(e) => e.stopPropagation()}>
+        <a
+          className="btn btn-ghost btn-sm btn-icon"
+          href={`#${agentTabPath(agentId, 'canvas')}?chat=${encodeURIComponent(g.chatId)}`}
+          title="Open this chat and continue it"
+          aria-label={`Open chat ${shortId(g.chatId)}`}
+        >
+          <MessageSquare size={14} strokeWidth={1.75} aria-hidden="true" />
+        </a>
+      </span>
+    ),
+  },
+];
 
 /**
  * The Runs tab (A11, PLAN §11): this agent's runs newest first in a
@@ -139,11 +185,30 @@ export function RunsTab(): JSX.Element {
     () => columnsFor(record.id, refresh, { canSuggest, pendingTraceId, onSuggestFix }),
     [record.id, refresh, canSuggest, pendingTraceId, onSuggestFix]
   );
+  const [chats, setChats] = useState<ChatSessionMeta[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    runtimeClient
+      .listChats(record.id)
+      .then((list) => {
+        if (!cancelled) setChats(list);
+      })
+      .catch(() => {
+        if (!cancelled) setChats([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [record.id, rows]);
+  const groups = useMemo(() => groupRunsByChat(record.id, chats, rows ?? []), [record.id, chats, rows]);
+  const [selectedChat, setSelectedChat] = useState<string | undefined>(undefined);
+  const selected = groups.find((g) => g.chatId === selectedChat) ?? groups[0];
+  const chatCols = useMemo(() => chatColumns(record.id), [record.id]);
 
   return (
     <div className="runs-tab">
       <div className="runs-toolbar">
-        <p className="runs-count">{`${rows?.length ?? 0} runs`}</p>
+        <p className="runs-count">{`${groups.length} chats · ${rows?.length ?? 0} runs`}</p>
         <button type="button" className="btn btn-sm" onClick={refresh}>
           <RefreshCw size={14} aria-hidden="true" />
           Refresh
@@ -169,29 +234,49 @@ export function RunsTab(): JSX.Element {
           />
         </Card>
       ) : (
-        <Card padding="none">
-          <DataTable
-            id="agent-runs"
-            columns={columns}
-            rows={rows ?? []}
-            rowKey={(r) => r.traceId}
-            onRowOpen={(r) => navigate(`/traces/${r.traceId}`)}
-            loading={loading}
-            density="compact"
-            empty={
-              <EmptyState
-                icon={Play}
-                title="No runs yet"
-                hint="Run it from the Test pane."
-                action={
-                  <a className="btn btn-primary btn-sm" href={testPaneHref}>
-                    Open the Test pane
-                  </a>
-                }
-              />
-            }
-          />
-        </Card>
+        <>
+          <Card padding="none">
+            <DataTable
+              id="agent-chats"
+              columns={chatCols}
+              rows={groups}
+              rowKey={(g) => g.chatId}
+              onRowOpen={(g) => setSelectedChat(g.chatId)}
+              loading={loading}
+              density="compact"
+              empty={
+                <EmptyState
+                  icon={Play}
+                  title="No runs yet"
+                  hint="Run it from the Test pane."
+                  action={
+                    <a className="btn btn-primary btn-sm" href={testPaneHref}>
+                      Open the Test pane
+                    </a>
+                  }
+                />
+              }
+            />
+          </Card>
+          {selected !== undefined && selected.traces.length > 0 && (
+            <section className="runs-chat-traces" aria-label="Runs in this chat">
+              <h3 className="runs-chat-title">
+                {`Runs in this chat · ${selected.preview || shortId(selected.chatId)}`}
+              </h3>
+              <Card padding="none">
+                <DataTable
+                  id="agent-runs"
+                  columns={columns}
+                  rows={selected.traces}
+                  rowKey={(r) => r.traceId}
+                  onRowOpen={(r) => navigate(`/traces/${r.traceId}`)}
+                  density="compact"
+                  empty={null}
+                />
+              </Card>
+            </section>
+          )}
+        </>
       )}
     </div>
   );

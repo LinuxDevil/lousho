@@ -809,6 +809,11 @@ class RuntimeClient implements AgentApi {
     });
   }
 
+  /** Makes a saved chat the agent's current one; the next message continues it. */
+  async openChat(agentId: string, sessionId: string): Promise<ChatStatePayload> {
+    return this.request(`/agents/${encodeURIComponent(agentId)}/chats/${encodeURIComponent(sessionId)}/open`, { method: 'POST' });
+  }
+
   /** The steps of run `runId`'s checkpoint history (a run id is the agent id, or a fork's id). */
   async runHistory(runId: string): Promise<RunHistoryPayload> {
     return this.request(`/runs/${encodeURIComponent(runId)}/history`, { method: 'GET' });
