@@ -24,7 +24,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error('Agent Forge crashed while rendering:', error, info.componentStack);
+    console.error('Lousho crashed while rendering:', error, info.componentStack);
   }
 
   private readonly retry = (): void => this.setState({ error: undefined });
@@ -39,7 +39,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             <AlertTriangle size={20} strokeWidth={1.75} />
           </span>
           <h1>Something went wrong</h1>
-          <p className="error-boundary-hint">Agent Forge hit an error it could not recover from. Try again, or reload the Studio.</p>
+          <p className="error-boundary-hint">Lousho hit an error it could not recover from. Try again, or reload the Studio.</p>
           <pre className="error-boundary-message">{error.message}</pre>
           <div className="error-boundary-actions">
             <button type="button" className="btn btn-primary" onClick={() => window.location.reload()}>

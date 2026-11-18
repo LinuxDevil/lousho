@@ -142,3 +142,41 @@ describe('rules naming an unknown tool', () => {
     }
   });
 });
+
+describe('bypassPermissions mode', () => {
+
+  it('runs calls that would ask, but keeps deny rules', async () => {
+    const shell = tool('shell', true);
+    const rm = tool('rm', true);
+    const audit: PermissionDecisionEntry[] = [];
+    const agent = createAgent({
+      provider: mockModel([{ toolCalls: [{ name: 'shell' }, { name: 'rm' }] }, 'done']),
+      tools: [shell.defined, rm.defined],
+      permissions: [deny('rm', 'No deleting')],
+      permissionMode: 'bypassPermissions',
+      onPermissionDecision: (entry) => audit.push(entry),
+    });
+
+    const result = await agent.send('go');
+
+    expect(result.finishReason).not.toBe('awaiting-approval');
+    expect(shell.calls).toHaveLength(1);
+    expect(rm.calls).toHaveLength(0);
+    expect(audit.map((e) => [e.toolName, e.decision, e.mode])).toEqual([
+      ['shell', 'allow', 'bypassPermissions'],
+      ['rm', 'deny', undefined],
+    ]);
+  });
+
+  it('still pauses on ask_question', async () => {
+    const agent = createAgent({
+      provider: mockModel([{ toolCalls: [{ name: 'ask_question', args: { question: 'Which city?' }, id: 'call_q' }] }, 'done']),
+      askQuestion: true,
+      permissionMode: 'bypassPermissions',
+    });
+
+    const result = await agent.send('go');
+
+    expect(result.finishReason).toBe('awaiting-approval');
+  });
+});

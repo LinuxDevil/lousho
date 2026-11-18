@@ -36,7 +36,7 @@ function LiveRunStatus({ labelled }: { labelled: boolean }) {
  */
 function DefaultedHeader({ title, status, ...rest }: ScreenHeaderProps) {
   const { path } = useRoute();
-  const label = NAV_ITEMS.find((item) => isActive(item, path))?.label ?? 'Agent Forge';
+  const label = NAV_ITEMS.find((item) => isActive(item, path))?.label ?? 'Lousho';
   return (
     <PageHeader
       title={title ?? label}

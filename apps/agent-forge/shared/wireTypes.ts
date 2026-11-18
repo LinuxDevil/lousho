@@ -118,6 +118,7 @@ export interface AgentRunStatusPayload {
    */
   source?: 'manual' | 'trigger';
   triggerId?: string;
+  bypass?: boolean;
   updatedAt: string;
 }
 
@@ -213,6 +214,27 @@ export interface TraceSummaryPayload {
   inputTokens: number;
   outputTokens: number;
   costUsd?: number;
+}
+
+/** One row of `GET /runs`: a live run, or a saved trace, of any agent in any workspace. */
+export interface RunListRow {
+  workspaceId: string;
+  workspaceName: string;
+  agentId: string;
+  agentName: string;
+  status: 'running' | 'paused' | 'ok' | 'error';
+  live: boolean;
+  traceId?: string;
+  startTime?: number;
+  durationMs?: number;
+  modelCalls?: number;
+  toolCalls?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+  source?: 'manual' | 'trigger';
+  triggerId?: string;
+  bypass?: boolean;
 }
 
 /** `GET /agents/:id/traces/:traceId`. */
@@ -332,6 +354,7 @@ export interface RunAgentRequest {
   input: string;
   spec?: unknown;
   pins?: ToolPin[];
+  permissionMode?: 'bypassPermissions';
 }
 
 /**

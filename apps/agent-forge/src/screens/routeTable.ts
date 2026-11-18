@@ -8,6 +8,7 @@ export type ScreenId =
   | 'observedAgent'
   | 'templates'
   | 'playground'
+  | 'runs'
   | 'traces'
   | 'trace'
   | 'threads'
@@ -54,6 +55,7 @@ export const ROUTES: readonly RouteEntry[] = [
   { pattern: '/w/:ws/inbox', screen: 'inbox', example: '/w/e2e-000000/inbox' }, // one workspace's inbox
   { pattern: '/templates', screen: 'templates', example: '/templates' },
   { pattern: '/playground', screen: 'playground', example: '/playground' },
+  { pattern: '/runs', screen: 'runs', example: '/runs' },
   { pattern: '/traces', screen: 'traces', example: '/traces' },
   { pattern: '/traces/:traceId', screen: 'trace', example: '/traces/e2e-trace' },
   { pattern: '/threads', screen: 'threads', example: '/threads' },

@@ -253,7 +253,7 @@ function applyPermissionMode(
 ): { gate: ToolGate; audit: Pick<PermissionDecisionEntry, 'decision' | 'reason' | 'mode'> } | undefined {
   if (mode === 'default') return undefined;
   const tool = ctx.toolRegistry && findExecutableTool(ctx.toolRegistry, toolCall.function.name);
-  const verdict = permissionModeVerdict(mode, tool, requiresApproval);
+  const verdict = permissionModeVerdict(mode, tool, requiresApproval, toolCall.function.name);
   if (!verdict) return undefined;
   if ('approve' in verdict) return { gate: { requiresApproval: false }, audit: { decision: 'allow', mode } };
   const { rejection } = deniedGate(toolCall, `${mode} mode`, verdict.deny);

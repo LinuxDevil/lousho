@@ -4,6 +4,7 @@ import { useRoute } from '../router/useRoute';
 import { ScreenHeader, ScreenHeaderHost } from '../shell/ScreenHeader';
 import { SettingsPanel } from '../components/SettingsPanel';
 import { TracesScreen } from './traces/TracesScreen';
+import { RunsScreen } from './runs/RunsScreen';
 import { ThreadsScreen } from './threads/ThreadsScreen';
 import { PromptsScreen } from './prompts/PromptsScreen';
 import { HubScreen } from './hub/HubScreen';
@@ -93,6 +94,7 @@ const SCREENS: Partial<Record<ScreenId, () => ReactNode>> = {
   codeAgent: CodeAgentRoute,
   inbox: InboxScreen,
   templates: TemplatesScreen,
+  runs: RunsScreen,
   traces: TracesScreen,
   trace: TraceRoute,
   monitoring: MonitoringScreen,

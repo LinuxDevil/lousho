@@ -29,7 +29,7 @@ export function useRunControls({ agentId, spec, runStatus, setLogs, setSpans, se
   const [debugMode, setDebugMode] = useState(false);
 
   const runAgent = useCallback(
-    async (input: string) => {
+    async (input: string, options: { bypass?: boolean } = {}) => {
       // Reset the log/span feed on every Run click so stale rows from a
       // previous run of this same agent don't linger alongside the new
       // ones (including a checkpoint-resumed run - a fresh feed for it is
@@ -37,7 +37,7 @@ export function useRunControls({ agentId, spec, runStatus, setLogs, setSpans, se
       setLogs([]);
       setSpans([]);
       setNodeStates({});
-      await runtimeClient.run(agentId, input, spec);
+      await runtimeClient.run(agentId, input, spec, undefined, options);
     },
     [agentId, spec]
   );

@@ -1,4 +1,4 @@
-import { Activity, Bot, Boxes, ClipboardCheck, FileText, FlaskConical, Inbox, LayoutTemplate, Library, LineChart, MessagesSquare, Settings, Sparkles, type LucideIcon } from 'lucide-react';
+import { Activity, Bot, Boxes, ClipboardCheck, FileText, FlaskConical, Inbox, LayoutTemplate, Library, LineChart, ListChecks, MessagesSquare, Settings, Sparkles, type LucideIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { openAuthor } from '../author/authorEntry';
 import { useInboxCount } from '../state/useInboxCount';
@@ -24,6 +24,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'templates', label: 'Templates', href: '#/templates', section: 'Build', icon: LayoutTemplate },
   { id: 'playground', label: 'Playground', href: '#/playground', section: 'Build', icon: FlaskConical },
   { id: 'workspaces', label: 'Workspaces', href: '#/workspaces', section: 'Build', icon: Boxes },
+  { id: 'runs', label: 'Runs', href: '#/runs', section: 'Observe', icon: ListChecks },
   { id: 'traces', label: 'Traces', href: '#/traces', section: 'Observe', icon: Activity },
   { id: 'threads', label: 'Threads', href: '#/threads', section: 'Observe', icon: MessagesSquare },
   { id: 'monitoring', label: 'Monitoring', href: '#/monitoring', section: 'Observe', icon: LineChart },

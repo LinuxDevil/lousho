@@ -69,7 +69,7 @@ function NarrowBar({ navOpen, onToggle }: { navOpen: boolean; onToggle: () => vo
         <Menu size={16} strokeWidth={1.75} aria-hidden="true" />
       </button>
       <LogoMark />
-      <span className="nav-bar-title">Agent Forge</span>
+      <span className="nav-bar-title">Lousho</span>
     </div>
   );
 }

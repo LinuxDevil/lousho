@@ -26,6 +26,7 @@ export function RunStatus({ showTraceLink = true }: { showTraceLink?: boolean })
   return (
     <>
       <StatusPill status={runStatus?.status ?? 'idle'} live />
+      {runStatus?.bypass === true && <StatusPill status="bypass" title="This run skips approvals" />}
       {traceId && (
         <a
           className="run-trace-link"

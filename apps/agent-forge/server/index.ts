@@ -456,7 +456,7 @@ if (isMainModule) {
       } else {
         console.log(`[lousho studio] Collector: not reachable (${collector.error ?? 'unknown'})`);
       }
-      console.log(`[lousho studio] Agent Forge: ${handle.url}`);
+      console.log(`[lousho studio] Lousho: ${handle.url}`);
       shutdownOnSignals(handle);
     })
     .catch((error) => {

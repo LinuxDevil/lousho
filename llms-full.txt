@@ -2910,7 +2910,7 @@ with `LOUSHO_SPEC_UNSUPPORTED` naming the field.
 | [`promptCaching`](https://github.com/LinuxDevil/lousho/blob/main/docs/models-and-cost.md#prompt-caching) | `'auto' \| false` | Lets the provider cache the stable start of the prompt. |
 | [`toolSearch`](https://github.com/LinuxDevil/lousho/blob/main/docs/tool-search.md) | `false \| object` | Hides most tools until the model searches for them. |
 | [`codeMode`](https://github.com/LinuxDevil/lousho/blob/main/docs/code-mode.md) | `boolean \| object` | Lets the model write a short program that calls several tools at once. |
-| [`permissionMode`](https://github.com/LinuxDevil/lousho/blob/main/docs/permission-modes.md) | `'default' \| 'plan' \| 'acceptEdits' \| 'dontAsk'` | Default permission mode for the agent's tool calls. |
+| [`permissionMode`](https://github.com/LinuxDevil/lousho/blob/main/docs/permission-modes.md) | `'default' \| 'plan' \| 'acceptEdits' \| 'dontAsk' \| 'bypassPermissions'` | Default permission mode for the agent's tool calls. |
 | [`approvalTtlMs`](https://github.com/LinuxDevil/lousho/blob/main/docs/approvals.md) | `number` | How long a pending approval stays open, in milliseconds. |
 | [`askQuestion`](https://github.com/LinuxDevil/lousho/blob/main/docs/approvals.md#asking-the-user-a-question) | `boolean` | Lets the agent pause and ask the user a question. |
 | [`mcpServers`](https://github.com/LinuxDevil/lousho/blob/main/docs/mcp.md) | `Record<string, McpServerSpec>` | MCP servers whose tools the agent can call, keyed by a short name. |
@@ -18834,6 +18834,7 @@ guardrails and the tool's own `needsApproval` decided.
 | `'plan'` | Normal gate (they may still ask) | Denied | Denied | Denied |
 | `'acceptEdits'` | Normal gate | Run without asking | Pause for approval | Run |
 | `'dontAsk'` | Normal gate, but a call that would ask is denied | Denied when they would ask | Denied | Run |
+| `'bypassPermissions'` | Run without asking | Run without asking | Run without asking | Run |
 
 - **`plan`**: a call to a tool that is not read-only is refused with
   `kind: 'denied'` and the reason `The agent is in plan mode: it may read but
@@ -18849,6 +18850,12 @@ guardrails and the tool's own `needsApproval` decided.
   in dontAsk mode: calls that need approval are refused.` Calls an `allow` rule
   approved and calls that need no approval run. Nothing pauses, so an `approve`
   callback is never called.
+- **`bypassPermissions`**: a call that would pause for approval - an `ask`
+  rule or `needsApproval` - runs without asking. A `deny` rule, a guardrail
+  block, a tool's own `'deny'` and an enforced ask (an install receipt's
+  `exec` / `needsApproval` item) still apply, and `ask_question` still pauses
+  for the answer. Use it only where the agent's environment is the safety
+  boundary: nothing else stops a call.
 
 ### Which tools are read-only
 

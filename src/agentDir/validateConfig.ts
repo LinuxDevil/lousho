@@ -122,7 +122,7 @@ export interface AgentDirConfig {
   toolConcurrency?: ToolConcurrency;
   /** Append the nearest AGENTS.md / CLAUDE.md, see `createAgent`'s `projectInstructions`. */
   projectInstructions?: boolean | { cwd?: string; files?: readonly string[] };
-  /** `createAgent`'s `permissionMode` ('default', 'plan', 'acceptEdits' or 'dontAsk'; a function only in a code config). */
+  /** `createAgent`'s `permissionMode` ('default', 'plan', 'acceptEdits', 'dontAsk' or 'bypassPermissions'; a function only in a code config). */
   permissionMode?: PermissionMode | (() => PermissionMode);
   /** `createAgent`'s `permissions`, in the serializable {@link AgentDirPermissionRule} form. */
   permissions?: readonly AgentDirPermissionRule[];
@@ -247,7 +247,7 @@ function assertProjectInstructions(file: string, value: unknown): void {
   }
 }
 
-const PERMISSION_MODE_NAMES: ReadonlySet<string> = new Set<PermissionMode>(['default', 'plan', 'acceptEdits', 'dontAsk']);
+const PERMISSION_MODE_NAMES: ReadonlySet<string> = new Set<PermissionMode>(['default', 'plan', 'acceptEdits', 'dontAsk', 'bypassPermissions']);
 const PERMISSION_ACTIONS: ReadonlySet<string> = new Set<PermissionAction>(['allow', 'deny', 'ask']);
 const RULE_KEYS = new Set(['tool', 'when', 'action', 'reason', 'ttlMs']);
 /** The operand kind each `when` operator takes; {@link WHEN_OPERATORS} is derived from it. */
@@ -280,7 +280,7 @@ function assertPermissionMode(file: string, value: unknown): void {
   if (value === undefined) return;
   if (typeof value === 'function') return;
   if (typeof value === 'string' && PERMISSION_MODE_NAMES.has(value)) return;
-  fail(file, `'permissionMode' must be 'default', 'plan', 'acceptEdits' or 'dontAsk' (a code config may set a function), got ${describeValue(value)}.`);
+  fail(file, `'permissionMode' must be 'default', 'plan', 'acceptEdits', 'dontAsk' or 'bypassPermissions' (a code config may set a function), got ${describeValue(value)}.`);
 }
 
 /** The `tool` matcher of a config permission rule: a name, a list of names, or (code config) a RegExp. */
