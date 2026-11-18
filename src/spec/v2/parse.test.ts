@@ -31,6 +31,20 @@ describe('parseAgentSpecV2', () => {
     expect(thrown({ ...base, tools: [{ integration: 'github', credentials: { owner: 'o', repo: 'r', appId: { env: 'A' } } }] }).message).toMatch(/credentials\.token, or credentials\.appId/);
   });
 
+  it('accepts the Confluence, Google, Jenkins and Figma integrations and Slack with a bot token', () => {
+    const secret = (name: string) => ({ secret: name });
+    const tools = [
+      { integration: 'confluence', credentials: { baseUrl: 'https://x.atlassian.net', email: 'a@b.c', apiToken: secret('JIRA_API_TOKEN') } },
+      { integration: 'google', credentials: { clientId: 'id', clientSecret: secret('GCS'), refreshToken: secret('GRT') } },
+      { integration: 'jenkins', credentials: { baseUrl: 'https://ci', username: 'me', apiToken: secret('JT') } },
+      { integration: 'figma', credentials: { token: secret('FIGMA_TOKEN') } },
+      { integration: 'slack', credentials: { botToken: secret('SLACK_BOT_TOKEN') } },
+    ];
+    expect(parseAgentSpecV2({ ...base, tools }).tools).toHaveLength(5);
+    expect(thrown({ ...base, tools: [{ integration: 'slack', credentials: {} }] }).message).toMatch(/webhookUrl, credentials\.botToken, or both/);
+    expect(thrown({ ...base, tools: [{ integration: 'figma', credentials: { token: 'figd_literal' } }] }).message).toMatch(/credentials\.token is a secret/);
+  });
+
   it('accepts instructions as a file reference', () => {
     const spec = { ...base, instructions: { file: 'prompts/main.md' } };
     expect(parseAgentSpecV2(spec)).toEqual(spec);

@@ -226,3 +226,20 @@ th[aria-sort="descending"] .dt-sort {
     transition: none;
   }
 }
+/* `dt-hover` cell content shows only on row hover or focus (pointer devices only). */
+@media (hover: hover) {
+  .data-table tbody tr:not(:hover):not(:focus-within) .dt-hover {
+    opacity: 0;
+  }
+}
+.dt-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+.dt-actions .btn-icon {
+  width: 26px;
+  padding: 0;
+  justify-content: center;
+}

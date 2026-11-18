@@ -96,7 +96,7 @@ function appWith(
     suggestions: new SuggestionStore(repo),
     host: {} as AgentHost,
     hostSelector: {} as WorkspaceHostSelector,
-    runs: {} as RunManager,
+    runs: { on: () => undefined, off: () => undefined } as unknown as RunManager,
     chatTriggers: new TriggerRegistry(),
     events: new StudioEventBus(),
     passes: new PassRunner({ baseDir }),

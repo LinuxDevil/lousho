@@ -104,12 +104,12 @@ export function RunsScreen(): JSX.Element {
         header: 'Agent',
         minWidth: 200,
         render: (r) => (
-          <>
+          <span className="runs-cell">
             <a className="runs-name" href={agentHref(r)} onClick={(e) => e.stopPropagation()}>
               {r.agentName}
             </a>
             <span className="runs-id">{r.workspaceName}</span>
-          </>
+          </span>
         ),
       },
       {
@@ -132,25 +132,20 @@ export function RunsScreen(): JSX.Element {
       { key: 'cost', header: 'Cost', align: 'right', width: 88, hideBelow: 800, render: (r) => (r.costUsd !== undefined ? fmtCost(r.costUsd) : '—') },
       {
         key: 'actions',
-        header: '',
-        width: 200,
+        header: <span className="visually-hidden">Actions</span>,
+        label: 'Actions',
+        align: 'right',
+        width: 56,
         render: (r) => (
-          <span className="runs-actions" onClick={(e) => e.stopPropagation()}>
+          <span className={r.live ? 'dt-actions' : 'dt-actions dt-hover'} onClick={(e) => e.stopPropagation()}>
             {r.live ? (
-              <button type="button" className="btn btn-sm btn-danger" disabled={busy === rowKey(r)} onClick={() => void act(r, 'stop')}>
+              <button type="button" className="btn btn-ghost btn-sm btn-icon btn-danger-text" disabled={busy === rowKey(r)} onClick={() => void act(r, 'stop')} title="Stop" aria-label={`Stop ${r.agentName}`}>
                 <Square size={14} aria-hidden="true" />
-                Stop
               </button>
             ) : (
-              <button type="button" className="btn btn-sm" disabled={busy === rowKey(r)} onClick={() => void act(r, 'run')} aria-label={`Run ${r.agentName} again`}>
+              <button type="button" className="btn btn-ghost btn-sm btn-icon" disabled={busy === rowKey(r)} onClick={() => void act(r, 'run')} title="Run again" aria-label={`Run ${r.agentName} again`}>
                 <Play size={14} aria-hidden="true" />
-                Run again
               </button>
-            )}
-            {r.traceId !== undefined && (
-              <a className="btn btn-ghost btn-sm" href={`#/traces/${encodeURIComponent(r.traceId)}`} aria-label={`Open trace ${r.traceId}`}>
-                Open trace
-              </a>
             )}
           </span>
         ),

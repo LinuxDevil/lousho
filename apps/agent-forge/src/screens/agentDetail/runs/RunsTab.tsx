@@ -19,6 +19,8 @@ import { useAgentRuns } from './useAgentRuns';
 import './runs.css';
 
 /** The Runs tab's columns, in order (PLAN §11: status, run, started, duration, tokens, cost, rating, open). */
+const shortId = (id: string) => id.slice(0, 8);
+
 const columnsFor = (
   agentId: string,
   onRated: () => void,
@@ -27,26 +29,26 @@ const columnsFor = (
   {
     key: 'status',
     header: 'Status',
-    width: 96,
+    width: 92,
     render: (r) => <StatusBadge status={statusKey(r.status)} size="sm" />,
   },
   {
     key: 'name',
     header: 'Run',
-    minWidth: 220,
+    minWidth: 200,
     render: (r) => (
-      <>
+      <span className="runs-cell" title={r.traceId}>
         <span className="runs-name">{r.name}</span>
-        <span className="runs-id">{r.traceId}</span>
-      </>
+        <span className="runs-id">{shortId(r.traceId)}</span>
+      </span>
     ),
   },
-  { key: 'start', header: 'Started', width: 140, render: (r) => fmtStarted(r.startTime) },
+  { key: 'start', header: 'Started', width: 132, render: (r) => fmtStarted(r.startTime) },
   {
     key: 'duration',
     header: 'Duration',
     align: 'right',
-    width: 96,
+    width: 88,
     hideBelow: 640,
     render: (r) => fmtDuration(r.durationMs),
   },
@@ -54,7 +56,7 @@ const columnsFor = (
     key: 'tokens',
     header: 'Tokens',
     align: 'right',
-    width: 96,
+    width: 88,
     hideBelow: 720,
     render: (r) => fmtInt(r.inputTokens + r.outputTokens),
   },
@@ -62,7 +64,7 @@ const columnsFor = (
     key: 'cost',
     header: 'Cost',
     align: 'right',
-    width: 88,
+    width: 72,
     hideBelow: 720,
     render: (r) => (r.costUsd == null ? '—' : fmtCost(r.costUsd)),
   },
@@ -70,41 +72,38 @@ const columnsFor = (
     key: 'rating',
     header: 'Rating',
     align: 'right',
-    width: 150,
+    width: 168,
+    hideBelow: 900,
     render: (r) => (
-      <RatingControl agentId={agentId} traceId={r.traceId} value={r.rating} size="sm" onRated={onRated} />
+      <span className={r.rating == null ? 'dt-hover' : undefined}>
+        <RatingControl agentId={agentId} traceId={r.traceId} value={r.rating} size="sm" onRated={onRated} />
+      </span>
     ),
   },
   {
-    key: 'open',
-    header: <span className="visually-hidden">Open</span>,
+    key: 'actions',
+    header: <span className="visually-hidden">Actions</span>,
+    label: 'Actions',
     align: 'right',
-    width: 200,
+    width: 48,
     render: (r) => (
-      <span className="runs-actions">
+      <span className="dt-actions dt-hover">
         <button
           type="button"
-          className="btn btn-secondary btn-sm"
+          className="btn btn-ghost btn-sm btn-icon"
           disabled={!suggest.canSuggest || suggest.pendingTraceId !== null}
           title={
             !suggest.canSuggest
               ? 'Suggestions need inline instructions'
               : suggest.pendingTraceId !== null
                 ? 'Suggesting…'
-                : undefined
+                : 'Suggest a fix'
           }
+          aria-label={`Suggest a fix for run ${shortId(r.traceId)}`}
           onClick={() => suggest.onSuggestFix(r.traceId)}
         >
           <Sparkles size={14} strokeWidth={1.75} aria-hidden="true" />
-          Suggest a fix
         </button>
-        <a
-          className="btn btn-ghost btn-sm"
-          href={`#/traces/${encodeURIComponent(r.traceId)}`}
-          aria-label={`Open trace ${r.traceId}`}
-        >
-          Open trace
-        </a>
       </span>
     ),
   },

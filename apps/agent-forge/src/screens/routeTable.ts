@@ -21,7 +21,8 @@ export type ScreenId =
   | 'hub'
   | 'workspaces'
   | 'workspace'
-  | 'settings';
+  | 'settings'
+  | 'profile';
 
 /** One hash route: its pattern, the screen it shows, and a concrete path that exercises it. */
 export interface RouteEntry {
@@ -76,4 +77,6 @@ export const ROUTES: readonly RouteEntry[] = [
   { pattern: '/workspaces/:id', screen: 'workspace', example: '/workspaces/e2e-workspace' },
   { pattern: '/workspaces/:id/:section', screen: 'workspace', example: '/workspaces/e2e-workspace/pages' },
   { pattern: '/settings', screen: 'settings', example: '/settings' },
+  { pattern: '/profile', screen: 'profile', example: '/profile' },
+  { pattern: '/profile/:tab', screen: 'profile', example: '/profile/connectors' },
 ];

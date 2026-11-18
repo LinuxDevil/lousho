@@ -1,4 +1,4 @@
-import { Activity, Bot, Boxes, ClipboardCheck, FileText, FlaskConical, Inbox, LayoutTemplate, Library, LineChart, ListChecks, MessagesSquare, Settings, Sparkles, type LucideIcon } from 'lucide-react';
+import { Activity, Bot, Boxes, ClipboardCheck, FileText, FlaskConical, Inbox, LayoutTemplate, Library, LineChart, ListChecks, MessagesSquare, Settings, Sparkles, UserRound, type LucideIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { openAuthor } from '../author/authorEntry';
 import { useInboxCount } from '../state/useInboxCount';
@@ -31,6 +31,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'evals', label: 'Evaluations', href: '#/evals/scores', section: 'Evaluate', icon: ClipboardCheck },
   { id: 'prompts', label: 'Prompts', href: '#/prompts', section: 'Assets', icon: FileText },
   { id: 'hub', label: 'Context Hub', href: '#/hub', section: 'Assets', icon: Library },
+  { id: 'profile', label: 'Profile', href: '#/profile', section: 'Footer', icon: UserRound },
   { id: 'settings', label: 'Settings', href: '#/settings', section: 'Footer', icon: Settings },
 ];
 

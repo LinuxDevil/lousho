@@ -2,11 +2,10 @@
 .runs-toolbar { display: flex; align-items: center; gap: var(--space-2); }
 .runs-count { margin: 0 auto 0 0; font-size: 13px; color: var(--text-muted); }
 .runs-note { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; color: var(--text-muted); }
-.runs-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-.runs-id { display: block; font: 11px var(--font-mono); color: var(--text-faint); }
-.runs-rating { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; color: var(--text); }
-.runs-rating svg { color: var(--warning); fill: currentColor; }
-.runs-rating-low { color: var(--danger); }
+.runs-cell { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.runs-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--text); }
+a.runs-name { text-decoration: none; }
+a.runs-name:hover { text-decoration: underline; }
+.runs-id { flex: none; font: 11px var(--font-mono); font-weight: 400; color: var(--text-faint); }
 .runs-tab a.btn { text-decoration: none; }
-.runs-actions { display: inline-flex; align-items: center; gap: var(--space-2); }
 .runs-status { display: inline-flex; align-items: center; gap: var(--space-1); }

@@ -6,6 +6,19 @@
  * so the two can evolve together without every component knowing the HTTP
  * details.
  */
+import type {
+  AutomationKey,
+  ConnectResponse,
+  ConnectorId,
+  ConnectorStatus,
+  CreateAutomationKeyRequest,
+  CreateInboundRequest,
+  CreatedAutomationKey,
+  CreatedInbound,
+  InboundDelivery,
+  InboundEndpoint,
+  NotificationSettings,
+} from '../../shared/profileWire';
 import type { AgentSpecV2 } from 'lousho';
 import type {
   AddWorkspaceRequest,
@@ -876,6 +889,66 @@ class RuntimeClient implements AgentApi {
   /** Removes the named secret, if any. */
   async removeSecret(name: string): Promise<void> {
     await this.request(`/settings/secrets/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  }
+
+  async listConnectors(): Promise<ConnectorStatus[]> {
+    return this.request('/settings/connectors', { method: 'GET' });
+  }
+
+  async connectConnector(id: ConnectorId, values: Record<string, string>): Promise<ConnectResponse> {
+    return this.request(`/settings/connectors/${id}`, { method: 'PUT', body: JSON.stringify({ values }) });
+  }
+
+  async disconnectConnector(id: ConnectorId): Promise<ConnectorStatus> {
+    return this.request(`/settings/connectors/${id}`, { method: 'DELETE' });
+  }
+
+  async listAutomationKeys(): Promise<AutomationKey[]> {
+    return this.request('/settings/automation-keys', { method: 'GET' });
+  }
+
+  async createAutomationKey(request: CreateAutomationKeyRequest): Promise<CreatedAutomationKey> {
+    return this.request('/settings/automation-keys', { method: 'POST', body: JSON.stringify(request) });
+  }
+
+  async rotateAutomationKey(id: string): Promise<CreatedAutomationKey> {
+    return this.request(`/settings/automation-keys/${encodeURIComponent(id)}/rotate`, { method: 'POST' });
+  }
+
+  async removeAutomationKey(id: string): Promise<void> {
+    await this.request(`/settings/automation-keys/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  async listInbound(): Promise<InboundEndpoint[]> {
+    return this.request('/settings/inbound', { method: 'GET' });
+  }
+
+  async createInbound(request: CreateInboundRequest): Promise<CreatedInbound> {
+    return this.request('/settings/inbound', { method: 'POST', body: JSON.stringify(request) });
+  }
+
+  async rotateInbound(id: string): Promise<CreatedInbound> {
+    return this.request(`/settings/inbound/${encodeURIComponent(id)}/rotate`, { method: 'POST' });
+  }
+
+  async removeInbound(id: string): Promise<void> {
+    await this.request(`/settings/inbound/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  async listInboundDeliveries(id: string): Promise<InboundDelivery[]> {
+    return this.request(`/settings/inbound/${encodeURIComponent(id)}/deliveries`, { method: 'GET' });
+  }
+
+  async getNotifications(): Promise<NotificationSettings> {
+    return this.request('/settings/notifications', { method: 'GET' });
+  }
+
+  async saveNotifications(settings: NotificationSettings): Promise<NotificationSettings> {
+    return this.request('/settings/notifications', { method: 'PUT', body: JSON.stringify(settings) });
+  }
+
+  async testNotifications(): Promise<{ slack?: string; email?: string }> {
+    return this.request('/settings/notifications/test', { method: 'POST' });
   }
 
   /** Every settings profile + which one is active. */
