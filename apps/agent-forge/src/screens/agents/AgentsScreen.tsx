@@ -82,7 +82,7 @@ export function AgentsScreen() {
   return (
     <div className={`app${showBuilderTabs ? ' app-builder-tabs' : ''}`}>
       {showBuilderTabs && <BuilderTabs />}
-      <h1 className="visually-hidden">Agent Forge</h1>
+      <h1 className="visually-hidden">Lousho</h1>
       <Topbar narrow={panels.narrow} openPanel={panels.open} onTogglePanel={panels.toggle} readOnlyTitle={readOnlyTitle} />
       <div className={shellClass}>
         <LeftRail />

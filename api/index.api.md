@@ -5453,7 +5453,7 @@ export interface PermissionDecisionEvent extends AgentEventBase<'permission.deci
 }
 
 // @public
-export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'dontAsk';
+export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'dontAsk' | 'bypassPermissions';
 
 // @public
 export interface PermissionModeChange {

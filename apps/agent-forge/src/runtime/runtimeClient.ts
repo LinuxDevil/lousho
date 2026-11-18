@@ -79,6 +79,7 @@ import type {
   LegacyImportResult,
   LegacyImportStatus,
   TraceSummaryPayload,
+  RunListRow,
   HostStatus,
   VersionListItem,
   VersionRecord,
@@ -626,15 +627,30 @@ class RuntimeClient implements AgentApi {
     await this.request(`/workspaces/${encodeURIComponent(ws)}/legacy-import/skip`, { method: 'POST' });
   }
 
+  async listRuns(limit = 200): Promise<RunListRow[]> {
+    const body = await this.request<{ runs: RunListRow[] }>(`/runs?limit=${limit}`, { method: 'GET' });
+    return body.runs;
+  }
+
+  async runSaved(agentId: string, input: string): Promise<AgentRunStatusPayload> {
+    return this.request(`/agents/${encodeURIComponent(agentId)}/run`, { method: 'POST', body: JSON.stringify({ input }) });
+  }
+
   async run(
     agentId: string,
     input: string,
     spec: AgentSpecV2,
-    pins?: ToolPin[]
+    pins?: ToolPin[],
+    options: { bypass?: boolean } = {}
   ): Promise<AgentRunStatusPayload> {
     return this.request(`/agents/${encodeURIComponent(agentId)}/run`, {
       method: 'POST',
-      body: JSON.stringify({ input, spec, ...(pins !== undefined && pins.length > 0 ? { pins } : {}) }),
+      body: JSON.stringify({
+        input,
+        spec,
+        ...(pins !== undefined && pins.length > 0 ? { pins } : {}),
+        ...(options.bypass === true ? { permissionMode: 'bypassPermissions' } : {}),
+      }),
     });
   }
 

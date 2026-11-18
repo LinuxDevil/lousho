@@ -174,6 +174,7 @@ import { SpendLog } from './passes/spendLog';
 import { AlertStore } from './inbox/alertStore';
 import { InboxService } from './inbox/inboxService';
 import { registerInboxRoutes } from './inbox/inboxRoutes';
+import { registerRunsListRoute } from './runsList';
 import { registerWebhookRoutes } from './triggers/webhookRoute';
 import { createTriggerRuntime } from './triggers/runtime';
 import { attachChainTriggers } from './triggers/chainTriggers';
@@ -467,9 +468,13 @@ function registerRunRoutes(app: Express): void {
   app.post(
     '/agents/:id/run',
     asyncRoute(async (req, res) => {
-      const { spec, input, pins } = req.body as Partial<RunAgentRequest>;
+      const { spec, input, pins, permissionMode } = req.body as Partial<RunAgentRequest>;
       if (typeof input !== 'string' || !input) {
         res.status(400).json({ error: "Request body must include a non-empty 'input' string" });
+        return;
+      }
+      if (permissionMode !== undefined && permissionMode !== 'bypassPermissions') {
+        sendError(res, 400, "'permissionMode' may only be 'bypassPermissions'", 'LOUSHO_RUN_OPTIONS_INVALID');
         return;
       }
       const pinsError = pinsProblem(pins);
@@ -485,7 +490,7 @@ function registerRunRoutes(app: Express): void {
           return;
         }
         const runs = ws.runs;
-        await runs.run(paramId(req), input, resolved.spec, { pins });
+        await runs.run(paramId(req), input, resolved.spec, { pins, permissionMode });
         res.status(202).json(runs.status(paramId(req)));
       } catch (error) {
         respondWithMappedError(res, error, [
@@ -1596,6 +1601,7 @@ export function createApp(options: CreateAppOptions): Express {
     warm: options.warm ?? (() => [workspace]),
     alerts,
   });
+  registerRunsListRoute(app, { registry: workspaceRegistry, warm: options.warm ?? (() => [workspace]) });
   // Webhook triggers (triggers/webhookRoute.ts, R08a): `POST
   // /hooks/:agentId/<path>` - the trigger host and repo come from
   // workspaceOf(req); named-secret resolution is Studio-global.

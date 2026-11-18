@@ -15,6 +15,7 @@ import type { ApprovalCheckContext, ApprovalOutcome, ToolDescriptor } from '../t
 import type { HostedTool } from '../tools/hosted';
 import { SDKError } from '../utils/sdkError';
 import { ConfigurationError } from './errors';
+import { ASK_QUESTION_TOOL_NAME } from './ApprovalGate';
 import type { Principal } from '../auth/types';
 import { closestMatch } from '../utils/closestMatch';
 
@@ -100,7 +101,7 @@ export interface PermissionDecisionEntry {
   /**
    * The permission mode, set when it changed the call's outcome - `'plan'`
    * or `'dontAsk'` denied it (`decision: 'deny'`), `'acceptEdits'` ran a file
-   * edit without asking (`decision: 'allow'`).
+   * edit or `'bypassPermissions'` ran a call without asking (`decision: 'allow'`).
    */
   mode?: PermissionMode;
   /** When the decision was made, as an ISO-8601 string. */
@@ -111,9 +112,10 @@ export interface PermissionDecisionEntry {
  * A named preset over the permission rules and `needsApproval`
  * (docs/permission-modes.md). `'default'` changes nothing; `'plan'` refuses
  * every tool that is not read-only; `'acceptEdits'` runs file edits that would
- * ask; `'dontAsk'` refuses every call that would ask.
+ * ask; `'dontAsk'` refuses every call that would ask; `'bypassPermissions'`
+ * runs every call that would ask, except enforced asks and `ask_question`.
  */
-export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'dontAsk';
+export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'dontAsk' | 'bypassPermissions';
 
 /** A session's permission mode was switched (`session.setPermissionMode()`); see `onPermissionModeChange`. */
 export interface PermissionModeChange {
@@ -166,13 +168,13 @@ export interface PermissionOptions {
   onPermissionModeChange?: (change: PermissionModeChange) => void;
 }
 
-const PERMISSION_MODES: ReadonlySet<string> = new Set<PermissionMode>(['default', 'plan', 'acceptEdits', 'dontAsk']);
+const PERMISSION_MODES: ReadonlySet<string> = new Set<PermissionMode>(['default', 'plan', 'acceptEdits', 'dontAsk', 'bypassPermissions']);
 
 /** Throws `LOUSHO_CONFIG_INVALID` unless `mode` is a {@link PermissionMode}. */
 export function assertPermissionMode(mode: unknown, where: string): asserts mode is PermissionMode {
   if (typeof mode !== 'string' || !PERMISSION_MODES.has(mode)) {
     throw new SDKError(
-      `${where}: unknown permission mode ${JSON.stringify(mode)}. Use 'default', 'plan', 'acceptEdits' or 'dontAsk'.`,
+      `${where}: unknown permission mode ${JSON.stringify(mode)}. Use 'default', 'plan', 'acceptEdits', 'dontAsk' or 'bypassPermissions'.`,
       'LOUSHO_CONFIG_INVALID'
     );
   }
@@ -259,12 +261,14 @@ function isReadOnlyTool(tool: ToolDescriptor): boolean {
 export function permissionModeVerdict(
   mode: PermissionMode,
   tool: ToolDescriptor | undefined,
-  requiresApproval: boolean
+  requiresApproval: boolean,
+  toolName?: string
 ): { deny: string } | { approve: true } | undefined {
   if (mode === 'plan' && tool && !isReadOnlyTool(tool)) return { deny: PLAN_MODE_REASON };
   if (!requiresApproval) return undefined;
   if (mode === 'dontAsk') return { deny: DONT_ASK_REASON };
   if (mode === 'acceptEdits' && tool?.metadata?.editsFiles === true) return { approve: true };
+  if (mode === 'bypassPermissions' && toolName !== ASK_QUESTION_TOOL_NAME) return { approve: true };
   return undefined;
 }
 

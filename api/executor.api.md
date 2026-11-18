@@ -1693,7 +1693,7 @@ interface PermissionDecisionEvent extends AgentEventBase<'permission.decision'>,
 }
 
 // @public
-type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'dontAsk';
+type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'dontAsk' | 'bypassPermissions';
 
 // @public
 interface PermissionModeChange {

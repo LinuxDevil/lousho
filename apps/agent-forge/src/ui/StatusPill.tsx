@@ -29,6 +29,7 @@ const TONES = new Map<string, StatusTone>(Object.entries({
   done: 'ok',
   paused: 'warning',
   unsaved: 'warning',
+  bypass: 'error',
 } satisfies Record<string, StatusTone>));
 
 const LABELS = new Map([['paused', 'awaiting approval']]);

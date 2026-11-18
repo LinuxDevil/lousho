@@ -148,7 +148,7 @@ export const runtimeShape = {
   toolSearch: toolSearchSchema.optional(),
   codeMode: codeModeSchema.optional(),
   permissionMode: z
-    .enum(['default', 'plan', 'acceptEdits', 'dontAsk'], anyError("must be 'default', 'plan', 'acceptEdits' or 'dontAsk'"))
+    .enum(['default', 'plan', 'acceptEdits', 'dontAsk', 'bypassPermissions'], anyError("must be 'default', 'plan', 'acceptEdits', 'dontAsk' or 'bypassPermissions'"))
     .optional(),
   approvalTtlMs: z.number().refine(isApprovalTtl, `must be ${APPROVAL_TTL_RULE}`).optional(),
   askQuestion: z.boolean().optional(),

@@ -83,6 +83,7 @@ export interface RunOptions {
   triggerEvent?: unknown;
   /** This launch's pinned tool results (T04 run-from-here); never stored, never sent on chat turns. */
   pins?: ToolPin[];
+  permissionMode?: 'bypassPermissions';
 }
 
 interface RunEntry {
@@ -174,6 +175,7 @@ interface RunEntry {
    */
   source?: 'manual' | 'trigger';
   triggerId?: string;
+  bypass?: boolean;
 }
 
 export interface RunManagerOptions {
@@ -322,6 +324,7 @@ export class RunManager extends EventEmitter {
       steering: entry.steering,
       source: entry.source,
       triggerId: entry.triggerId,
+      ...(entry.bypass === true && { bypass: true }),
       updatedAt: entry.updatedAt,
     };
   }
@@ -716,7 +719,7 @@ export class RunManager extends EventEmitter {
     agentId: string,
     input: AgentInput,
     spec?: AgentSpecV2,
-    options: { runInput?: string; source?: 'manual' | 'trigger'; triggerId?: string; triggerEvent?: unknown; pins?: ToolPin[] } = {}
+    options: { runInput?: string; source?: 'manual' | 'trigger'; triggerId?: string; triggerEvent?: unknown; pins?: ToolPin[]; permissionMode?: 'bypassPermissions' } = {}
   ): Promise<void> {
     const existing = this.entries.get(agentId);
     const resolvedSpec = await this.resolveLaunchSpec(agentId, spec, existing);
@@ -748,7 +751,7 @@ export class RunManager extends EventEmitter {
     input: AgentInput,
     resolvedSpec: AgentSpecV2,
     existing: RunEntry | undefined,
-    options: { runInput?: string; source?: 'manual' | 'trigger'; triggerId?: string; pins?: ToolPin[] }
+    options: { runInput?: string; source?: 'manual' | 'trigger'; triggerId?: string; pins?: ToolPin[]; permissionMode?: 'bypassPermissions' }
   ): Promise<void> {
     const sessionId = agentId;
     const debugSession = this.makeDebugSession(agentId);
@@ -757,9 +760,10 @@ export class RunManager extends EventEmitter {
     // late event of a REPLACED run (a settled after a new launch) can be
     // told apart by comparing the entry's hostRunId - see onHostEvent.
     const live = { runId: undefined as string | undefined, exporter };
+    const bypass = options.permissionMode === 'bypassPermissions' || resolvedSpec.permissionMode === 'bypassPermissions';
     const { runId, modelLabel } = await this.opts.host.start({
       agentId,
-      spec: resolvedSpec,
+      spec: options.permissionMode ? { ...resolvedSpec, permissionMode: options.permissionMode } : resolvedSpec,
       sessionId,
       input,
       captureContent: this.captureContentFor(agentId),
@@ -800,6 +804,7 @@ export class RunManager extends EventEmitter {
         // run's source (L12); a trigger launch stamps both fields.
         source: options.source,
         triggerId: options.triggerId,
+        bypass,
       },
       existing
     );
@@ -917,6 +922,7 @@ export class RunManager extends EventEmitter {
         steering: [],
         source: options.source,
         triggerId: options.triggerId,
+        bypass: false,
       },
       existing
     );

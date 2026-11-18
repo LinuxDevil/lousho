@@ -111,7 +111,7 @@ with `LOUSHO_SPEC_UNSUPPORTED` naming the field.
 | [`promptCaching`](./models-and-cost.md#prompt-caching) | `'auto' \| false` | Lets the provider cache the stable start of the prompt. |
 | [`toolSearch`](./tool-search.md) | `false \| object` | Hides most tools until the model searches for them. |
 | [`codeMode`](./code-mode.md) | `boolean \| object` | Lets the model write a short program that calls several tools at once. |
-| [`permissionMode`](./permission-modes.md) | `'default' \| 'plan' \| 'acceptEdits' \| 'dontAsk'` | Default permission mode for the agent's tool calls. |
+| [`permissionMode`](./permission-modes.md) | `'default' \| 'plan' \| 'acceptEdits' \| 'dontAsk' \| 'bypassPermissions'` | Default permission mode for the agent's tool calls. |
 | [`approvalTtlMs`](./approvals.md) | `number` | How long a pending approval stays open, in milliseconds. |
 | [`askQuestion`](./approvals.md#asking-the-user-a-question) | `boolean` | Lets the agent pause and ask the user a question. |
 | [`mcpServers`](./mcp.md) | `Record<string, McpServerSpec>` | MCP servers whose tools the agent can call, keyed by a short name. |

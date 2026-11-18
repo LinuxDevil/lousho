@@ -20,6 +20,7 @@ const PERMISSION_MODE_OPTIONS: { value: PermissionMode; label: string }[] = [
   { value: 'plan', label: 'Plan only' },
   { value: 'acceptEdits', label: 'Accept edits' },
   { value: 'dontAsk', label: "Don't ask" },
+  { value: 'bypassPermissions', label: 'Bypass permissions' },
 ];
 
 /** The Approvals section described above. */
@@ -35,7 +36,11 @@ export function ApprovalsFields({ fields, patch }: RunSettingsProps): JSX.Elemen
           // 'default' is the SDK's own default: selecting it deletes the key rather than writing it.
           patch({ permissionMode: permissionMode === undefined || permissionMode === 'default' ? undefined : permissionMode })
         }
-        help="Plan only refuses calls with side effects."
+        help={
+          fields.permissionMode === 'bypassPermissions'
+            ? <span className="bypass-warning">Every call that would ask runs without approval, triggered runs included. Deny rules and guardrails still apply.</span>
+            : 'Plan only refuses calls with side effects.'
+        }
       />
       <OptionalNumberField
         id="node-agent-approval-ttl"

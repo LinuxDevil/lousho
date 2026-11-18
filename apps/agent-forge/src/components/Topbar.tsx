@@ -8,6 +8,7 @@ import {
   PanelLeft,
   Play,
   Save,
+  ShieldOff,
   SlidersHorizontal,
   Square,
   Upload,
@@ -246,6 +247,28 @@ function PanelToggle({
   );
 }
 
+const BYPASS_CONFIRMED_KEY = 'lousho.bypassConfirmed';
+
+function confirmBypass(): boolean {
+  try {
+    if (sessionStorage.getItem(BYPASS_CONFIRMED_KEY) === '1') return true;
+  } catch {
+    return window.confirm(BYPASS_WARNING);
+  }
+  const ok = window.confirm(BYPASS_WARNING);
+  if (ok) {
+    try {
+      sessionStorage.setItem(BYPASS_CONFIRMED_KEY, '1');
+    } catch {
+      return ok;
+    }
+  }
+  return ok;
+}
+
+const BYPASS_WARNING =
+  'Run with bypass permissions?\n\nEvery tool call that would ask for approval runs without asking, including shell commands and file writes. Deny rules and guardrails still apply.';
+
 /** Stop/Run/Save/Import actions, surfacing a failed attempt as a message next to the buttons. */
 function useRunActions() {
   const { runAgent, stopAgent, setSpec } = useAppState();
@@ -267,6 +290,10 @@ function useRunActions() {
   // once a checkpoint exists), so this always sends *some* string
   // rather than blocking Run on an empty prompt.
   const handleRun = () => attempt(() => runAgent('Run the agent.'));
+  const handleBypassRun = () => {
+    if (!confirmBypass()) return;
+    return attempt(() => runAgent('Run the agent.', { bypass: true }));
+  };
   const handleStop = () => attempt(() => stopAgent());
   const handleSave = () => attempt(saveVersionAction);
   const handleImport = (file: File) =>
@@ -279,7 +306,7 @@ function useRunActions() {
       }
     });
 
-  return { actionError, handleRun, handleStop, handleSave, handleImport };
+  return { actionError, handleRun, handleBypassRun, handleStop, handleSave, handleImport };
 }
 
 interface TopbarProps {
@@ -446,7 +473,7 @@ function WideTopbar({ readOnlyTitle }: { readOnlyTitle?: string }) {
   const { runStatus, agentId, dirty } = useAppState();
   const publish = usePublishState(agentId);
   const problemErrors = useProblemErrorCount();
-  const { actionError, handleRun, handleStop, handleSave, handleImport } = useRunActions();
+  const { actionError, handleRun, handleBypassRun, handleStop, handleSave, handleImport } = useRunActions();
   const { fileInput, openImport, exportSpec } = useSpecFiles(handleImport);
 
   const isRunning = runStatus?.status === 'running';
@@ -474,6 +501,7 @@ function WideTopbar({ readOnlyTitle }: { readOnlyTitle?: string }) {
         <DebugToggle />
         <ToolButton Icon={Square} label="Stop" className="btn btn-danger collapse-2" onClick={() => void handleStop()} disabled={!isRunning} />
         <ToolButton Icon={Play} label="Run" className="btn btn-success" onClick={() => void handleRun()} disabled={isRunning || problemErrors > 0 || readOnlyTitle !== undefined} title={readOnlyTitle ?? (problemErrors > 0 ? `Fix ${problemErrors} problem${problemErrors === 1 ? '' : 's'} first` : 'Run')} />
+        <ToolButton Icon={ShieldOff} label="Bypass" className="btn btn-ghost collapse-2" onClick={() => void handleBypassRun()} disabled={isRunning || problemErrors > 0 || readOnlyTitle !== undefined} title={readOnlyTitle ?? 'Run once without asking for approvals'} />
         <span className="toolbar-divider" aria-hidden="true" />
         <ToolButton Icon={Upload} label="Import" className="btn btn-ghost collapse-1" onClick={openImport} />
         {fileInput}

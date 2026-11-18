@@ -833,7 +833,7 @@ interface ParallelNode extends NodeRunOptions {
 export function parseAgentSpecV2(data: unknown, source?: string): AgentSpecV2;
 
 // @public
-type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'dontAsk';
+type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'dontAsk' | 'bypassPermissions';
 
 // @public
 export interface PermissionRuleSpec {

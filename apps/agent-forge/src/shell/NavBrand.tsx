@@ -1,18 +1,22 @@
-import { Anvil, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 
-/** The Agent Forge logo mark: a small accent square with an anvil. Decorative; the wordmark or a label names it. */
 export function LogoMark() {
   return (
     <span className="logo-mark" aria-hidden="true">
-      <Anvil size={16} strokeWidth={1.75} />
+      <svg viewBox="0 0 32 32" width="18" height="18">
+        <path
+          d="M5 26.5C10 26.5 13.2 24.6 15.6 20.8C18.8 15.4 19.6 5 16.4 5C13.2 5 13.4 15 16.4 20.8C18.8 24.6 22 26.5 27 26.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="3.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
     </span>
   );
 }
 
-/**
- * The nav header: logo mark, "Agent Forge" wordmark and the SDK version tag, plus the
- * collapse toggle when docked (`onToggle` given). Collapsed, only the mark and the toggle show.
- */
 export function NavBrand({ collapsed, onToggle }: { collapsed: boolean; onToggle?: () => void }) {
   const Icon = collapsed ? PanelLeftOpen : PanelLeftClose;
   return (
@@ -20,7 +24,7 @@ export function NavBrand({ collapsed, onToggle }: { collapsed: boolean; onToggle
       <LogoMark />
       {!collapsed && (
         <span className="nav-wordmark">
-          Agent Forge{' '}
+          Lousho{' '}
           <span className="nav-version">v{__LOUSHO_VERSION__}</span>
         </span>
       )}
