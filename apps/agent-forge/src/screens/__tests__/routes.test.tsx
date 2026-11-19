@@ -100,6 +100,8 @@ describe('screenFor', () => {
     expect(screenFor('#/inbox')).toBe('inbox');
     expect(screenFor('#/templates')).toBe('templates');
     expect(screenFor('#/templates?category=Support&template=pr-reviewer')).toBe('templates');
+    expect(screenFor('#/runs')).toBe('runs');
+    expect(screenFor('#/w/app-1a2b3c/runs/support-bot/c1')).toBe('runs');
     expect(screenFor('#/traces')).toBe('traces');
     expect(screenFor('#/traces/abc?obs=1')).toBe('trace');
     expect(screenFor('#/monitoring?window=24h')).toBe('monitoring');

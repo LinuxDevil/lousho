@@ -1,215 +1,107 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CircleAlert, ListTree, MessageSquare, RefreshCw, Square } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { CircleAlert, MessageSquare } from 'lucide-react';
 
 import type { RunListRow } from '../../../shared/wireTypes';
-import { errorMessage } from '../../components/errorMessage';
-import { fmtCost, fmtInt, fmtStarted } from '../../observe/format';
-import { navigate } from '../../router/router';
-import { runtimeClient } from '../../runtime/runtimeClient';
-import { Card } from '../../ui/Card';
-import { DataTable, type Column } from '../../ui/DataTable';
+import { matchRoute, navigate } from '../../router/router';
+import { useRoute } from '../../router/useRoute';
 import { EmptyState } from '../../ui/EmptyState';
-import { StatusBadge } from '../../ui/StatusBadge';
-import { StatusPill } from '../../ui/StatusPill';
-import { statusKey } from '../../ui/status';
-import { useToast } from '../../ui/Toast';
-import '../agentDetail/runs/runs.css';
-import '../../ui/filterBar.css';
+import { RunDetail, RunDetailSkeleton, RunMissing } from './RunDetail';
+import { RunList, RunListSkeleton, RunListToolbar } from './RunList';
+import { countRuns, filterRuns, hasChat, refOf, runPath, sameRun, WIDE_MIN_PX, type RunFilter, type RunRef } from './runsModel';
+import { useRuns } from './useRunData';
+import './runsScreen.css';
 
-const POLL_MS = 4000;
+function useWide(ref: RefObject<HTMLElement>): boolean {
+  const [wide, setWide] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const measure = (width: number) => setWide(width >= WIDE_MIN_PX);
+    measure(el.clientWidth);
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) measure(entry.contentRect.width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [ref]);
+  return wide;
+}
 
-type Filter = 'all' | 'live' | 'error';
-
-const FILTERS: { value: Filter; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: 'live', label: 'Live' },
-  { value: 'error', label: 'Failed' },
-];
-
-const rowKey = (r: RunListRow) => `${r.workspaceId}/${r.agentId}/${r.chatId ?? r.traceId ?? 'live'}`;
-
-const agentHref = (r: RunListRow) => `#/w/${encodeURIComponent(r.workspaceId)}/agents/${encodeURIComponent(r.agentId)}/canvas`;
-
-const chatHref = (r: RunListRow) => (r.chatId !== undefined ? `${agentHref(r)}?chat=${encodeURIComponent(r.chatId)}` : agentHref(r));
-
-function useRuns() {
-  const [rows, setRows] = useState<RunListRow[] | undefined>(undefined);
-  const [error, setError] = useState<string | undefined>(undefined);
-  const [nonce, setNonce] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = () =>
-      runtimeClient
-        .listRuns()
-        .then((runs) => {
-          if (cancelled) return;
-          setRows(runs);
-          setError(undefined);
-        })
-        .catch((cause: unknown) => {
-          if (!cancelled) setError(errorMessage(cause));
-        });
-    void load();
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void load();
-    }, POLL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [nonce]);
-
-  const refresh = useCallback(() => setNonce((n) => n + 1), []);
-  return { rows, error, refresh };
+function useSelectedRef(): RunRef | undefined {
+  const { path } = useRoute();
+  const params = matchRoute(`#${path}`, ['/w/:ws/runs/:agentId/:chatId'])?.params;
+  return params === undefined ? undefined : { workspaceId: params.ws, agentId: params.agentId, chatId: params.chatId };
 }
 
 export function RunsScreen(): JSX.Element {
   const { rows, error, refresh } = useRuns();
-  const [filter, setFilter] = useState<Filter>('all');
-  const [busy, setBusy] = useState<string | null>(null);
-  const toast = useToast();
+  const [filter, setFilter] = useState<RunFilter>('all');
+  const selected = useSelectedRef();
+  const splitRef = useRef<HTMLDivElement>(null);
+  const wide = useWide(splitRef);
 
-  const act = useCallback(
-    async (r: RunListRow) => {
-      setBusy(rowKey(r));
-      try {
-        await runtimeClient.forWorkspace(r.workspaceId).abort(r.agentId, 'Stopped from the Runs screen');
-        toast.show({ message: `Stopped ${r.agentName}`, tone: 'success' });
-        refresh();
-      } catch (cause) {
-        toast.show({ message: errorMessage(cause), tone: 'error' });
-      } finally {
-        setBusy(null);
-      }
-    },
-    [refresh, toast]
-  );
+  const chats = useMemo(() => (rows ?? []).filter(hasChat), [rows]);
+  const counts = useMemo(() => countRuns(chats), [chats]);
+  const visible = useMemo(() => filterRuns(chats, filter), [chats, filter]);
+  const current = selected !== undefined ? chats.find((row) => sameRun(refOf(row), selected)) : undefined;
+  const first = visible[0];
 
-  const columns = useMemo<Column<RunListRow>[]>(
-    () => [
-      {
-        key: 'status',
-        header: 'Status',
-        width: 120,
-        render: (r) => (
-          <span className="runs-status">
-            {!r.live && r.turns === 0 ? <span className="runs-id">no runs</span> : <StatusBadge status={statusKey(r.status)} size="sm" />}
-            {r.bypass === true && <StatusPill status="bypass" title="This run skips approvals" />}
-          </span>
-        ),
-      },
-      {
-        key: 'chat',
-        header: 'Chat',
-        minWidth: 240,
-        render: (r) => (
-          <span className="runs-cell runs-cell-stack" title={r.preview || undefined}>
-            <span className="runs-name">{r.preview || '(no messages)'}</span>
-            <span className="runs-id">
-              <a href={agentHref(r)} onClick={(e) => e.stopPropagation()}>
-                {r.agentName}
-              </a>
-              {` · ${r.workspaceName}`}
-            </span>
-          </span>
-        ),
-      },
-      {
-        key: 'trigger',
-        header: 'Trigger',
-        width: 110,
-        hideBelow: 720,
-        render: (r) => (r.live ? (r.source === 'trigger' ? (r.triggerId ?? 'trigger') : 'manual') : '—'),
-      },
-      { key: 'turns', header: 'Turns', align: 'right', width: 72, render: (r) => fmtInt(r.turns ?? 0) },
-      { key: 'activity', header: 'Last activity', width: 140, render: (r) => (r.lastActivity !== undefined ? fmtStarted(r.lastActivity) : '—') },
-      {
-        key: 'tokens',
-        header: 'Tokens',
-        align: 'right',
-        width: 96,
-        hideBelow: 720,
-        render: (r) => (r.inputTokens !== undefined ? fmtInt(r.inputTokens + (r.outputTokens ?? 0)) : '—'),
-      },
-      { key: 'cost', header: 'Cost', align: 'right', width: 88, hideBelow: 800, render: (r) => (r.costUsd !== undefined ? fmtCost(r.costUsd) : '—') },
-      {
-        key: 'actions',
-        header: <span className="visually-hidden">Actions</span>,
-        label: 'Actions',
-        align: 'right',
-        width: 80,
-        render: (r) => (
-          <span className={r.live ? 'dt-actions' : 'dt-actions dt-hover'} onClick={(e) => e.stopPropagation()}>
-            {r.live && (
-              <button type="button" className="btn btn-ghost btn-sm btn-icon btn-danger-text" disabled={busy === rowKey(r)} onClick={() => void act(r)} title="Stop" aria-label={`Stop ${r.agentName}`}>
-                <Square size={14} aria-hidden="true" />
-              </button>
-            )}
-            {r.traceId !== undefined && (
-              <button type="button" className="btn btn-ghost btn-sm btn-icon" onClick={() => navigate(`/traces/${r.traceId}`)} title="Open the latest trace" aria-label={`Open the latest trace of this ${r.agentName} chat`}>
-                <ListTree size={14} aria-hidden="true" />
-              </button>
-            )}
-          </span>
-        ),
-      },
-    ],
-    [act, busy]
-  );
+  useEffect(() => {
+    const measuredWide = (splitRef.current?.clientWidth ?? 0) >= WIDE_MIN_PX;
+    if (wide && measuredWide && selected === undefined && first !== undefined) navigate(runPath(refOf(first)), { replace: true });
+  }, [wide, selected, first]);
 
-  const visible = (rows ?? []).filter((r) => filter === 'all' || (filter === 'live' ? r.live : r.status === 'error'));
-  const liveCount = (rows ?? []).filter((r) => r.live).length;
+  const failedToLoad = error !== undefined && rows === undefined;
+  const empty = rows !== undefined && chats.length === 0;
+
+  let list: JSX.Element;
+  if (failedToLoad) {
+    list = (
+      <EmptyState
+        icon={CircleAlert}
+        title="Could not load runs"
+        hint={error}
+        action={
+          <button type="button" className="btn" onClick={refresh}>
+            Retry
+          </button>
+        }
+      />
+    );
+  } else if (rows === undefined) {
+    list = <RunListSkeleton />;
+  } else if (empty) {
+    list = <EmptyState icon={MessageSquare} title="No runs yet" hint="Every chat with every agent shows here, one row per chat." />;
+  } else if (visible.length === 0) {
+    list = <p className="runs-none">No runs match this filter.</p>;
+  } else {
+    list = <RunList rows={visible} selected={selected} now={Date.now()} />;
+  }
+
+  let detail: JSX.Element | null = null;
+  if (selected !== undefined) {
+    if (rows === undefined) detail = failedToLoad ? null : <RunDetailSkeleton />;
+    else if (current === undefined) detail = <RunMissing />;
+    else detail = <RunDetail key={`${selected.workspaceId}/${selected.agentId}/${selected.chatId}`} row={current as RunListRow} target={selected} onStopped={refresh} />;
+  } else if (wide && rows !== undefined && !empty) {
+    detail = <p className="runs-none">Pick a run to read what it did.</p>;
+  }
 
   return (
-    <div className="runs-tab">
-      <div className="runs-toolbar">
-        <div className="segmented" role="group" aria-label="Filter runs">
-          {FILTERS.map((f) => (
-            <button
-              key={f.value}
-              type="button"
-              className="seg-btn"
-              aria-pressed={filter === f.value}
-              onClick={() => setFilter(f.value)}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-        <p className="runs-count">{`${visible.length} chats · ${liveCount} live`}</p>
-        <button type="button" className="btn btn-sm" onClick={refresh}>
-          <RefreshCw size={14} aria-hidden="true" />
-          Refresh
-        </button>
+    <div className="runs-split" ref={splitRef}>
+      <div className="runs-grid" data-detail={detail !== null} data-empty={empty}>
+        <section className="runs-list-pane" aria-label="Run list">
+          {!failedToLoad && !empty && rows !== undefined && <RunListToolbar filter={filter} counts={counts} onChange={setFilter} onRefresh={refresh} />}
+          {list}
+        </section>
+        {detail !== null && (
+          <section className="runs-detail-pane" aria-label="Run detail">
+            {detail}
+          </section>
+        )}
       </div>
-      {error !== undefined && rows === undefined ? (
-        <Card>
-          <EmptyState
-            icon={CircleAlert}
-            title="Could not load runs"
-            hint={error}
-            action={
-              <button type="button" className="btn" onClick={refresh}>
-                Retry
-              </button>
-            }
-          />
-        </Card>
-      ) : (
-        <Card padding="none">
-          <DataTable
-            id="all-runs"
-            columns={columns}
-            rows={visible}
-            rowKey={rowKey}
-            onRowOpen={(r) => navigate(chatHref(r).slice(1))}
-            loading={rows === undefined}
-            density="compact"
-            empty={<EmptyState icon={MessageSquare} title="No runs yet" hint="Every chat with every agent shows here, one row per chat." />}
-          />
-        </Card>
-      )}
     </div>
   );
 }

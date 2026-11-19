@@ -1,4 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+import { ROUTES } from '../src/screens/routeTable';
 
 /**
  * S3: full-stack smoke test against the real, BUILT `lousho studio`
@@ -328,4 +330,70 @@ test('Profile Connectors lists the connectors and an unconnected one offers Conn
   await expect(github.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
   await expect(github.getByRole('button', { name: 'Reconnect', exact: true })).toHaveCount(0);
   expect(outside.filter((host) => !/^fonts\.(googleapis|gstatic)\.com$/.test(host))).toEqual([]);
+});
+
+test('Runs shows a chat as a run: list beside a timeline wide, list then detail with Back when narrow', async ({ page }) => {
+  const id = `e2e-runs-${Date.now()}`;
+  const input = `Summarise the queue for ${id}`;
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+  await createAgent(page, id);
+  await page.locator('.chat-input').fill(input);
+  await page.locator('.btn-send').click();
+  await expect(page.locator('.chat-msg.agent').last()).toBeVisible({ timeout: 15_000 });
+  const ws = await launchWorkspaceId(page);
+
+  await page.getByRole('navigation', { name: 'Primary' }).getByRole('link', { name: 'Runs', exact: true }).click();
+  const row = page.locator('.runs-row', { hasText: id });
+  await expect(row).toBeVisible();
+  await row.click();
+  await expect(page).toHaveURL(new RegExp(`#/w/${ws}/runs/${id}/[^/]+$`));
+  await expect(row).toHaveAttribute('aria-current', 'true');
+
+  const detail = page.locator('.runs-detail-pane');
+  await expect(detail.getByRole('heading', { level: 2, name: id })).toBeVisible();
+  await expect(detail.getByRole('link', { name: 'Open chat', exact: true })).toBeVisible();
+  const timeline = detail.getByRole('list', { name: 'Run timeline' });
+  await expect(timeline.locator('.run-step-title').first()).toContainText('Setup');
+  const started = timeline.locator('.run-step-toggle', { hasText: 'Run started' });
+  await expect(started).toContainText(input);
+  await started.click();
+  await expect(started).toHaveAttribute('aria-expanded', 'true');
+  await expect(timeline.locator('.run-step-body')).toContainText(input);
+  await expect(timeline.locator('.run-step-title').last()).toHaveText('Finished');
+
+  const scan = await new AxeBuilder({ page }).include('.runs-split').analyze();
+  expect(scan.violations.map((v) => v.id)).toEqual([]);
+
+  await page.reload();
+  await expect(page.locator('.runs-detail-pane').getByRole('heading', { level: 2, name: id })).toBeVisible();
+  await expect(page.locator('.runs-detail-pane .run-step-title').first()).toContainText('Setup');
+
+  await page.setViewportSize({ width: 640, height: 900 });
+  await expect(page.locator('.runs-list-pane')).toBeHidden();
+  await page.goto('/#/runs');
+  await expect(page.locator('.runs-detail-pane')).toHaveCount(0);
+  await page.locator('.runs-row', { hasText: id }).click();
+  await expect(page.locator('.runs-list-pane')).toBeHidden();
+  const back = page.getByRole('link', { name: 'Back to runs', exact: true });
+  await expect(back).toBeVisible();
+  await expect(page.locator('.runs-detail-pane .run-timeline')).toBeVisible();
+  await back.click();
+  await expect(page).toHaveURL(/#\/runs$/);
+  await expect(page.locator('.runs-list-pane')).toBeVisible();
+  await expect(page.locator('.runs-detail-pane')).toHaveCount(0);
+});
+
+test('Runs routes pass an axe scan, including an unknown run', async ({ page }) => {
+  const examples = ROUTES.filter((route) => route.screen === 'runs').map((route) => route.example);
+  expect(examples).toContain('/w/e2e-000000/runs/e2e-agent/e2e-chat');
+  for (const example of examples) {
+    await page.goto(`/#${example}`);
+    await expect(page.locator('.runs-split')).toBeVisible();
+    await expect(page.locator('.runs-list-pane')).toBeVisible();
+    const scan = await new AxeBuilder({ page }).analyze();
+    expect(scan.violations.map((v) => v.id), example).toEqual([]);
+  }
+  await page.goto('/#/w/e2e-000000/runs/e2e-agent/e2e-chat');
+  await expect(page.getByText('This run no longer exists')).toBeVisible();
 });
