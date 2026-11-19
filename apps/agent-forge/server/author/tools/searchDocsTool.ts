@@ -15,8 +15,14 @@ import { loadDocsIndex, searchDocs } from './docsIndex';
 import { guardedToolCall, toolFailure } from './failure';
 import type { AuthorToolFactory } from './index';
 
+const SEARCH_CALLS_PER_TURN = 3;
+const MIN_STEPS_TO_SEARCH = 3;
+const SEARCH_COUNT_KEY = 'searchDocs.calls';
+const LIMIT_REACHED_NEXT =
+  'The docs search limit for this turn is reached. Now either call the propose tool with what you have, or reply to the user with a question.';
+
 /** AA06's read tool 12. */
-export const searchDocsTool: AuthorToolFactory = (_turn, deps) =>
+export const searchDocsTool: AuthorToolFactory = (turn, deps) =>
   defineTool({
     name: 'searchDocs',
     description: 'Search the bundled lousho docs. Returns the best matching sections.',
@@ -26,6 +32,11 @@ export const searchDocsTool: AuthorToolFactory = (_turn, deps) =>
     }),
     execute: ({ query, limit }) =>
       guardedToolCall('searchDocs', async () => {
+        const calls = ((turn.state.get(SEARCH_COUNT_KEY) as number | undefined) ?? 0) + 1;
+        turn.state.set(SEARCH_COUNT_KEY, calls);
+        if (calls > SEARCH_CALLS_PER_TURN || turn.stepsRemaining() < MIN_STEPS_TO_SEARCH) {
+          return { ok: true, items: [], limitReached: true, next: LIMIT_REACHED_NEXT };
+        }
         const index = await loadDocsIndex(deps.docsDir);
         if (index === undefined) {
           return toolFailure('UNAVAILABLE', 'The docs folder is missing from this install.', "Docs search isn't available here.");

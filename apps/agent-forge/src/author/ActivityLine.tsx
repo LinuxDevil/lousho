@@ -15,14 +15,25 @@ const ICONS: Record<ActivityState, typeof Check> = {
  * richer (proposal, secret, success cards) comes from the AA16/AA17
  * renderers, not this row.
  */
+const REASON_MAX = 200;
+
+function failureReason(part: AuthorToolPart): string | undefined {
+  const error = (part.output as { error?: unknown } | undefined)?.error;
+  if (typeof error !== 'string' || error.trim() === '') return undefined;
+  const text = error.trim();
+  return text.length <= REASON_MAX ? text : `${text.slice(0, REASON_MAX)}…`;
+}
+
 export function ActivityLine({ part }: { part: AuthorToolPart }): JSX.Element {
   const state = activityStateOf(part);
   const Icon = ICONS[state];
   const label = activityLabelFor(part.name, state);
+  const reason = state === 'failed' ? failureReason(part) : undefined;
   return (
     <div className="author-activity" data-state={state}>
       <Icon className="author-activity-icon" size={14} strokeWidth={1.75} aria-hidden="true" />
       <span>{state === 'busy' ? `${label}…` : label}</span>
+      {reason !== undefined && <span className="author-activity-reason">{reason}</span>}
     </div>
   );
 }

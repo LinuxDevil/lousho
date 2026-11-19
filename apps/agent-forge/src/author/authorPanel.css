@@ -243,8 +243,16 @@
   color: var(--text-muted);
   font-size: var(--fs-meta);
 }
+.author-activity {
+  flex-wrap: wrap;
+}
 .author-activity-icon {
   flex: none;
+}
+.author-activity-reason {
+  flex-basis: 100%;
+  padding-left: calc(14px + var(--space-2));
+  overflow-wrap: anywhere;
 }
 .author-activity[data-state='done'] .author-activity-icon {
   color: var(--success);
