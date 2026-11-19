@@ -41,7 +41,7 @@ test('create with the Author, edit on canvas, test and publish an agent', async 
   const success = page.getByRole('status').filter({ hasText: 'Greeter' });
   await expect(success.getByRole('button', { name: 'Open in canvas' })).toBeVisible();
   await success.getByRole('button', { name: 'Open in canvas' }).click();
-  await expect(page).toHaveURL(/#\/agents\/[^/]+\/canvas/);
+  await expect(page).toHaveURL(/#\/w\/[^/]+\/agents\/[^/]+\/canvas/);
 
   // 6. Canvas edit: select the agent node, point its model at the keyless
   //    mock provider (the draft's catalog id has no stored key), and
@@ -81,7 +81,7 @@ test('create with the Author, edit on canvas, test and publish an agent', async 
   await expect(pill).toContainText(/Published v\d+/);
 
   // 10. Versions: at least two entries, the pin carries the Published badge.
-  const agentId = /#\/agents\/([^/]+)\//.exec(page.url())?.[1] ?? '';
+  const agentId = /#\/w\/[^/]+\/agents\/([^/]+)\//.exec(page.url())?.[1] ?? '';
   expect(agentId).not.toBe('');
   await page.goto(`/#/agents/${agentId}/versions`);
   const items = page.locator('li.version-item');
