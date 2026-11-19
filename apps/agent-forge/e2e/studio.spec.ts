@@ -126,7 +126,7 @@ async function expectInside(inner: ReturnType<Page['locator']>, outer: ReturnTyp
  * run's trace (icon-only once the bar is short) and keeps the MOCK badge next to
  * the inline approval, at 1280 and at 1024 wide.
  */
-test.fixme('a pending approval keeps "Open trace" and the MOCK badge in the toolbar at 1280 and 1024 wide (product bug: with the sidebar the toolbar is under 1180px, .topbar-left shrinks to ~74px and clips the trace link and the agent name)', async ({ page }) => {
+test('a pending approval keeps "Open trace" and the MOCK badge in the toolbar at 1280 and 1024 wide', async ({ page }) => {
   const agentId = `e2e-pending-trace-${Date.now()}`;
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(`/${await builderHash(page)}`);
