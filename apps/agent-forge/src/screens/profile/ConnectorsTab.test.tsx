@@ -1,13 +1,17 @@
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ConnectorStatus } from '../../../shared/profileWire';
+import type { ConnectorStatus, McpConnectorStatus } from '../../../shared/profileWire';
 
 const client = vi.hoisted(() => ({
   listConnectors: vi.fn(),
   verifyConnector: vi.fn(),
   connectConnector: vi.fn(),
   disconnectConnector: vi.fn(),
+  listMcpConnectors: vi.fn(),
+  connectMcpConnector: vi.fn(),
+  verifyMcpConnector: vi.fn(),
+  removeMcpConnector: vi.fn(),
 }));
 vi.mock('../../runtime/runtimeClient', () => ({ runtimeClient: client }));
 
@@ -21,8 +25,9 @@ let container: HTMLDivElement;
 
 const days = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
 
-async function render(statuses: ConnectorStatus[]) {
+async function render(statuses: ConnectorStatus[], mcp: McpConnectorStatus[] = []) {
   client.listConnectors.mockResolvedValue(statuses);
+  client.listMcpConnectors.mockResolvedValue(mcp);
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -72,5 +77,63 @@ describe('ConnectorsTab identity', () => {
     const labels = (name: string) => [...rowOf(name).querySelectorAll('button')].map((b) => b.textContent);
     expect(labels('Email')).toContain('Verify');
     expect(labels('Google')).not.toContain('Verify');
+  });
+});
+
+describe('MCP connectors section', () => {
+  const mcpRow = (name: string) => rowOf(name);
+  const press = async (label: string) => {
+    const button = [...document.querySelectorAll('button')].filter((b) => b.textContent === label).pop()!;
+    await act(async () => button.click());
+  };
+  const type = async (placeholderOrLabel: string, value: string) => {
+    const input = [...document.querySelectorAll('input')].find((i) => i.placeholder === placeholderOrLabel)!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  };
+
+  it('shows verified and failed rows', async () => {
+    await render([], [
+      { name: 'docs', url: 'https://mcp.example.com/mcp', hasToken: true, connectedAt: days(5), verifiedAt: days(2), toolCount: 4 },
+      { name: 'wiki', url: 'https://wiki.example.com/mcp', hasToken: false, connectedAt: days(5), verifiedAt: days(0), error: 'The server did not answer within 10 seconds.', toolCount: 1 },
+    ]);
+    expect(container.textContent).toContain('Agents use these by default unless their configuration already has a server with the same name.');
+    expect(mcpRow('docs').querySelector('.profile-row-meta')?.textContent).toBe('mcp.example.com · 4 tools · verified 2d ago');
+    expect(mcpRow('wiki').querySelector('.profile-badge.bad')?.textContent).toBe('Check failed');
+    expect(mcpRow('wiki').querySelector('.profile-row-meta')?.textContent).toBe('The server did not answer within 10 seconds.');
+  });
+
+  it('re-verifies a row and removes one after confirming', async () => {
+    client.verifyMcpConnector.mockResolvedValue({ name: 'docs', url: 'https://mcp.example.com/mcp', hasToken: false, connectedAt: days(5), verifiedAt: days(0), toolCount: 6 });
+    client.removeMcpConnector.mockResolvedValue(undefined);
+    await render([], [{ name: 'docs', url: 'https://mcp.example.com/mcp', hasToken: false, connectedAt: days(5), verifiedAt: days(2), toolCount: 4 }]);
+    const verify = [...mcpRow('docs').querySelectorAll('button')].find((b) => b.textContent === 'Verify')!;
+    await act(async () => verify.click());
+    expect(client.verifyMcpConnector).toHaveBeenCalledWith('docs');
+    expect(mcpRow('docs').querySelector('.profile-row-meta')?.textContent).toBe('mcp.example.com · 6 tools · verified just now');
+    const remove = [...mcpRow('docs').querySelectorAll('button')].find((b) => b.textContent === 'Remove')!;
+    await act(async () => remove.click());
+    expect(client.removeMcpConnector).not.toHaveBeenCalled();
+    await press('Remove');
+    expect(client.removeMcpConnector).toHaveBeenCalledWith('docs');
+  });
+
+  it('validates the name and URL before adding', async () => {
+    client.connectMcpConnector.mockResolvedValue({ name: 'docs', url: 'https://mcp.example.com/mcp', hasToken: false, connectedAt: days(0), verifiedAt: days(0), toolCount: 2 });
+    await render([], []);
+    await press('Add MCP server');
+    await type('docs', 'Bad Name');
+    await type('https://mcp.example.com/mcp', 'http://example.com');
+    await press('Check and add');
+    expect(client.connectMcpConnector).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('Use 1-32 lowercase letters, digits or dashes');
+    expect(document.body.textContent).toContain('The URL must start with https://');
+    await type('docs', 'docs');
+    await type('https://mcp.example.com/mcp', 'https://mcp.example.com/mcp');
+    await press('Check and add');
+    expect(client.connectMcpConnector).toHaveBeenCalledWith('docs', { url: 'https://mcp.example.com/mcp' });
+    expect(mcpRow('docs').querySelector('.profile-row-meta')?.textContent).toContain('2 tools');
   });
 });

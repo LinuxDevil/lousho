@@ -9,13 +9,13 @@ import { FileCheckpointStore } from '../checkpointStore';
 import { connectorShellEnv } from '../connectorRunTools';
 import { runSetupLogEntry } from '../logEntries';
 
-const captured = vi.hoisted(() => ({ config: undefined as { tools?: Record<string, ToolDescriptor> } | undefined }));
+const captured = vi.hoisted(() => ({ config: undefined as { tools?: Record<string, ToolDescriptor>; mcpServers?: Record<string, Record<string, unknown>> } | undefined }));
 
 vi.mock('lousho', async (importOriginal) => {
   const actual = await importOriginal<typeof import('lousho')>();
   return {
     ...actual,
-    createAgent: ((config: { tools?: Record<string, ToolDescriptor> }) => {
+    createAgent: ((config: { tools?: Record<string, ToolDescriptor>; mcpServers?: Record<string, Record<string, unknown>> }) => {
       captured.config = config;
       return {};
     }) as unknown as typeof actual.createAgent,
@@ -111,6 +111,39 @@ describe('connected accounts on a built agent', () => {
     const { setup } = await buildRunnableAgent(base, 'a', { ...deps, secretsStore: { getSecret: () => undefined } as never }, wiring);
     expect(setup.skipped).toEqual([]);
     expect(runSetupLogEntry('a', setup).message).toBe('Setup · No connected accounts. Connect one in Profile → Connectors. · 0 tools');
+  });
+
+  it('attaches Profile MCP connectors that need approval, deferred, and names them in the setup', async () => {
+    const mcpDeps = {
+      ...deps,
+      secretsStore: {
+        getSecret: (name: string) => (name === 'MCP_TRACKER_TOKEN' ? 'Bearer trk_secretvalue' : secrets.getSecret(name)),
+        mcpConnectors: () => [{ name: 'tracker', url: 'https://tracker.example.com/mcp', tokenSecret: 'MCP_TRACKER_TOKEN' }],
+      } as never,
+    };
+    const spec = { ...base, mcpServers: { docs: { url: 'https://example.com/mcp' } } } as unknown as AgentSpecV2;
+    const { setup } = await buildRunnableAgent(spec, 'a', mcpDeps, wiring);
+    expect(Object.keys(captured.config?.mcpServers ?? {})).toEqual(['docs', 'tracker']);
+    expect(captured.config?.mcpServers?.tracker).toMatchObject({
+      url: 'https://tracker.example.com/mcp',
+      approval: 'always',
+      deferLoading: true,
+      headers: { Authorization: 'Bearer trk_secretvalue' },
+    });
+    expect(captured.config?.mcpServers?.docs.approval).toBeUndefined();
+    expect(setup.mcpServers).toEqual(['docs']);
+    expect(setup.profileMcpServers).toEqual(['tracker']);
+    expect(JSON.stringify(setup)).not.toContain('trk_secretvalue');
+    const row = runSetupLogEntry('a', setup);
+    expect(row.message).toContain('2 MCP servers');
+    expect(row.detail).toContain('MCP servers from Profile: tracker');
+  });
+
+  it('skips Profile MCP connectors when connectedAccounts is false', async () => {
+    const mcpDeps = { ...deps, secretsStore: { ...secrets, mcpConnectors: () => [{ name: 'tracker', url: 'https://tracker.example.com/mcp' }] } as never };
+    const { setup } = await buildRunnableAgent(base, 'a', mcpDeps, { ...wiring, connectedAccounts: false });
+    expect(Object.keys(captured.config?.mcpServers ?? {})).toEqual([]);
+    expect(setup.profileMcpServers).toBeUndefined();
   });
 
   it('explains that flow agents get no connected accounts', () => {

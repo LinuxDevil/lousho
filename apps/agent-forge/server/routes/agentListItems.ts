@@ -10,7 +10,7 @@
 import type { AgentSpecV2 } from 'lousho';
 import type { AgentLastRun, AgentListItem, AgentRecord, AgentRunStatusPayload } from '../../shared/wireTypes';
 import type { AgentRepo } from '../storage/agentRepo';
-import { withConnectedIntegrations } from '../connectorRunTools';
+import { withConnectedIntegrations, withMcpConnectors } from '../connectorRunTools';
 import { listAgentTraces } from '../traceStore';
 
 export interface AgentListSource {
@@ -36,9 +36,10 @@ export function connectedAccountsOf(spec: AgentSpecV2, secrets: AgentListSource[
   const isFlow = (spec as { flow?: unknown }).flow !== undefined;
   const declared = [...new Set((spec.tools ?? []).flatMap((ref) => ('integration' in ref ? [ref.integration] : [])))];
   const attached = isFlow ? [] : withConnectedIntegrations(spec, secrets).integrations;
+  const mcp = isFlow ? [] : withMcpConnectors(spec, secrets).names.map((name) => `${name} (MCP)`);
   return [
     ...declared.map((integration) => ({ integration, source: 'agent' as const })),
-    ...attached.map((integration) => ({ integration, source: 'profile' as const })),
+    ...[...attached, ...mcp].map((integration) => ({ integration, source: 'profile' as const })),
   ];
 }
 

@@ -115,6 +115,44 @@ export interface ConnectorStatus {
   filled: string[];
 }
 
+export const MCP_CONNECTOR_NAME = /^[a-z][a-z0-9-]{0,31}$/;
+
+export const mcpTokenSecret = (name: string): string => `MCP_${name.toUpperCase().replace(/-/g, '_')}_TOKEN`;
+
+export function mcpConnectorUrlProblem(value: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return 'Enter a valid URL.';
+  }
+  if (url.username !== '' || url.password !== '') return 'Do not put credentials in the URL. Use the token field.';
+  const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]';
+  if (url.protocol === 'https:' || (url.protocol === 'http:' && local)) return undefined;
+  return 'The URL must start with https:// (http:// is only allowed for localhost).';
+}
+
+export interface McpConnectorStatus {
+  name: string;
+  url: string;
+  hasToken: boolean;
+  connectedAt: string;
+  verifiedAt?: string;
+  error?: string;
+  toolCount?: number;
+}
+
+export interface StoredMcpConnector {
+  name: string;
+  url: string;
+  tokenSecret?: string;
+}
+
+export interface McpConnectRequest {
+  url: string;
+  token?: string;
+}
+
 export interface ConnectRequest {
   values: Record<string, string>;
 }

@@ -119,7 +119,7 @@ export interface AuthorToolDeps {
    * values are written by `POST /assistant/sessions/:id/secret`, never
    * through a tool, and nothing here decrypts them.
    */
-  secrets: Pick<SecretsStore, 'secretStatus'>;
+  secrets: Pick<SecretsStore, 'secretStatus'> & Partial<Pick<SecretsStore, 'mcpConnectors'>>;
 }
 
 /** Builds one tool for one turn - the factories close over `turn` (and `deps`). */

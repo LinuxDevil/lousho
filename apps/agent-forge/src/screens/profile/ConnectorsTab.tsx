@@ -11,6 +11,7 @@ import { Field } from '../../ui/Field';
 import { Input } from '../../ui/controls';
 import { Sheet } from '../../ui/Sheet';
 import { useToast } from '../../ui/Toast';
+import { McpConnectorsSection } from './McpConnectorsSection';
 import { CopyValue, fmtWhen, useLoad } from './profileShared';
 
 const CHECKED = new Set<string>(['github', 'atlassian', 'slack', 'figma', 'jenkins', 'email']);
@@ -205,6 +206,7 @@ export function ConnectorsTab() {
           })}
         </div>
       </Card>
+      <McpConnectorsSection />
       {editing !== undefined && (
         <ConnectSheet
           def={editing}

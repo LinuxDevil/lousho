@@ -1,10 +1,10 @@
 import type { AgentSpecV2, ToolDescriptor } from 'lousho';
 import { INTEGRATION_CREDENTIALS, type IntegrationName, type ToolRef } from 'lousho/spec';
 import { createShellTool, NodeWorkspace } from 'lousho/tools';
-import { CONNECTORS, INTEGRATION_SECRETS } from '../shared/profileWire';
+import { CONNECTORS, INTEGRATION_SECRETS, type StoredMcpConnector } from '../shared/profileWire';
 import type { RunSetupSkipped } from '../shared/wireTypes';
 
-type SecretSource = { getSecret(name: string): string | undefined } | undefined;
+type SecretSource = { getSecret(name: string): string | undefined; mcpConnectors?(): StoredMcpConnector[] } | undefined;
 
 const READ_ONLY_TOOL = /_(get|list|search|read|lookup|resolve|check|download)(_|$)/;
 
@@ -39,6 +39,30 @@ export function withConnectedIntegrations(spec: AgentSpecV2, secrets: SecretSour
     added: added.length,
     integrations: added.map((ref) => ('integration' in ref ? ref.integration : '')),
   };
+}
+
+const sameUrl = (a: string, b: string) => a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
+
+function missingMcpConnectors(spec: AgentSpecV2, secrets: SecretSource): StoredMcpConnector[] {
+  const servers = Object.entries(spec.mcpServers ?? {});
+  return (secrets?.mcpConnectors?.() ?? []).filter(
+    (connector) => !servers.some(([key, server]) => key === connector.name || ('url' in server && sameUrl(server.url, connector.url))),
+  );
+}
+
+export function withMcpConnectors(spec: AgentSpecV2, secrets: SecretSource): { spec: AgentSpecV2; names: string[] } {
+  const added = missingMcpConnectors(spec, secrets);
+  if (added.length === 0) return { spec, names: [] };
+  const servers: NonNullable<AgentSpecV2['mcpServers']> = { ...spec.mcpServers };
+  for (const { name, url, tokenSecret } of added) {
+    servers[name] = {
+      url,
+      approval: 'always',
+      deferLoading: true,
+      ...(tokenSecret !== undefined && { headers: { Authorization: { secret: tokenSecret } } }),
+    };
+  }
+  return { spec: { ...spec, mcpServers: servers }, names: added.map((connector) => connector.name) };
 }
 
 export function skippedConnections(spec: AgentSpecV2, secrets: SecretSource, attached: boolean): RunSetupSkipped[] {
@@ -82,6 +106,16 @@ export function connectedAccountsForAuthor(secrets: SecretSource): string[] {
     lines.push(`- ${integration}: { "integration": "${integration}", "credentials": ${refs} }${extra}`);
   }
   return lines;
+}
+
+export function mcpConnectorsForAuthor(secrets: SecretSource): string[] {
+  return (secrets?.mcpConnectors?.() ?? []).map(({ name, url }) => {
+    try {
+      return `- ${name}: ${new URL(url).host}`;
+    } catch {
+      return `- ${name}`;
+    }
+  });
 }
 
 export function withShellEnv(tools: Record<string, ToolDescriptor>, spec: AgentSpecV2, env: Record<string, string>): void {

@@ -200,6 +200,7 @@ export interface RunSetup {
   accounts: RunSetupAccount[];
   declared: string[];
   mcpServers: string[];
+  profileMcpServers?: string[];
   tools?: number;
   toolNames?: string[];
   workspaceRoot?: string;

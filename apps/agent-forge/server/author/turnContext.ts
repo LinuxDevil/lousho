@@ -39,6 +39,7 @@ export interface TurnContextInput {
   openProposals: Array<{ proposalId: string; kind: 'create' | 'update'; agentId?: string; name: string }>;
   /** One line per connected account: the `{ integration }` tool ref that uses its saved secrets. */
   connectedAccounts?: string[];
+  mcpConnectors?: string[];
   /** The turn's clock; only `toISOString().slice(0, 10)` is used, so the date changes at most daily. */
   now: Date;
 }
@@ -77,6 +78,10 @@ export function buildTurnContext(input: TurnContextInput): string {
   if (input.connectedAccounts !== undefined && input.connectedAccounts.length > 0) {
     lines.push('Connected accounts (Profile > Connectors). Every run already gets their tools behind tool search; add the ref to spec.tools when the agent should always see them or to pin settings:');
     lines.push(...input.connectedAccounts);
+  }
+  if (input.mcpConnectors !== undefined && input.mcpConnectors.length > 0) {
+    lines.push('MCP connectors (Profile). Every run gets these servers by default unless the spec already has a server with the same name or URL; every tool asks for approval:');
+    lines.push(...input.mcpConnectors);
   }
   if (input.openProposals.length > 0) {
     lines.push('Open proposal cards (newest last):');

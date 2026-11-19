@@ -49,7 +49,7 @@ import {
 } from 'lousho';
 import type { AgentFlow } from 'lousho/flows';
 import { studioAutoApprover } from './autoApproval';
-import { connectorShellEnv, guardConnectorWrites, skippedConnections, withConnectedIntegrations, withShellEnv } from './connectorRunTools';
+import { connectorShellEnv, guardConnectorWrites, skippedConnections, withConnectedIntegrations, withMcpConnectors, withShellEnv } from './connectorRunTools';
 import type { RunSetup } from '../shared/wireTypes';
 import { asAgentFlow, LOCAL_TOOLS, resolveProviderForModel } from './buildAgent';
 import type { FileApprovalStore } from './approvalStore';
@@ -231,7 +231,8 @@ export async function buildRunnableAgent(
   const attach = wiring.connectedAccounts !== false;
   const rooted = withWorkspaceRoots(savedSpec, deps.baseDir);
   const connected = attach ? withConnectedIntegrations(rooted, deps.secretsStore) : { spec: rooted, added: 0, integrations: [] as string[] };
-  const spec = connected.spec;
+  const withMcp = attach ? withMcpConnectors(connected.spec, deps.secretsStore) : { spec: connected.spec, names: [] as string[] };
+  const spec = withMcp.spec;
   const skipped = skippedConnections(rooted, deps.secretsStore, attach);
   const approvals = scopedApprovalStore(deps.approvalStore, agentId);
   const autoApprover =
@@ -316,6 +317,7 @@ export async function buildRunnableAgent(
     }),
     declared: (savedSpec.tools ?? []).flatMap((ref) => ('integration' in ref ? [ref.integration] : [])),
     mcpServers: Object.keys(savedSpec.mcpServers ?? {}),
+    ...(withMcp.names.length > 0 && { profileMcpServers: withMcp.names }),
     tools: toolNames.length,
     toolNames,
     ...(workspaceRoot !== undefined && { workspaceRoot }),
