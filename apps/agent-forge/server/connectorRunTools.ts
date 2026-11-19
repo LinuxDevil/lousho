@@ -1,31 +1,51 @@
 import type { AgentSpecV2, ToolDescriptor } from 'lousho';
 import { INTEGRATION_CREDENTIALS, type IntegrationName, type ToolRef } from 'lousho/spec';
 import { createShellTool, NodeWorkspace } from 'lousho/tools';
-import { INTEGRATION_SECRETS } from '../shared/profileWire';
+import { CONNECTORS, INTEGRATION_SECRETS } from '../shared/profileWire';
+import type { RunSetupSkipped } from '../shared/wireTypes';
 
 type SecretSource = { getSecret(name: string): string | undefined } | undefined;
 
 const READ_ONLY_TOOL = /_(get|list|search|read|lookup|resolve|check|download)(_|$)/;
 
-export function withConnectedIntegrations(spec: AgentSpecV2, secrets: SecretSource): { spec: AgentSpecV2; added: number } {
-  if (secrets === undefined) return { spec, added: 0 };
+function connectionStates(spec: AgentSpecV2, secrets: SecretSource): { integration: IntegrationName; present: [string, string][]; missing: string[] }[] {
+  if (secrets === undefined) return [];
   const declared = new Set((spec.tools ?? []).flatMap((ref) => ('integration' in ref ? [ref.integration] : [])));
-  const added: ToolRef[] = [];
+  const states = [];
   for (const [name, { credentials }] of Object.entries(INTEGRATION_SECRETS)) {
     const integration = name as IntegrationName;
     if (declared.has(integration)) continue;
     const present = Object.entries(credentials).filter(([, secret]) => secrets.getSecret(secret) !== undefined);
+    if (present.length === 0) continue;
     const keys = new Set(present.map(([key]) => key));
-    if (present.length === 0 || !INTEGRATION_CREDENTIALS[integration].required.every((key) => keys.has(key))) continue;
-    added.push({
+    const missing = INTEGRATION_CREDENTIALS[integration].required.filter((key) => !keys.has(key));
+    states.push({ integration, present, missing: missing.map((key) => CONNECTORS.flatMap((def) => def.fields).find((field) => field.secret === credentials[key])?.label ?? key) });
+  }
+  return states;
+}
+
+export function withConnectedIntegrations(spec: AgentSpecV2, secrets: SecretSource): { spec: AgentSpecV2; added: number; integrations: string[] } {
+  const added: ToolRef[] = connectionStates(spec, secrets)
+    .filter((state) => state.missing.length === 0)
+    .map(({ integration, present }) => ({
       id: `connector-${integration}`,
       integration,
       credentials: Object.fromEntries(present.map(([key, secret]) => [key, { secret }])),
       deferLoading: true,
-    });
-  }
-  if (added.length === 0) return { spec, added: 0 };
-  return { spec: { ...spec, tools: [...(spec.tools ?? []), ...added] }, added: added.length };
+    }));
+  if (added.length === 0) return { spec, added: 0, integrations: [] };
+  return {
+    spec: { ...spec, tools: [...(spec.tools ?? []), ...added] },
+    added: added.length,
+    integrations: added.map((ref) => ('integration' in ref ? ref.integration : '')),
+  };
+}
+
+export function skippedConnections(spec: AgentSpecV2, secrets: SecretSource, attached: boolean): RunSetupSkipped[] {
+  return connectionStates(spec, secrets).flatMap<RunSetupSkipped>(({ integration, missing }) => {
+    if (missing.length > 0) return [{ integration, reason: 'incomplete', missing }];
+    return attached ? [] : [{ integration, reason: 'off' }];
+  });
 }
 
 export function guardConnectorWrites(tools: Record<string, ToolDescriptor>, names: readonly (readonly string[])[]): void {

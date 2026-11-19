@@ -33,6 +33,7 @@ export interface AllAgentsDeps {
   warm: () => WorkspaceContext[];
   /** The app's one code-agent scan cache (W08a); each listed workspace contributes its scanned code agents. */
   codeAgents: CodeAgentCache;
+  secrets?: { getSecret(name: string): string | undefined };
 }
 
 interface WorkspaceRead {
@@ -49,13 +50,13 @@ function rootIsDirectory(ref: WorkspaceRef): boolean {
   }
 }
 
-async function readWorkspace(ref: WorkspaceRef, warm: Map<string, WorkspaceContext>): Promise<WorkspaceRead> {
+async function readWorkspace(ref: WorkspaceRef, warm: Map<string, WorkspaceContext>, secrets: AllAgentsDeps['secrets']): Promise<WorkspaceRead> {
   const ctx = warm.get(ref.id);
   try {
     const items =
       ctx !== undefined
-        ? await buildAgentListItems({ repo: ctx.repo, root: ctx.ref.root, runStatus: (id) => ctx.runs.status(id) })
-        : await buildAgentListItems({ repo: new AgentRepo(ref.root), root: ref.root });
+        ? await buildAgentListItems({ repo: ctx.repo, root: ctx.ref.root, runStatus: (id) => ctx.runs.status(id), secrets })
+        : await buildAgentListItems({ repo: new AgentRepo(ref.root), root: ref.root, secrets });
     return { items };
   } catch (error) {
     console.warn(`[agent-forge] skipping workspace '${ref.id}' in the aggregate agent list: ${(error as Error).message}`);
@@ -115,7 +116,7 @@ export async function listAllAgents(deps: AllAgentsDeps): Promise<AllAgentsRespo
   const reads = await Promise.all(
     refs.map(async (ref) => ({
       ref,
-      read: rootIsDirectory(ref) ? await readWorkspace(ref, warm) : { items: [], skipped: { workspaceId: ref.id, reason: 'Folder not found' } },
+      read: rootIsDirectory(ref) ? await readWorkspace(ref, warm, deps.secrets) : { items: [], skipped: { workspaceId: ref.id, reason: 'Folder not found' } },
     }))
   );
 

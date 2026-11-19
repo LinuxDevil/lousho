@@ -48,7 +48,7 @@ import { autoApprovalLogEntry } from './autoApproval';
 import { DebugSession, type BreakpointKey } from './debugController';
 import { FileChatStore, previewFor } from './chatStore';
 import { markRunInput, markSteerInputs, reconcileChatMessages } from './chatReconcile';
-import { toLogEntries, toFlowLogEntries } from './logEntries';
+import { runSetupLogEntry, toLogEntries, toFlowLogEntries } from './logEntries';
 import { nodeStateFor } from './nodeStates';
 import type { SecretsStore } from './secretsStore';
 import type { SettingsStore } from './settingsStore';
@@ -768,7 +768,7 @@ export class RunManager extends EventEmitter {
     // told apart by comparing the entry's hostRunId - see onHostEvent.
     const live = { runId: undefined as string | undefined, exporter };
     const bypass = options.permissionMode === 'bypassPermissions' || resolvedSpec.permissionMode === 'bypassPermissions';
-    const { runId, modelLabel } = await this.opts.host.start({
+    const { runId, modelLabel, setup } = await this.opts.host.start({
       agentId,
       spec: options.permissionMode ? { ...resolvedSpec, permissionMode: options.permissionMode } : resolvedSpec,
       sessionId,
@@ -786,6 +786,7 @@ export class RunManager extends EventEmitter {
       onAutoApproval: (decision) => this.emit('log', agentId, autoApprovalLogEntry(agentId, decision)),
     });
     live.runId = runId;
+    if (setup !== undefined) this.emit('log', agentId, runSetupLogEntry(agentId, setup));
     this.setEntry(
       agentId,
       {
@@ -906,6 +907,17 @@ export class RunManager extends EventEmitter {
     const sessionId = agentId;
     const controller = new AbortController();
     const debugSession = this.makeDebugSession(agentId);
+    this.emit(
+      'log',
+      agentId,
+      runSetupLogEntry(agentId, {
+        accounts: [],
+        declared: (resolvedSpec.tools ?? []).flatMap((ref) => ('integration' in ref ? [ref.integration] : [])),
+        mcpServers: Object.keys(resolvedSpec.mcpServers ?? {}),
+        skipped: [],
+        note: 'Flow agents do not get connected accounts yet.',
+      })
+    );
     this.setEntry(
       agentId,
       {

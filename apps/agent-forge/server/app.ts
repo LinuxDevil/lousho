@@ -1514,6 +1514,7 @@ export function createApp(options: CreateAppOptions): Express {
     registry: workspaceRegistry,
     warm: options.warm ?? (() => [workspace]),
     codeAgents: codeAgentCache,
+    secrets,
   });
   // Saved-agent list/record/save/delete (routes/agentRoutes.ts - the v2
   // wire shapes, with ?view=legacy for the still-v1 canvas; stores come

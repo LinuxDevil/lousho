@@ -25,7 +25,7 @@ import type {
   PendingApproval,
   Span,
 } from 'lousho';
-import type { CatalogGuardrail, CatalogModel, CatalogTool, CatalogTriggerType } from '../../shared/wireTypes';
+import type { CatalogGuardrail, CatalogModel, CatalogTool, CatalogTriggerType, RunSetup } from '../../shared/wireTypes';
 
 export interface AgentHost {
   readonly kind: 'in-process' | 'bridge';
@@ -78,6 +78,7 @@ export interface HostRun {
   runId: string;
   /** `<provider>/<model>` the run actually uses, for the status payload's `provider` field. */
   modelLabel: string;
+  setup?: RunSetup;
 }
 
 export interface HostSteerResult {

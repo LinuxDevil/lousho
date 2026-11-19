@@ -49,7 +49,8 @@ import {
 } from 'lousho';
 import type { AgentFlow } from 'lousho/flows';
 import { studioAutoApprover } from './autoApproval';
-import { connectorShellEnv, guardConnectorWrites, withConnectedIntegrations, withShellEnv } from './connectorRunTools';
+import { connectorShellEnv, guardConnectorWrites, skippedConnections, withConnectedIntegrations, withShellEnv } from './connectorRunTools';
+import type { RunSetup } from '../shared/wireTypes';
 import { asAgentFlow, LOCAL_TOOLS, resolveProviderForModel } from './buildAgent';
 import type { FileApprovalStore } from './approvalStore';
 import type { SpendLog } from './passes/spendLog';
@@ -105,6 +106,7 @@ export interface RunnableAgent {
   flow?: AgentFlow;
   /** `<provider>/<model>` the run actually uses, for the status payload's `provider` field, e.g. 'mock/mock-1'. */
   modelLabel: string;
+  setup: RunSetup;
 }
 
 /**
@@ -228,8 +230,9 @@ export async function buildRunnableAgent(
 ): Promise<RunnableAgent> {
   const attach = wiring.connectedAccounts !== false;
   const rooted = withWorkspaceRoots(savedSpec, deps.baseDir);
-  const connected = attach ? withConnectedIntegrations(rooted, deps.secretsStore) : { spec: rooted, added: 0 };
+  const connected = attach ? withConnectedIntegrations(rooted, deps.secretsStore) : { spec: rooted, added: 0, integrations: [] as string[] };
   const spec = connected.spec;
+  const skipped = skippedConnections(rooted, deps.secretsStore, attach);
   const approvals = scopedApprovalStore(deps.approvalStore, agentId);
   const autoApprover =
     deps.settings !== undefined && deps.spend !== undefined
@@ -287,8 +290,9 @@ export async function buildRunnableAgent(
     config.tools = mergeLocalTools(config.tools, localTools) as typeof config.tools;
   }
   const tools = config.tools as Record<string, ToolDescriptor> | undefined;
+  const accountTools = connected.added > 0 ? compiled.toolNamesByRef.slice(-connected.added) : [];
   if (tools !== undefined && typeof tools === 'object' && !Array.isArray(tools)) {
-    if (connected.added > 0) guardConnectorWrites(tools, compiled.toolNamesByRef.slice(-connected.added));
+    if (connected.added > 0) guardConnectorWrites(tools, accountTools);
     if (attach && (spec.tools ?? []).some((ref) => 'integration' in ref && ref.integration === 'github')) {
       withShellEnv(tools, spec, connectorShellEnv(deps.secretsStore));
     }
@@ -301,9 +305,26 @@ export async function buildRunnableAgent(
   }
 
   const slash = spec.model.indexOf('/');
+  const toolNames = tools !== undefined && typeof tools === 'object' && !Array.isArray(tools) ? Object.keys(tools) : [];
+  const workspaceRoot = (spec.tools ?? [])
+    .map((ref) => ('builtin' in ref && WORKSPACE_BUILTINS.has(ref.builtin) ? (ref.options as { root?: unknown } | undefined)?.root : undefined))
+    .find((root): root is string => typeof root === 'string' && root !== '');
+  const setup: RunSetup = {
+    accounts: connected.integrations.map((integration, index) => {
+      const names = (accountTools[index] ?? []).filter((name) => tools?.[name] !== undefined);
+      return { integration, tools: names, approvals: names.filter((name) => tools?.[name]?.needsApproval) };
+    }),
+    declared: (savedSpec.tools ?? []).flatMap((ref) => ('integration' in ref ? [ref.integration] : [])),
+    mcpServers: Object.keys(savedSpec.mcpServers ?? {}),
+    tools: toolNames.length,
+    toolNames,
+    ...(workspaceRoot !== undefined && { workspaceRoot }),
+    skipped,
+  };
   return {
     agent: createAgent(config),
     flow: flowOf(spec),
     modelLabel: `${provider.name}/${spec.model.slice(slash + 1)}`,
+    setup,
   };
 }

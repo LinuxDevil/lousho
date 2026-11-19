@@ -183,6 +183,30 @@ export interface LogEntry {
   detail?: unknown;
 }
 
+export interface RunSetupAccount {
+  integration: string;
+  tools: string[];
+  approvals: string[];
+}
+
+export interface RunSetupSkipped {
+  integration: string;
+  reason: 'off' | 'incomplete';
+  missing?: string[];
+}
+
+/** What a run was given: connected accounts, declared integrations, MCP servers and tools. Names only, never secret values. */
+export interface RunSetup {
+  accounts: RunSetupAccount[];
+  declared: string[];
+  mcpServers: string[];
+  tools?: number;
+  toolNames?: string[];
+  workspaceRoot?: string;
+  skipped: RunSetupSkipped[];
+  note?: string;
+}
+
 /**
  * One span lifecycle notification, forwarded verbatim (real
  * `Date.now()` timestamps, not synthetic ones) from the SDK's
@@ -839,6 +863,8 @@ export interface AgentListItem {
   lastRun?: AgentLastRun;
   /** Section sizes the card chips render (A03). */
   counts: { tools: number; mcpServers: number; subagents: number; triggers: number };
+  /** Integration names the agent reaches on a chat run: its declared ones plus the connected accounts Studio attaches (declared only for a flow agent). */
+  accounts?: string[];
 }
 
 /**
@@ -1050,6 +1076,8 @@ export interface AgentRecord {
    * proposal cards read this; it is advisory only and never blocks a save.
    */
   requirements?: Requirement[];
+  /** Integrations a chat run reaches: `agent` = declared in the spec, `profile` = a connected account Studio attaches. */
+  connectedAccounts?: { integration: string; source: 'agent' | 'profile' }[];
 }
 
 /**

@@ -7,6 +7,7 @@ import { FileApprovalStore } from '../approvalStore';
 import { buildRunnableAgent, type StudioRunDeps } from '../buildAgentV2';
 import { FileCheckpointStore } from '../checkpointStore';
 import { connectorShellEnv } from '../connectorRunTools';
+import { runSetupLogEntry } from '../logEntries';
 
 const captured = vi.hoisted(() => ({ config: undefined as { tools?: Record<string, ToolDescriptor> } | undefined }));
 
@@ -77,5 +78,42 @@ describe('connected accounts on a built agent', () => {
     await buildRunnableAgent(spec, 'a', deps, { ...wiring, connectedAccounts: false });
     const detached = JSON.stringify(await captured.config?.tools?.shell.execute?.({ command: probe } as never, {} as never));
     expect(detached).not.toContain('ghp_secretvalue');
+  });
+
+  it('summarises what the run was given', async () => {
+    const spec = { ...base, mcpServers: { docs: { url: 'https://example.com/mcp' } } } as unknown as AgentSpecV2;
+    const { setup } = await buildRunnableAgent(spec, 'a', { ...deps, secretsStore: { getSecret: (name: string) => (name === 'JIRA_API_TOKEN' ? undefined : (SECRET_VALUES as Record<string, string>)[name]) } as never }, wiring);
+    const github = setup.accounts.find((account) => account.integration === 'github');
+    expect(setup.accounts.map((account) => account.integration)).toEqual(['github']);
+    expect(github?.tools).toContain('github_list_my_repositories');
+    expect(github?.approvals).toContain('github_create_repository');
+    expect(github?.approvals).not.toContain('github_list_my_repositories');
+    expect(setup.mcpServers).toEqual(['docs']);
+    expect(setup.declared).toEqual([]);
+    expect(setup.tools).toBe(setup.toolNames?.length);
+    expect(setup.skipped).toEqual([{ integration: 'jira', reason: 'incomplete', missing: ['API token'] }, { integration: 'confluence', reason: 'incomplete', missing: ['API token'] }]);
+    expect(JSON.stringify(setup)).not.toContain('secretvalue');
+    const row = runSetupLogEntry('a', setup);
+    expect(row.message).toMatch(/^Setup · 1 connected account \(github\) · 1 MCP server · \d+ tools?$/);
+    expect(row.detail).toContain('Jira is missing its API token.');
+    expect(row.detail).toContain('github_create_repository');
+  });
+
+  it('reports a connected account as off when attaching is disabled', async () => {
+    const { setup } = await buildRunnableAgent(base, 'a', deps, { ...wiring, connectedAccounts: false });
+    expect(setup.accounts).toEqual([]);
+    expect(setup.skipped).toEqual(expect.arrayContaining([{ integration: 'github', reason: 'off' }]));
+    expect(runSetupLogEntry('a', setup).detail).toContain('Github is connected but switched off for this kind of run.');
+  });
+
+  it('points at Profile when nothing is connected', async () => {
+    const { setup } = await buildRunnableAgent(base, 'a', { ...deps, secretsStore: { getSecret: () => undefined } as never }, wiring);
+    expect(setup.skipped).toEqual([]);
+    expect(runSetupLogEntry('a', setup).message).toBe('Setup · No connected accounts. Connect one in Profile → Connectors. · 0 tools');
+  });
+
+  it('explains that flow agents get no connected accounts', () => {
+    const row = runSetupLogEntry('a', { accounts: [], declared: [], mcpServers: [], skipped: [], note: 'Flow agents do not get connected accounts yet.' });
+    expect(row.message).toBe('Setup · Flow agents do not get connected accounts yet.');
   });
 });
