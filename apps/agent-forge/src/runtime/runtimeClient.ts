@@ -904,6 +904,10 @@ class RuntimeClient implements AgentApi {
     return this.request(`/settings/connectors/${id}`, { method: 'PUT', body: JSON.stringify({ values }) });
   }
 
+  async verifyConnector(id: ConnectorId): Promise<ConnectorStatus> {
+    return this.request(`/settings/connectors/${id}/verify`, { method: 'POST' });
+  }
+
   async disconnectConnector(id: ConnectorId): Promise<ConnectorStatus> {
     return this.request(`/settings/connectors/${id}`, { method: 'DELETE' });
   }

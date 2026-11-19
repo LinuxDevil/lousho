@@ -110,6 +110,8 @@ export interface ConnectorStatus {
   account?: string;
   connectedAt?: string;
   scopes?: string[];
+  verifiedAt?: string;
+  error?: string;
   filled: string[];
 }
 

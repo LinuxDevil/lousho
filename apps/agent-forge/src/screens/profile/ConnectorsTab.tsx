@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { CONNECTORS, type ConnectorDef, type ConnectorStatus } from '../../../shared/profileWire';
+import { relativeTime } from '../../components/formatTime';
 import { errorMessage } from '../../components/errorMessage';
 import { navigate } from '../../router/router';
 import { useRoute } from '../../router/useRoute';
@@ -11,6 +12,8 @@ import { Input } from '../../ui/controls';
 import { Sheet } from '../../ui/Sheet';
 import { useToast } from '../../ui/Toast';
 import { CopyValue, fmtWhen, useLoad } from './profileShared';
+
+const CHECKED = new Set<string>(['github', 'atlassian', 'slack', 'figma', 'jenkins']);
 
 const googleCallback = () => `${window.location.origin}/settings/connectors/google/callback`;
 
@@ -117,8 +120,19 @@ export function ConnectorsTab() {
     reload();
   }, [route.query]);
 
+  const [verifying, setVerifying] = useState<string | undefined>(undefined);
+
   const statusOf = (id: string) => data?.find((s) => s.id === id);
   const replace = (next: ConnectorStatus) => setData((data ?? []).map((s) => (s.id === next.id ? next : s)));
+
+  const verify = (def: ConnectorDef) => {
+    setVerifying(def.id);
+    void runtimeClient
+      .verifyConnector(def.id)
+      .then(replace)
+      .catch((cause: unknown) => toast.show({ message: 'Could not verify', description: errorMessage(cause), tone: 'error' }))
+      .finally(() => setVerifying(undefined));
+  };
 
   return (
     <>
@@ -144,16 +158,22 @@ export function ConnectorsTab() {
                 <div className="profile-row-main">
                   <div className="profile-row-title">
                     {def.label}
-                    {status?.connected ? (
+                    {status?.connected && status.error !== undefined ? (
+                      <span className="profile-badge bad">Check failed</span>
+                    ) : status?.connected ? (
                       <span className="profile-badge on">Connected</span>
                     ) : partial ? (
                       <span className="profile-badge warn">{def.oauth ? 'Sign-in needed' : 'Incomplete'}</span>
                     ) : null}
                   </div>
                   <div className="profile-row-meta">
-                    {status?.connected
-                      ? [status.account, status.connectedAt && `connected ${fmtWhen(status.connectedAt)}`].filter(Boolean).join(' · ') || 'Connected'
-                      : def.description}
+                    {status?.connected && status.error !== undefined
+                      ? status.error
+                      : status?.connected && status.verifiedAt !== undefined
+                        ? [status.account, `verified ${relativeTime(status.verifiedAt)}`].filter(Boolean).join(' · ')
+                        : status?.connected
+                          ? [status.account, status.connectedAt && `connected ${fmtWhen(status.connectedAt)}`].filter(Boolean).join(' · ') || 'Connected'
+                          : def.description}
                   </div>
                   {status?.connected && status.scopes && status.scopes.length > 0 && (
                     <div className="profile-scopes">
@@ -166,6 +186,11 @@ export function ConnectorsTab() {
                   )}
                 </div>
                 <div className="profile-row-actions">
+                  {status?.connected && CHECKED.has(def.id) && (
+                    <button type="button" className="btn btn-sm btn-ghost" disabled={verifying === def.id} onClick={() => verify(def)}>
+                      {verifying === def.id ? 'Verifying…' : 'Verify'}
+                    </button>
+                  )}
                   {(status?.connected || partial) && (
                     <button type="button" className="btn btn-sm btn-ghost" onClick={() => setRemoving(def)}>
                       Disconnect
