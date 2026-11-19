@@ -59,6 +59,7 @@ export function withMcpConnectors(spec: AgentSpecV2, secrets: SecretSource): { s
       url,
       approval: 'always',
       deferLoading: true,
+      optional: true,
       ...(tokenSecret !== undefined && { headers: { Authorization: { secret: tokenSecret } } }),
     };
   }

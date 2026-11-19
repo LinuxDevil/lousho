@@ -128,6 +128,7 @@ describe('connected accounts on a built agent', () => {
       url: 'https://tracker.example.com/mcp',
       approval: 'always',
       deferLoading: true,
+      optional: true,
       headers: { Authorization: 'Bearer trk_secretvalue' },
     });
     expect(captured.config?.mcpServers?.docs.approval).toBeUndefined();

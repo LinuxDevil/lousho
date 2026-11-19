@@ -72,9 +72,10 @@ describe('connectorRunTools', () => {
         url: 'https://tracker.example.com/mcp',
         approval: 'always',
         deferLoading: true,
+        optional: true,
         headers: { Authorization: { secret: 'MCP_TRACKER_TOKEN' } },
       });
-      expect(spec.mcpServers?.wiki).toEqual({ url: 'https://wiki.example.com/mcp', approval: 'always', deferLoading: true });
+      expect(spec.mcpServers?.wiki).toEqual({ url: 'https://wiki.example.com/mcp', approval: 'always', deferLoading: true, optional: true });
     });
 
     it('skips a connector whose name or URL the spec already has, and changes nothing without one', () => {
