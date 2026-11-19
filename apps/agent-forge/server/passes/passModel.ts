@@ -21,7 +21,7 @@ import { estimateCost, SDKError } from 'lousho';
 import type { LLMProvider } from 'lousho';
 import { z } from 'zod';
 import type { PassKind } from '../../shared/wireTypes';
-import { buildAgentFromSpec } from '../buildAgent';
+import { resolveProviderForModel } from '../buildAgent';
 import type { SecretsStore } from '../secretsStore';
 import type { SettingsStore } from '../settingsStore';
 import { providerOf } from '../playground';
@@ -52,8 +52,8 @@ export interface PassModelInput<T> {
 /** `provider/model` → the provider, resolved like the judge's (stored keys first). */
 function resolvePassProvider(model: string, secretsStore: SecretsStore): LLMProvider {
   try {
-    const spec = { name: 'pass', prompt: '', provider: providerOf(model) };
-    return buildAgentFromSpec(spec, 'pass', undefined, { secretsStore }).provider;
+    const target = providerOf(model);
+    return resolveProviderForModel(`${target.type}/${target.model}`, secretsStore);
   } catch (error) {
     const code = error instanceof SDKError ? error.code : undefined;
     if (code === 'LOUSHO_PROVIDER_MISSING_API_KEY') throw new PassUnavailableError((error as Error).message);

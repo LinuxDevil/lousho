@@ -94,6 +94,7 @@ export async function runCandidate(
       captureContent: reporting.captureContent(),
       connectedAccounts: false,
     });
+    if (built.flow !== undefined) throw new Error('Flow agents cannot be evaluated yet.');
     const merged = AbortSignal.any([signal, AbortSignal.timeout(EVAL_EXAMPLE_TIMEOUT_MS)]);
     const result = await built.agent.stream(input, { signal: merged }).result;
     const error = settleError(result.finishReason, result.abortReason);

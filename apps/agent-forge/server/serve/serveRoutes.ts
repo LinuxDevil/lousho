@@ -82,7 +82,7 @@ interface CachedHandler {
 
 /** The default builder: `buildRunnableAgent` with durable serve sessions + file traces. Exported so tests can wrap it (count builds, spy on the spec). */
 export const buildServeAgent: ServeAgentBuilder = async (spec, agentId, workspace, services) => {
-  const { agent } = await buildRunnableAgent(
+  const { agent, flow } = await buildRunnableAgent(
     spec,
     agentId,
     {
@@ -102,6 +102,7 @@ export const buildServeAgent: ServeAgentBuilder = async (spec, agentId, workspac
       connectedAccounts: false,
     }
   );
+  if (flow !== undefined) throw new Error('Flow agents cannot be served yet.');
   return agent;
 };
 
