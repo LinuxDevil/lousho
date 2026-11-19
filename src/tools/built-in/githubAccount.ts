@@ -19,9 +19,12 @@ async function call(token: string, method: string, apiPath: string, body?: unkno
     ...(body !== undefined && { body: JSON.stringify(body) }),
   });
   const text = await res.text();
-  const trimmed = text.length > MAX_BODY_CHARS ? `${text.slice(0, MAX_BODY_CHARS)}…` : text;
-  if (!res.ok) throw toolFailure(`GitHub ${method} ${apiPath} answered ${res.status}: ${trimmed}`);
-  return trimmed;
+  if (!res.ok) throw toolFailure(`GitHub ${method} ${apiPath} answered ${res.status}: ${clip(text)}`);
+  return text;
+}
+
+function clip(text: string): string {
+  return text.length > MAX_BODY_CHARS ? `${text.slice(0, MAX_BODY_CHARS)}…` : text;
 }
 
 export function createGitHubAccountTools(token: string): Record<string, ToolDescriptor> {
@@ -59,7 +62,7 @@ export function createGitHubAccountTools(token: string): Record<string, ToolDesc
         body: z.record(z.string(), z.unknown()).optional(),
       }),
       needsApproval: async ({ method }) => method !== 'GET',
-      execute: async ({ method, path, body }) => call(token, method, path, body),
+      execute: async ({ method, path, body }) => clip(await call(token, method, path, body)),
     }),
   ];
   return Object.fromEntries(

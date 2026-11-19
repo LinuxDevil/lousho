@@ -27,6 +27,13 @@ describe('createGitHubAccountTools', () => {
     expect(JSON.parse(String(init.body))).toEqual({ name: 'r', private: true });
   });
 
+  it('lists repositories when the response is larger than the output cap', async () => {
+    const repos = Array.from({ length: 10 }, (_, i) => ({ full_name: `me/r${i}`, private: false, html_url: 'h', clone_url: 'c', default_branch: 'main', padding: 'x'.repeat(5000) }));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(repos), { status: 200 })));
+    const out = await createGitHubAccountTools('ghp_x')['github_list_my_repositories'].execute!({ perPage: 10 } as never, {} as never);
+    expect(JSON.parse(String(out))).toHaveLength(10);
+  });
+
   it('is what a github ref without owner and repo resolves to', async () => {
     const host = { resolveSecret: () => 'ghp_x' };
     const account = await resolveIntegrationRef({ integration: 'github', credentials: { token: { secret: 'GITHUB_TOKEN' } } }, host, 'tools.0');
