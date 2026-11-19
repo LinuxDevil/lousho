@@ -11,6 +11,7 @@ import { loadOptionalPeer } from '../providers/optionalPeer';
 import { signAppJwt } from '../channels/githubAppAuth';
 import { runBuild } from './build';
 import { findSdkRoot } from '../deploy/bundle';
+import { assertStudioBundleFresh } from './studioFreshness';
 import {
   assertValidConfig,
   envLine,
@@ -347,6 +348,13 @@ async function setWebhook(config: DeployConfig, secrets: Map<string, string>): P
 }
 
 async function deploy(flags: Flags): Promise<void> {
+  if (flags.local) {
+    try {
+      assertStudioBundleFresh(path.join(findSdkRoot(), 'apps', 'agent-forge'));
+    } catch (error) {
+      throw new DeployError((error as Error).message);
+    }
+  }
   const config = await resolveConfig(flags);
   const { secrets, password } = flags.dryRun ? { secrets: readSecrets(config.name), password: undefined } : await resolveSecrets(config, flags);
   if (flags.dryRun) config.proxy ??= 'caddy';
