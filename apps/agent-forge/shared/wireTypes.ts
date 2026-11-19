@@ -263,6 +263,7 @@ export interface RunListRow {
   bypass?: boolean;
   chatId?: string;
   preview?: string;
+  lastMessage?: string;
   turns?: number;
   lastActivity?: number;
 }
@@ -330,6 +331,8 @@ export interface ChatSessionMeta {
   /** What started the chat's latest run; persisted so a finished trigger run still names its trigger. */
   source?: 'manual' | 'trigger';
   triggerId?: string;
+  /** Truncated text of the chat's latest user or assistant message (derived on listing, not stored). */
+  lastMessage?: string;
 }
 
 /** A full past chat session, as returned by `GET /agents/:id/chats/:sessionId`. */

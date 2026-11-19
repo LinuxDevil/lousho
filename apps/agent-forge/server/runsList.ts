@@ -41,6 +41,7 @@ async function workspaceRuns(ref: { id: string; name: string; root: string }, ct
         agentName,
         chatId: g.chatId,
         preview: g.preview,
+        ...(g.lastMessage !== undefined && { lastMessage: g.lastMessage }),
         turns: g.turns,
         status: on ? (on.status === 'running' ? 'running' : 'paused') : g.status === 'error' ? 'error' : 'ok',
         live: on !== undefined,

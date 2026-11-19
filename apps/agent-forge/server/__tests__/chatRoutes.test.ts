@@ -66,5 +66,6 @@ describe('chat transcript and runs list routes', () => {
     const registry = { list: async () => [{ id: 'w', name: 'w', root: baseDir }] } as unknown as WorkspaceRegistry;
     const rows: RunListRow[] = await listAllRuns({ registry, warm: () => [] }, 10);
     expect(rows.find((r) => r.agentId === 'ops')).toMatchObject({ chatId: 'ops', live: false, source: 'trigger', triggerId: 'nightly' });
+    expect(rows.find((r) => r.agentId === 'ops')?.lastMessage).toBeTruthy();
   });
 });
