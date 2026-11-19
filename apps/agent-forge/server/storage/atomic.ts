@@ -95,6 +95,10 @@ function runHeld<T>(held: ReadonlySet<string> | undefined, agentId: string, fn: 
   return heldAgentIds.run(nextHeld, fn);
 }
 
+export function outsideAgentLocks<T>(fn: () => T): T {
+  return heldAgentIds.exit(fn);
+}
+
 /**
  * Runs `fn` after every earlier `withAgentLock(agentId, ...)` call has
  * settled - a FIFO in-process mutex per agent id (Studio is single-process,
