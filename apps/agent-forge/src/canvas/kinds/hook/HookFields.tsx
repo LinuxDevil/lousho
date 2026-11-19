@@ -8,12 +8,13 @@
  * The editor only edits text: hook code is never evaluated in the browser —
  * it runs in Studio's server-side sandbox the next time the agent runs.
  */
-import type { ChangeEvent } from 'react';
+import { useState, type ChangeEvent } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
 import { javascript } from '@codemirror/lang-javascript';
 import { allHookIds, HOOK_ID_PATTERN, hookFileOk } from '../../../graph/v2/kinds/hook';
 import type { HookSpec, InlineHookSpec } from '../../../graph/v2/specTypes';
 import type { Graph, HookNodeData, NodeOfKind } from '../../../graph/v2/types';
+import { ConfirmDialog } from '../../../ui/Dialog';
 import { Field } from '../../../ui/Field';
 import { Input, Switch } from '../../../ui/controls';
 import { HOOK_TEMPLATES, templatePoint, type HookTemplate } from '../../../hooks/hookTemplates';
@@ -79,11 +80,8 @@ function FileForm({ item, patch }: { item: { file: string }; patch: Patch }): JS
   );
 }
 
-/** Applies `template`: replaces `code` (after a confirm when it is non-empty) and `name` while it is still the default 'hook'. */
+/** Applies `template`: replaces `code` and `name` while it is still the default 'hook'. */
 function applyTemplate(inline: InlineHookSpec, set: (part: Partial<InlineHookSpec>) => void, template: HookTemplate): void {
-  if (inline.code !== '' && !window.confirm(`Replace the current code with ${template.name}?`)) {
-    return;
-  }
   set({ code: template.code, ...(inline.name === 'hook' ? { name: template.name } : {}) });
 }
 
@@ -104,6 +102,7 @@ function InlineForm({ item, patch }: { item: HookNodeData['item']; patch: Patch 
     delete next.enabled;
     patch({ inline: next });
   };
+  const [replacing, setReplacing] = useState<HookTemplate | undefined>(undefined);
   const templates = HOOK_TEMPLATES.filter((t) => templatePoint(t) === inline.point);
   return (
     <>
@@ -161,7 +160,7 @@ function InlineForm({ item, patch }: { item: HookNodeData['item']; patch: Patch 
                 type="button"
                 className="btn btn-sm btn-add-hook"
                 title={`Use the ${template.name} hook (${template.when})`}
-                onClick={() => applyTemplate(inline, set, template)}
+                onClick={() => (inline.code === '' ? applyTemplate(inline, set, template) : setReplacing(template))}
               >
                 {template.name}
               </button>
@@ -169,6 +168,17 @@ function InlineForm({ item, patch }: { item: HookNodeData['item']; patch: Patch 
           </div>
         </div>
       )}
+      <ConfirmDialog
+        open={replacing !== undefined}
+        title={`Replace the current code with ${replacing?.name ?? ''}?`}
+        description="The code in the editor is overwritten by the template."
+        confirmLabel="Replace code"
+        onCancel={() => setReplacing(undefined)}
+        onConfirm={() => {
+          if (replacing !== undefined) applyTemplate(inline, set, replacing);
+          setReplacing(undefined);
+        }}
+      />
     </>
   );
 }

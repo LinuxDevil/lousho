@@ -16,6 +16,7 @@ import { ObserveApiError, observeClient } from '../../observe/observeClient';
 import type { NewEvaluator, ObserveEvaluator, ObserveEvaluatorTestResult } from '../../observe/types';
 import { useAgents, useDaemonDown, useEvaluator } from '../../observe/useObserve';
 import { Card } from '../../ui/Card';
+import { ConfirmDialog } from '../../ui/Dialog';
 import { EmptyState } from '../../ui/EmptyState';
 import { SkeletonRows } from '../../ui/Skeleton';
 import { useToast } from '../../ui/Toast';
@@ -109,8 +110,9 @@ function EditRule({ rule, back, onSaved }: { rule: ObserveEvaluator; back: strin
     onSaved();
     return false;
   };
+  const [asking, setAsking] = useState(false);
   const remove = async () => {
-    if (!window.confirm(`Delete evaluator ${rule.name}? Its past scores stay.`)) return;
+    setAsking(false);
     try {
       await observeClient.deleteEvaluator(rule.rule_id);
       toast.show({ tone: 'success', message: `Deleted evaluator ${rule.name}.` });
@@ -132,11 +134,19 @@ function EditRule({ rule, back, onSaved }: { rule: ObserveEvaluator; back: strin
         submitLabel="Save changes"
         onSubmit={save}
         actions={
-          <button type="button" className="btn btn-ghost btn-danger-text" onClick={() => void remove()}>
+          <button type="button" className="btn btn-ghost btn-danger-text" onClick={() => setAsking(true)}>
             <Trash2 aria-hidden="true" />
             Delete
           </button>
         }
+      />
+      <ConfirmDialog
+        open={asking}
+        title={`Delete evaluator ${rule.name}?`}
+        description="Its past scores stay."
+        confirmLabel="Delete evaluator"
+        onCancel={() => setAsking(false)}
+        onConfirm={() => void remove()}
       />
       <TestOnTrace rule={rule} prefill={query.get('trace') ?? ''} />
     </div>

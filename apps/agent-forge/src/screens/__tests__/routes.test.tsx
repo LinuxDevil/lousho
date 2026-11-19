@@ -18,7 +18,7 @@ const appState = vi.hoisted(() => ({
   debugMode: false,
   setDebugMode: () => {},
   setDrawerTab: () => {},
-  runAgent: async () => {},
+  runAgent: vi.fn<[string, { bypass?: boolean }?], Promise<void>>(async () => {}),
   stopAgent: async () => {},
   save: async () => {},
   setSpec: () => {},
@@ -259,6 +259,37 @@ describe('Topbar', () => {
     render(<Screens />);
     expect(buttonNames()).not.toContain('Run');
     expect(container.querySelector('[aria-label="More actions"]')).toBeNull();
+  });
+
+  describe('Bypass', () => {
+    const dialogButton = (name: string) =>
+      [...document.body.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent?.trim() === name) as HTMLButtonElement;
+    const clickBypass = () => {
+      window.history.replaceState(null, '', '/?token=secret#/agents/demo/canvas');
+      render(<Topbar />);
+      act(() => (container.querySelector('button[title="Run once without asking for approvals"]') as HTMLButtonElement).click());
+    };
+
+    beforeEach(() => {
+      appState.runAgent.mockClear();
+      sessionStorage.clear();
+    });
+
+    it('asks in a dialog and runs with bypass once confirmed', async () => {
+      clickBypass();
+      expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain('Run without approvals?');
+      expect(appState.runAgent).not.toHaveBeenCalled();
+      await act(async () => dialogButton('Run without approvals').click());
+      expect(appState.runAgent).toHaveBeenCalledWith('Run the agent.', { bypass: true });
+      expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+    });
+
+    it('does not run when cancelled', () => {
+      clickBypass();
+      act(() => dialogButton('Cancel').click());
+      expect(appState.runAgent).not.toHaveBeenCalled();
+      expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+    });
   });
 
   it('drops the Build/Observe switch on the builder', () => {

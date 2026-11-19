@@ -19,6 +19,7 @@ import type { ReactNode } from 'react';
 import { CornerDownRight, Play, Plus, Sparkles, User, Wrench, type LucideIcon } from 'lucide-react';
 import { useAppState } from '../state/AppState';
 import type { ChatMessage } from '../../shared/wireTypes';
+import { DEFAULT_RUN_INPUT } from '../../shared/runInput';
 import { ApprovalCard } from './ApprovalCard';
 import { AuthorText } from '../author/AuthorText';
 import { QuestionCard } from './test/QuestionCard';
@@ -111,14 +112,15 @@ function MessageContent({ kind, message }: { kind: BubbleKind; message: ChatMess
  * The user turn a top-bar Run added is shown as "Run input" in
  * a neutral bubble, not as a message the user typed.
  */
-function Bubble({ message, toolResults }: { message: ChatMessage; toolResults: Map<string, ChatMessage> }) {
+export function Bubble({ message, toolResults }: { message: ChatMessage; toolResults: Map<string, ChatMessage> }) {
   const kind = bubbleKindOf(message);
+  const runStarted = kind === 'user' && message.content === DEFAULT_RUN_INPUT;
   const fromRun = message.source === 'run';
   const fromSteer = message.source === 'steer';
-  const sourced = fromRun || fromSteer;
+  const sourced = fromRun || fromSteer || runStarted;
   const { Icon, speaker } = BUBBLE_KINDS[kind];
-  const AvatarIcon = fromRun ? Play : fromSteer ? CornerDownRight : Icon;
-  const sourceLabel = fromRun ? 'Run input' : fromSteer ? 'Steered' : undefined;
+  const AvatarIcon = fromRun || runStarted ? Play : fromSteer ? CornerDownRight : Icon;
+  const sourceLabel = runStarted ? 'Run started' : fromRun ? 'Run input' : fromSteer ? 'Steered' : undefined;
   return (
     <div className={`chat-msg ${kind}${sourced ? ' run-input' : ''}`}>
       <Avatar Icon={AvatarIcon} />
@@ -128,7 +130,7 @@ function Bubble({ message, toolResults }: { message: ChatMessage; toolResults: M
         ) : (
           <Speaker name={speaker} />
         )}
-        {message.content && <MessageContent kind={kind} message={message} />}
+        {message.content && !runStarted && <MessageContent kind={kind} message={message} />}
         {message.toolCalls?.map((tc) => (
           <div className="chat-bubble chat-bubble-tool" key={tc.id}>
             <ToolCallCard toolCall={tc} result={toolResults.get(tc.id)} />

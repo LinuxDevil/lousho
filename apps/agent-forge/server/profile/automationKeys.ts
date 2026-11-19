@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Express } from 'express';
+import { DEFAULT_RUN_INPUT } from '../../shared/runInput';
 import type { AutomationKey, CreateAutomationKeyRequest, CreatedAutomationKey } from '../../shared/profileWire';
 import { asyncRoute, paramId, sendError } from '../http/routeUtils';
 import type { WorkspaceResolver } from '../workspace/context';
@@ -131,7 +132,7 @@ export function registerAutomationKeyRoutes(app: Express, store: AutomationKeySt
         sendError(res, 400, 'Body must be JSON', 'LOUSHO_BODY_INVALID');
         return;
       }
-      const input = typeof body.input === 'string' && body.input.trim() !== '' ? body.input : 'Run the agent.';
+      const input = typeof body.input === 'string' && body.input.trim() !== '' ? body.input : DEFAULT_RUN_INPUT;
       if (input.length > MAX_INPUT) {
         sendError(res, 413, 'input is too long', 'LOUSHO_BODY_INVALID');
         return;
