@@ -5,7 +5,8 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentEvent, AgentEventOf, AgentEventType } from 'lousho';
 import type { FlowExecutionEvent, FlowExecutionEventOf } from 'lousho/flows';
-import type { LogEntry } from '../shared/wireTypes';
+import { describeRunSetup } from '../shared/runSetup';
+import type { LogEntry, RunSetup } from '../shared/wireTypes';
 
 /** The event-specific part of a `LogEntry`; id/agentId/timestamp are added by the translators. */
 type LogBody = Pick<LogEntry, 'level' | 'phase' | 'message'> & Partial<Pick<LogEntry, 'toolName' | 'detail'>>;
@@ -148,4 +149,14 @@ const FLOW_LOG_BUILDERS: FlowLogBuilders = {
 export function toFlowLogEntries(agentId: string, event: FlowExecutionEvent): LogEntry[] {
   const build = FLOW_LOG_BUILDERS[event.type] as ((event: FlowExecutionEvent) => LogBody) | undefined;
   return build ? [toEntry(agentId, event.timestamp, build(event))] : [];
+}
+
+export function runSetupLogEntry(agentId: string, setup: RunSetup): LogEntry {
+  const { summary, detail } = describeRunSetup(setup);
+  return toEntry(agentId, new Date(), {
+    level: 'info',
+    phase: 'trigger',
+    message: summary,
+    ...(detail !== undefined && { detail }),
+  });
 }

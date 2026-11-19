@@ -54,6 +54,9 @@ export class FileChatStore {
           updatedAt: record.updatedAt,
           messageCount: record.messages.length,
           preview: record.preview,
+          ...lastMessageOf(record.messages),
+          ...(record.source !== undefined && { source: record.source }),
+          ...(record.triggerId !== undefined && { triggerId: record.triggerId }),
         });
       } catch {
         // Skip a corrupt/partial file rather than failing the whole listing.
@@ -68,4 +71,13 @@ export function previewFor(messages: ChatMessage[]): string {
   const firstUser = messages.find((m) => m.role === 'user');
   const text = firstUser?.content ?? '';
   return text.length > 80 ? `${text.slice(0, 80)}...` : text;
+}
+
+const LAST_MESSAGE_CHARS = 120;
+
+function lastMessageOf(messages: ChatMessage[]): { lastMessage?: string } {
+  const last = [...messages].reverse().find((m) => (m.role === 'user' || m.role === 'assistant') && m.content.trim() !== '');
+  if (last === undefined) return {};
+  const text = last.content.replace(/\s+/g, ' ').trim();
+  return { lastMessage: text.length > LAST_MESSAGE_CHARS ? `${text.slice(0, LAST_MESSAGE_CHARS)}...` : text };
 }

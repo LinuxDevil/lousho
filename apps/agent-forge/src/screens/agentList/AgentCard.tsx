@@ -1,4 +1,4 @@
-import { Bot, Folder, Server, Wrench, type LucideIcon } from 'lucide-react';
+import { Bot, Folder, Plug, Server, Wrench, type LucideIcon } from 'lucide-react';
 
 import type { AgentListItem } from '../../../shared/wireTypes';
 import { fmtAge } from '../../observe/format';
@@ -73,24 +73,22 @@ export function lastRunLabel(status: string): string {
 }
 
 interface CapChip {
-  key: 'tools' | 'mcpServers' | 'subagents';
+  key: string;
   icon: LucideIcon;
   text: string;
   violet?: boolean;
 }
 
 /** The non-zero capability chips, in DOM order; empty when `counts` is absent. */
-function capabilityChips(counts: AgentCapabilityCounts | undefined): CapChip[] {
-  if (!counts) return [];
-  const chips: CapChip[] = [
-    { key: 'tools', icon: Wrench, text: `${counts.tools} ${counts.tools === 1 ? 'tool' : 'tools'}` },
-    { key: 'mcpServers', icon: Server, text: `${counts.mcpServers} ${counts.mcpServers === 1 ? 'MCP server' : 'MCP servers'}` },
-    { key: 'subagents', icon: Bot, text: `${counts.subagents} ${counts.subagents === 1 ? 'subagent' : 'subagents'}`, violet: true },
+function capabilityChips(counts: AgentCapabilityCounts | undefined, accounts: readonly string[] = []): CapChip[] {
+  const accountChips = accounts.map((name): CapChip => ({ key: `account-${name}`, icon: Plug, text: name }));
+  if (!counts) return accountChips;
+  const chips: (CapChip & { count: number })[] = [
+    { key: 'tools', count: counts.tools, icon: Wrench, text: `${counts.tools} ${counts.tools === 1 ? 'tool' : 'tools'}` },
+    { key: 'mcpServers', count: counts.mcpServers, icon: Server, text: `${counts.mcpServers} ${counts.mcpServers === 1 ? 'MCP server' : 'MCP servers'}` },
+    { key: 'subagents', count: counts.subagents, icon: Bot, text: `${counts.subagents} ${counts.subagents === 1 ? 'subagent' : 'subagents'}`, violet: true },
   ];
-  return chips.filter((chip) => {
-    const n = counts[chip.key];
-    return n > 0;
-  });
+  return [...accountChips, ...chips.filter((chip) => chip.count > 0)];
 }
 
 interface TimeText {
@@ -118,7 +116,7 @@ function timeText(iso: string, now: number): TimeText | null {
 export function AgentCard({ agent, onOpen, onToggleEnabled, toggling = false, now = Date.now(), workspaceName, workspaceRoot, workspaceId }: AgentCardProps): JSX.Element {
   const { id, name, description, model, enabled, disabledReason, labels, updatedAt, publishedVersion, lastRun } = agent;
   const nameId = `agent-card-name-${encodeURIComponent(id)}`;
-  const caps = capabilityChips(agent.counts);
+  const caps = capabilityChips(agent.counts, agent.accounts);
   const lastRunTime = lastRun ? timeText(lastRun.at, now) : null;
   const updatedTime = timeText(updatedAt, now);
   const hiddenLabels = labels.slice(MAX_LABELS);

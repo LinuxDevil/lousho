@@ -13,7 +13,7 @@
 import { listBuiltinTools, listGuardrails, listModels, listTriggerTypes, type LLMProvider } from 'lousho';
 import type { connectMcp } from 'lousho/mcp';
 import type { SettingsStore } from '../settingsStore';
-import { connectedAccountsForAuthor } from '../connectorRunTools';
+import { connectedAccountsForAuthor, mcpConnectorsForAuthor } from '../connectorRunTools';
 import type { SecretsStore } from '../secretsStore';
 import type { TemplateCatalog } from '../templates/templateCatalog';
 import type { WorkspaceContext, WorkspaceResolver } from '../workspace/context';
@@ -140,6 +140,7 @@ export function createAuthorRunner(deps: CreateAuthorRunnerDeps): AuthorTurnRunn
       focus: s.focus,
       openProposals: openProposalCards(s.transcript),
       connectedAccounts: connectedAccountsForAuthor(deps.secrets),
+      mcpConnectors: mcpConnectorsForAuthor(deps.secrets),
       now,
     }),
     ...(deps.providerFor ? { providerFor: deps.providerFor } : {}),

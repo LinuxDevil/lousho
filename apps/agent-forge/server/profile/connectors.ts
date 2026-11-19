@@ -17,6 +17,8 @@ interface ConnectorMeta {
   account?: string;
   connectedAt: string;
   scopes?: string[];
+  verifiedAt?: string;
+  error?: string;
 }
 
 type MetaFile = Partial<Record<ConnectorId, ConnectorMeta>>;
@@ -171,6 +173,8 @@ export class ConnectorService {
       ...(connected && meta?.account !== undefined && { account: meta.account }),
       ...(connected && meta?.connectedAt !== undefined && { connectedAt: meta.connectedAt }),
       ...(connected && meta?.scopes !== undefined && { scopes: meta.scopes }),
+      ...(connected && meta?.verifiedAt !== undefined && { verifiedAt: meta.verifiedAt }),
+      ...(connected && meta?.error !== undefined && { error: meta.error }),
     };
   }
 
@@ -202,8 +206,28 @@ export class ConnectorService {
     if (def.id === 'google') {
       return { status: this.status(def), authUrl: '/settings/connectors/google/start' };
     }
-    this.saveMeta(def.id, { ...verified, connectedAt: new Date().toISOString() });
+    const now = new Date().toISOString();
+    this.saveMeta(def.id, { ...verified, connectedAt: now, verifiedAt: now });
     return { status: this.status(def) };
+  }
+
+  async verifyNow(def: ConnectorDef): Promise<ConnectorStatus> {
+    if (!this.status(def).connected) throw new VerifyError(`${def.label} is not connected.`);
+    const values: Record<string, string> = {};
+    for (const field of def.fields) {
+      const value = this.secrets.getSecret(field.secret);
+      if (value !== undefined) values[field.key] = value;
+    }
+    const previous = this.meta()[def.id];
+    const now = new Date().toISOString();
+    try {
+      const verified = await verify(def.id, values);
+      this.saveMeta(def.id, { ...verified, connectedAt: previous?.connectedAt ?? now, verifiedAt: now });
+    } catch (error) {
+      if (!(error instanceof VerifyError)) throw error;
+      this.saveMeta(def.id, { ...(previous?.account !== undefined && { account: previous.account }), ...(previous?.scopes !== undefined && { scopes: previous.scopes }), connectedAt: previous?.connectedAt ?? now, verifiedAt: now, error: error.message });
+    }
+    return this.status(def);
   }
 
   disconnect(def: ConnectorDef): ConnectorStatus {
@@ -278,6 +302,23 @@ export function registerConnectorRoutes(app: Express, service: ConnectorService)
       }
       try {
         res.json(await service.connect(def, (req.body ?? {}) as ConnectRequest));
+      } catch (error) {
+        if (!(error instanceof VerifyError)) throw error;
+        sendError(res, 422, error.message, 'LOUSHO_CONNECTOR_INVALID');
+      }
+    }),
+  );
+
+  app.post(
+    '/settings/connectors/:provider/verify',
+    asyncRoute(async (req, res) => {
+      const def = defOf(paramId(req, 'provider'));
+      if (def === undefined) {
+        sendError(res, 404, 'Unknown connector');
+        return;
+      }
+      try {
+        res.json(await service.verifyNow(def));
       } catch (error) {
         if (!(error instanceof VerifyError)) throw error;
         sendError(res, 422, error.message, 'LOUSHO_CONNECTOR_INVALID');

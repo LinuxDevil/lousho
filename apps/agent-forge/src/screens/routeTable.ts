@@ -57,6 +57,7 @@ export const ROUTES: readonly RouteEntry[] = [
   { pattern: '/templates', screen: 'templates', example: '/templates' },
   { pattern: '/playground', screen: 'playground', example: '/playground' },
   { pattern: '/runs', screen: 'runs', example: '/runs' },
+  { pattern: '/w/:ws/runs/:agentId/:chatId', screen: 'runs', example: '/w/e2e-000000/runs/e2e-agent/e2e-chat' },
   { pattern: '/traces', screen: 'traces', example: '/traces' },
   { pattern: '/traces/:traceId', screen: 'trace', example: '/traces/e2e-trace' },
   { pattern: '/threads', screen: 'threads', example: '/threads' },

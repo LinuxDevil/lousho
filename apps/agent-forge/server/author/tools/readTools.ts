@@ -14,6 +14,7 @@
 import { defineTool } from 'lousho';
 import { z } from 'zod';
 import type { AgentSpecV2 } from 'lousho';
+import type { StoredMcpConnector } from '../../../shared/profileWire';
 import type { McpServerSpecV2 } from '../../../shared/wireTypes';
 import type { WorkspaceContext } from '../../workspace/context';
 import { specHash } from '../../storage/specHash';
@@ -252,7 +253,7 @@ interface McpServerRow {
   headersKeys?: string[];
   /** Agent ids that configure this server (`key` + command/url), sorted. */
   usedBy: string[];
-  source: 'agent' | 'registry';
+  source: 'agent' | 'registry' | 'profile';
 }
 
 /** The dedupe key the ticket fixes: `key` + command/url. */
@@ -326,6 +327,19 @@ async function collectRegistryServers(catalog: CatalogService, byDedupe: Map<str
   }
 }
 
+function collectProfileServers(connectors: StoredMcpConnector[], byDedupe: Map<string, McpServerRow>): void {
+  for (const { name, url, tokenSecret } of connectors) {
+    byDedupe.set(dedupeKey(name, url), {
+      key: name,
+      transport: 'http',
+      url,
+      ...(tokenSecret !== undefined && { headersKeys: ['Authorization'] }),
+      usedBy: [],
+      source: 'profile',
+    });
+  }
+}
+
 const listMcpServers: AuthorToolFactory = (_turn, deps) =>
   defineTool({
     name: 'listMcpServers',
@@ -336,6 +350,7 @@ const listMcpServers: AuthorToolFactory = (_turn, deps) =>
         const { repo } = await deps.workspace();
         const byDedupe = new Map<string, McpServerRow>();
         await collectAgentServers(repo, byDedupe);
+        collectProfileServers(deps.secrets.mcpConnectors?.() ?? [], byDedupe);
         await collectRegistryServers(deps.catalog, byDedupe);
         const items = [...byDedupe.values()]
           .map((row) => ({ ...row, usedBy: [...row.usedBy].sort((a, b) => a.localeCompare(b)) }))

@@ -34,7 +34,7 @@ import type {
   VersionSource,
 } from '../../shared/wireTypes';
 import type { AgentRepo } from './agentRepo';
-import { readJsonFile, withAgentLock, writeFileAtomic, writeJsonAtomic } from './atomic';
+import { outsideAgentLocks, readJsonFile, withAgentLock, writeFileAtomic, writeJsonAtomic } from './atomic';
 import { specHash } from './specHash';
 import { clampVersionText, VERSION_REQUEST_MAX_CHARS } from './versionText';
 
@@ -184,7 +184,7 @@ export class VersionStore {
   private notifyVersionWritten(agentId: string, item: VersionListItem): void {
     for (const listener of this.writtenListeners) {
       try {
-        listener(agentId, item);
+        outsideAgentLocks(() => listener(agentId, item));
       } catch (error) {
         console.warn(`[agent-forge] version-written listener failed for '${agentId}' v${item.version}:`, error);
       }

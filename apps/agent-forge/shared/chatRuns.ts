@@ -3,6 +3,7 @@ import type { ChatSessionMeta, TraceSummaryPayload } from './wireTypes';
 export interface ChatRunGroup<T extends TraceSummaryPayload = TraceSummaryPayload> {
   chatId: string;
   preview: string;
+  lastMessage?: string;
   messageCount: number;
   startTime: number;
   lastActivity: number;
@@ -11,6 +12,8 @@ export interface ChatRunGroup<T extends TraceSummaryPayload = TraceSummaryPayloa
   inputTokens: number;
   outputTokens: number;
   costUsd?: number;
+  source?: 'manual' | 'trigger';
+  triggerId?: string;
   traces: T[];
 }
 
@@ -28,8 +31,11 @@ export function groupRunsByChat<T extends TraceSummaryPayload>(agentId: string, 
   for (const chat of chats) {
     const g = group(chat.sessionId, Date.parse(chat.startedAt));
     g.preview = chat.preview;
+    if (chat.lastMessage !== undefined) g.lastMessage = chat.lastMessage;
     g.messageCount = chat.messageCount;
     g.lastActivity = Math.max(g.lastActivity, Date.parse(chat.updatedAt));
+    if (chat.source !== undefined) g.source = chat.source;
+    if (chat.triggerId !== undefined) g.triggerId = chat.triggerId;
   }
   for (const trace of [...traces].sort((a, b) => a.startTime - b.startTime)) {
     const g = group(trace.conversationId ?? agentId, trace.startTime);

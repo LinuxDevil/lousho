@@ -109,7 +109,7 @@ function LogFilterBar({ filters }: { filters: LogFilters }) {
 /** `[phase] message`, then the entry's detail as JSON when it has one. */
 export function logTitle(entry: LogEntry): string {
   const line = `[${entry.phase}] ${entry.message}`;
-  return entry.detail === undefined ? line : `${line}\n${JSON.stringify(entry.detail)}`;
+  return entry.detail === undefined ? line : `${line}\n${typeof entry.detail === 'string' ? entry.detail : JSON.stringify(entry.detail)}`;
 }
 
 function LogRow({ entry, highlighted, onSelect }: { entry: LogEntry; highlighted: boolean; onSelect: () => void }) {

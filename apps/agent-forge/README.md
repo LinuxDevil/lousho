@@ -51,3 +51,27 @@ Usage: lousho-studio [--workspace <dir>] [--port N] [--host H]
 
 Node.js >= 22.19. Provider API keys are configured inside Studio's Settings;
 no keys are needed to open the app.
+
+## Working on Studio
+
+From the SDK repository root, `npx lousho studio --dev` runs Studio from
+source: the API server (`tsx watch`) and the Vite dev server together. Open the
+Vite URL (port 5173) for the UI. Without `--dev`, a checkout serves the built
+bundle once `npm run build:studio` has produced `dist-server/`.
+
+Studio has two test suites, run from `apps/agent-forge`:
+
+```
+npm test            # UI suite (vitest, watch mode)
+npm run test:server # server suite
+npm run test:all    # both, once, then exit
+```
+
+Check types and lint with `npm run typecheck`, `npm run typecheck:server` and
+`npm run lint`.
+
+To ship a change: merge it to main, run the Release workflow, then run
+`npm run ship:studio` from the repository root. It builds the SDK, builds
+Studio, and runs `lousho deploy --local --yes`. A `--local` deploy refuses to
+start when any file under `server/`, `src/` or `shared/` is newer than
+`dist-server/cli.cjs`; run `npm run build:studio` and deploy again.

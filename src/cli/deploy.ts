@@ -11,6 +11,7 @@ import { loadOptionalPeer } from '../providers/optionalPeer';
 import { signAppJwt } from '../channels/githubAppAuth';
 import { runBuild } from './build';
 import { findSdkRoot } from '../deploy/bundle';
+import { assertStudioBundleFresh } from './studioFreshness';
 import {
   assertValidConfig,
   envLine,
@@ -347,6 +348,13 @@ async function setWebhook(config: DeployConfig, secrets: Map<string, string>): P
 }
 
 async function deploy(flags: Flags): Promise<void> {
+  if (flags.local) {
+    try {
+      assertStudioBundleFresh(path.join(findSdkRoot(), 'apps', 'agent-forge'));
+    } catch (error) {
+      throw new DeployError((error as Error).message);
+    }
+  }
   const config = await resolveConfig(flags);
   const { secrets, password } = flags.dryRun ? { secrets: readSecrets(config.name), password: undefined } : await resolveSecrets(config, flags);
   if (flags.dryRun) config.proxy ??= 'caddy';
@@ -379,10 +387,16 @@ async function deploy(flags: Flags): Promise<void> {
   if (config.studio && password !== undefined) {
     checks.push([`https://${hostFor(config, 'studio')}/health`, { authorization: `Basic ${Buffer.from(`${config.studio.user}:${password}`).toString('base64')}` }]);
   }
-  for (const [url, headers] of checks) console.log(`${(await waitHealthy(url, headers)) ? 'healthy' : 'NOT healthy'}: ${url}`);
+  const unhealthy: string[] = [];
+  for (const [url, headers] of checks) {
+    const ok = await waitHealthy(url, headers);
+    if (!ok) unhealthy.push(url);
+    console.log(`${ok ? 'healthy' : 'NOT healthy'}: ${url}`);
+  }
   await setWebhook(config, secrets);
   if (config.studio) console.log(`Studio: https://${hostFor(config, 'studio')} (login: ${config.studio.user})`);
   for (const agent of config.agents) console.log(`${agent.name}: https://${hostFor(config, agent.name)} (Bearer LOUSHO_API_TOKEN from ${secretsPath(config.name)})`);
+  if (unhealthy.length > 0) throw new DeployError(`deployed, but not healthy: ${unhealthy.join(', ')}`);
 }
 
 function openBrowser(url: string): void {

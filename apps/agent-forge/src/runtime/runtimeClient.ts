@@ -17,6 +17,8 @@ import type {
   CreatedInbound,
   InboundDelivery,
   InboundEndpoint,
+  McpConnectRequest,
+  McpConnectorStatus,
   NotificationSettings,
 } from '../../shared/profileWire';
 import type { AgentSpecV2 } from 'lousho';
@@ -904,8 +906,28 @@ class RuntimeClient implements AgentApi {
     return this.request(`/settings/connectors/${id}`, { method: 'PUT', body: JSON.stringify({ values }) });
   }
 
+  async verifyConnector(id: ConnectorId): Promise<ConnectorStatus> {
+    return this.request(`/settings/connectors/${id}/verify`, { method: 'POST' });
+  }
+
   async disconnectConnector(id: ConnectorId): Promise<ConnectorStatus> {
     return this.request(`/settings/connectors/${id}`, { method: 'DELETE' });
+  }
+
+  async listMcpConnectors(): Promise<McpConnectorStatus[]> {
+    return this.request('/settings/mcp-connectors', { method: 'GET' });
+  }
+
+  async connectMcpConnector(name: string, body: McpConnectRequest): Promise<McpConnectorStatus> {
+    return this.request(`/settings/mcp-connectors/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  async verifyMcpConnector(name: string): Promise<McpConnectorStatus> {
+    return this.request(`/settings/mcp-connectors/${encodeURIComponent(name)}/verify`, { method: 'POST' });
+  }
+
+  async removeMcpConnector(name: string): Promise<void> {
+    await this.request(`/settings/mcp-connectors/${encodeURIComponent(name)}`, { method: 'DELETE' });
   }
 
   async listAutomationKeys(): Promise<AutomationKey[]> {

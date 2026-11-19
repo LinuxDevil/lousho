@@ -156,7 +156,8 @@ import { registerVersionRoutes } from './routes/versionRoutes';
 import { registerCatalogRoutes } from './routes/catalogRoutes';
 import { openRouterModels } from './routes/openRouterCatalog';
 import { registerHostRoutes } from './routes/hostRoutes';
-import { registerMcpProbeRoute } from './routes/mcpProbe';
+import { McpConnectorService, registerMcpConnectorRoutes } from './profile/mcpConnectors';
+import { probeMcpServer, registerMcpProbeRoute } from './routes/mcpProbe';
 import { AuthorSessionStore } from './author/sessionStore';
 import { registerAuthorRoutes } from './author/routes';
 import { registerAuthorSettingsRoutes } from './author/settings';
@@ -1514,6 +1515,7 @@ export function createApp(options: CreateAppOptions): Express {
     registry: workspaceRegistry,
     warm: options.warm ?? (() => [workspace]),
     codeAgents: codeAgentCache,
+    secrets,
   });
   // Saved-agent list/record/save/delete (routes/agentRoutes.ts - the v2
   // wire shapes, with ?view=legacy for the still-v1 canvas; stores come
@@ -1581,6 +1583,9 @@ export function createApp(options: CreateAppOptions): Express {
   // keys, sharing the app's one store (routes/secretRoutes.ts).
   registerSecretRoutes(app, secrets);
   registerConnectorRoutes(app, new ConnectorService(paths.connectors, secrets));
+  const mcpConnectors = new McpConnectorService(paths.connectors, secrets, (server) => probeMcpServer(server, probeDeps));
+  secrets.attachMcpConnectors(() => mcpConnectors.stored());
+  registerMcpConnectorRoutes(app, mcpConnectors);
   registerAutomationKeyRoutes(app, new AutomationKeyStore(paths.automationKeys), workspaceResolver);
   registerInboundRoutes(app, new InboundService(paths.inbound, paths.inboundLog, secrets), workspaceResolver);
   const notifications = new NotificationService(paths.notifications, secrets);

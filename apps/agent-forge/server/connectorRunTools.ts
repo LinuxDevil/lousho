@@ -1,31 +1,76 @@
 import type { AgentSpecV2, ToolDescriptor } from 'lousho';
 import { INTEGRATION_CREDENTIALS, type IntegrationName, type ToolRef } from 'lousho/spec';
 import { createShellTool, NodeWorkspace } from 'lousho/tools';
-import { CONNECTORS, INTEGRATION_SECRETS } from '../shared/profileWire';
+import { CONNECTORS, INTEGRATION_SECRETS, type StoredMcpConnector } from '../shared/profileWire';
+import type { RunSetupSkipped } from '../shared/wireTypes';
 
-type SecretSource = { getSecret(name: string): string | undefined } | undefined;
+type SecretSource = { getSecret(name: string): string | undefined; mcpConnectors?(): StoredMcpConnector[] } | undefined;
 
 const READ_ONLY_TOOL = /_(get|list|search|read|lookup|resolve|check|download)(_|$)/;
 
-export function withConnectedIntegrations(spec: AgentSpecV2, secrets: SecretSource): { spec: AgentSpecV2; added: number } {
-  if (secrets === undefined) return { spec, added: 0 };
+function connectionStates(spec: AgentSpecV2, secrets: SecretSource): { integration: IntegrationName; present: [string, string][]; missing: string[] }[] {
+  if (secrets === undefined) return [];
   const declared = new Set((spec.tools ?? []).flatMap((ref) => ('integration' in ref ? [ref.integration] : [])));
-  const added: ToolRef[] = [];
+  const states = [];
   for (const [name, { credentials }] of Object.entries(INTEGRATION_SECRETS)) {
     const integration = name as IntegrationName;
     if (declared.has(integration)) continue;
     const present = Object.entries(credentials).filter(([, secret]) => secrets.getSecret(secret) !== undefined);
+    if (present.length === 0) continue;
     const keys = new Set(present.map(([key]) => key));
-    if (present.length === 0 || !INTEGRATION_CREDENTIALS[integration].required.every((key) => keys.has(key))) continue;
-    added.push({
+    const missing = INTEGRATION_CREDENTIALS[integration].required.filter((key) => !keys.has(key));
+    states.push({ integration, present, missing: missing.map((key) => CONNECTORS.flatMap((def) => def.fields).find((field) => field.secret === credentials[key])?.label ?? key) });
+  }
+  return states;
+}
+
+export function withConnectedIntegrations(spec: AgentSpecV2, secrets: SecretSource): { spec: AgentSpecV2; added: number; integrations: string[] } {
+  const added: ToolRef[] = connectionStates(spec, secrets)
+    .filter((state) => state.missing.length === 0)
+    .map(({ integration, present }) => ({
       id: `connector-${integration}`,
       integration,
       credentials: Object.fromEntries(present.map(([key, secret]) => [key, { secret }])),
       deferLoading: true,
-    });
+    }));
+  if (added.length === 0) return { spec, added: 0, integrations: [] };
+  return {
+    spec: { ...spec, tools: [...(spec.tools ?? []), ...added] },
+    added: added.length,
+    integrations: added.map((ref) => ('integration' in ref ? ref.integration : '')),
+  };
+}
+
+const sameUrl = (a: string, b: string) => a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
+
+function missingMcpConnectors(spec: AgentSpecV2, secrets: SecretSource): StoredMcpConnector[] {
+  const servers = Object.entries(spec.mcpServers ?? {});
+  return (secrets?.mcpConnectors?.() ?? []).filter(
+    (connector) => !servers.some(([key, server]) => key === connector.name || ('url' in server && sameUrl(server.url, connector.url))),
+  );
+}
+
+export function withMcpConnectors(spec: AgentSpecV2, secrets: SecretSource): { spec: AgentSpecV2; names: string[] } {
+  const added = missingMcpConnectors(spec, secrets);
+  if (added.length === 0) return { spec, names: [] };
+  const servers: NonNullable<AgentSpecV2['mcpServers']> = { ...spec.mcpServers };
+  for (const { name, url, tokenSecret } of added) {
+    servers[name] = {
+      url,
+      approval: 'always',
+      deferLoading: true,
+      optional: true,
+      ...(tokenSecret !== undefined && { headers: { Authorization: { secret: tokenSecret } } }),
+    };
   }
-  if (added.length === 0) return { spec, added: 0 };
-  return { spec: { ...spec, tools: [...(spec.tools ?? []), ...added] }, added: added.length };
+  return { spec: { ...spec, mcpServers: servers }, names: added.map((connector) => connector.name) };
+}
+
+export function skippedConnections(spec: AgentSpecV2, secrets: SecretSource, attached: boolean): RunSetupSkipped[] {
+  return connectionStates(spec, secrets).flatMap<RunSetupSkipped>(({ integration, missing }) => {
+    if (missing.length > 0) return [{ integration, reason: 'incomplete', missing }];
+    return attached ? [] : [{ integration, reason: 'off' }];
+  });
 }
 
 export function guardConnectorWrites(tools: Record<string, ToolDescriptor>, names: readonly (readonly string[])[]): void {
@@ -39,15 +84,9 @@ export function guardConnectorWrites(tools: Record<string, ToolDescriptor>, name
 
 export function connectorShellEnv(secrets: SecretSource): Record<string, string> {
   const env: Record<string, string> = {};
-  if (secrets === undefined) return env;
-  for (const def of CONNECTORS) {
-    for (const field of def.fields) {
-      const value = secrets.getSecret(field.secret);
-      if (value !== undefined) env[field.secret] = value;
-    }
-  }
-  const token = env.GITHUB_TOKEN;
+  const token = secrets?.getSecret('GITHUB_TOKEN');
   if (token !== undefined) {
+    env.GITHUB_TOKEN = token;
     env.GH_TOKEN = token;
     env.GIT_TERMINAL_PROMPT = '0';
     env.GIT_CONFIG_COUNT = '1';
@@ -68,6 +107,16 @@ export function connectedAccountsForAuthor(secrets: SecretSource): string[] {
     lines.push(`- ${integration}: { "integration": "${integration}", "credentials": ${refs} }${extra}`);
   }
   return lines;
+}
+
+export function mcpConnectorsForAuthor(secrets: SecretSource): string[] {
+  return (secrets?.mcpConnectors?.() ?? []).map(({ name, url }) => {
+    try {
+      return `- ${name}: ${new URL(url).host}`;
+    } catch {
+      return `- ${name}`;
+    }
+  });
 }
 
 export function withShellEnv(tools: Record<string, ToolDescriptor>, spec: AgentSpecV2, env: Record<string, string>): void {

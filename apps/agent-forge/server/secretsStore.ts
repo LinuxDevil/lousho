@@ -44,6 +44,7 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import type { StoredMcpConnector } from '../shared/profileWire';
 import type { ProviderKeyStatus, SecretStatus } from '../shared/wireTypes';
 import type { StudioPaths } from './workspace/studioPaths';
 
@@ -273,6 +274,16 @@ export class SecretsStore {
     const record = this.loadRecords().named?.[name];
     if (!record) return undefined;
     return this.decrypt(record);
+  }
+
+  private mcpReader: (() => StoredMcpConnector[]) | undefined;
+
+  attachMcpConnectors(read: () => StoredMcpConnector[]): void {
+    this.mcpReader = read;
+  }
+
+  mcpConnectors(): StoredMcpConnector[] {
+    return this.mcpReader?.() ?? [];
   }
 
   /** Removes the secret stored under `name`. No-ops when none is stored. */

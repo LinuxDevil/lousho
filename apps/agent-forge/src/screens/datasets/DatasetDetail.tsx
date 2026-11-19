@@ -15,6 +15,7 @@ import { observeClient } from '../../observe/observeClient';
 import type { ObserveDatasetDetail, ObserveExample } from '../../observe/types';
 import { fmtDateTime, fmtInt } from '../../observe/format';
 import { Card } from '../../ui/Card';
+import { ConfirmDialog } from '../../ui/Dialog';
 import { DataTable, type Column } from '../../ui/DataTable';
 import { EmptyState } from '../../ui/EmptyState';
 import { MessageView } from '../../ui/MessageView';
@@ -105,8 +106,10 @@ function ExamplePanel({ example, onClose }: { example: ObserveExample; onClose: 
 function useDeleteExample(name: string, onDeleted: () => void) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
-  const remove = async (example: ObserveExample) => {
-    if (!window.confirm(`Delete this example from ${name}? This cannot be undone.`)) return;
+  const [asking, setAsking] = useState<ObserveExample | undefined>(undefined);
+  const remove = (example: ObserveExample) => setAsking(example);
+  const performRemove = async (example: ObserveExample) => {
+    setAsking(undefined);
     setBusy(true);
     try {
       await observeClient.deleteExample(name, example.example_id);
@@ -118,7 +121,17 @@ function useDeleteExample(name: string, onDeleted: () => void) {
       setBusy(false);
     }
   };
-  return { busy, remove };
+  const confirmDialog = (
+    <ConfirmDialog
+      open={asking !== undefined}
+      title={`Delete example from ${name}?`}
+      description="This cannot be undone."
+      confirmLabel="Delete example"
+      onCancel={() => setAsking(undefined)}
+      onConfirm={() => asking !== undefined && void performRemove(asking)}
+    />
+  );
+  return { busy, remove, confirmDialog };
 }
 
 const NO_EXAMPLES = (
@@ -141,14 +154,14 @@ function Examples({
   onChanged: () => void;
 }) {
   const [openId, setOpenId] = useState<string | undefined>();
-  const { busy, remove } = useDeleteExample(name, onChanged);
+  const { busy, remove, confirmDialog } = useDeleteExample(name, onChanged);
   const opened = detail.examples.find((e) => e.example_id === openId);
   return (
     <div className={opened ? 'ds-detail ds-detail-open' : 'ds-detail'}>
       <Card title="Examples" description={`${fmtInt(detail.total)} ${detail.total === 1 ? 'example' : 'examples'}, oldest first`} padding="none">
         <DataTable
           id="dataset-examples"
-          columns={columns((e) => void remove(e), busy)}
+          columns={columns(remove, busy)}
           rows={detail.examples}
           rowKey={(e) => e.example_id}
           selectedKey={opened?.example_id}
@@ -162,6 +175,7 @@ function Examples({
           empty={NO_EXAMPLES}
         />
       </Card>
+      {confirmDialog}
       {opened && <ExamplePanel example={opened} onClose={() => setOpenId(undefined)} />}
     </div>
   );

@@ -411,6 +411,7 @@
     "pipeline:demo": "tsx examples/ops-pipeline/index.ts",
     "pipeline:demo:trigger": "tsx examples/ops-pipeline/mocks/sendSyntheticError.ts",
     "build:studio": "npm run build:studio --workspace apps/agent-forge",
+    "ship:studio": "npm run build && npm run build:studio && npx lousho deploy --local --yes",
     "test:e2e:studio": "npm run test:e2e:studio --workspace apps/agent-forge",
     "prepublishOnly": "npm run build",
     "prepack": "node scripts/prepack-check.mjs",

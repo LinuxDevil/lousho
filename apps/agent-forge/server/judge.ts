@@ -16,7 +16,7 @@
  *   logged once per outage.
  * - The judge itself ({@link modelJudge}) is one `provider.generate()` call,
  *   with the provider resolved exactly as the playground resolves it
- *   (`buildAgentFromSpec`). It goes straight to the provider, not through
+ *   (`resolveProviderForModel`). It goes straight to the provider, not through
  *   AgentExecutor, so it makes no spans and reports nothing to the daemon: a
  *   judge trace would itself trigger evaluators.
  * - {@link registerJudgeTestRoute}: `POST /observe/api/v1/evaluators/:id/test`
@@ -25,9 +25,8 @@
  *   daemon unchanged.
  */
 import type { Express, Request, Response } from 'express';
-import type { AgentSpec } from 'lousho';
 import { evaluatorTraceFrom, type EvaluatorTrace, type ObservationRow } from 'lousho/traces';
-import { buildAgentFromSpec } from './buildAgent';
+import { resolveProviderForModel } from './buildAgent';
 import { daemonHeaders, observeTarget } from './observeProxy';
 import { firstJsonObject } from './passes/jsonReply';
 import type { CollectorSource } from './collector';
@@ -132,8 +131,8 @@ const judgeError = (error: unknown): JudgeResult => ({
 function modelJudge(secretsStore: SecretsStore): JudgeFn {
   return async (rule, trace, signal) => {
     try {
-      const spec: AgentSpec = { name: 'judge', prompt: '', provider: providerOf(rule.config.model) };
-      const { provider } = buildAgentFromSpec(spec, 'judge', undefined, { secretsStore });
+      const target = providerOf(rule.config.model);
+      const provider = resolveProviderForModel(`${target.type}/${target.model}`, secretsStore);
       const reply = await provider.generate({
         messages: [
           { role: 'system', content: GRADER_INSTRUCTION + rule.config.rubric },

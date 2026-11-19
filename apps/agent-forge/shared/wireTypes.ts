@@ -183,6 +183,31 @@ export interface LogEntry {
   detail?: unknown;
 }
 
+export interface RunSetupAccount {
+  integration: string;
+  tools: string[];
+  approvals: string[];
+}
+
+export interface RunSetupSkipped {
+  integration: string;
+  reason: 'off' | 'incomplete';
+  missing?: string[];
+}
+
+/** What a run was given: connected accounts, declared integrations, MCP servers and tools. Names only, never secret values. */
+export interface RunSetup {
+  accounts: RunSetupAccount[];
+  declared: string[];
+  mcpServers: string[];
+  profileMcpServers?: string[];
+  tools?: number;
+  toolNames?: string[];
+  workspaceRoot?: string;
+  skipped: RunSetupSkipped[];
+  note?: string;
+}
+
 /**
  * One span lifecycle notification, forwarded verbatim (real
  * `Date.now()` timestamps, not synthetic ones) from the SDK's
@@ -238,6 +263,7 @@ export interface RunListRow {
   bypass?: boolean;
   chatId?: string;
   preview?: string;
+  lastMessage?: string;
   turns?: number;
   lastActivity?: number;
 }
@@ -281,6 +307,8 @@ export interface ChatMessage {
   toolName?: string;
   toolCalls?: { id: string; type: 'function'; function: { name: string; arguments: string } }[];
   timestamp: string;
+  /** The SDK's own flag on a tool result that failed; already in the persisted transcript. */
+  isError?: boolean;
   /** `'run'` marks the user turn a top-bar Run added (shown as "Run input"); `'steer'` a delivered steer message (shown as "Steered"). */
   source?: 'run' | 'steer';
 }
@@ -300,11 +328,18 @@ export interface ChatSessionMeta {
   messageCount: number;
   /** Truncated text of the first user message, for a browsable session list. */
   preview: string;
+  /** What started the chat's latest run; persisted so a finished trigger run still names its trigger. */
+  source?: 'manual' | 'trigger';
+  triggerId?: string;
+  /** Truncated text of the chat's latest user or assistant message (derived on listing, not stored). */
+  lastMessage?: string;
 }
 
 /** A full past chat session, as returned by `GET /agents/:id/chats/:sessionId`. */
 export interface ChatSessionRecord extends ChatSessionMeta {
   messages: ChatMessage[];
+  /** What the chat's latest run was given (names only), persisted at run start so it survives a reload. */
+  setup?: RunSetup;
 }
 
 /**
@@ -839,6 +874,8 @@ export interface AgentListItem {
   lastRun?: AgentLastRun;
   /** Section sizes the card chips render (A03). */
   counts: { tools: number; mcpServers: number; subagents: number; triggers: number };
+  /** Integration names the agent reaches on a chat run: its declared ones plus the connected accounts Studio attaches (declared only for a flow agent). */
+  accounts?: string[];
 }
 
 /**
@@ -1050,6 +1087,8 @@ export interface AgentRecord {
    * proposal cards read this; it is advisory only and never blocks a save.
    */
   requirements?: Requirement[];
+  /** Integrations a chat run reaches: `agent` = declared in the spec, `profile` = a connected account Studio attaches. */
+  connectedAccounts?: { integration: string; source: 'agent' | 'profile' }[];
 }
 
 /**

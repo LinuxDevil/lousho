@@ -48,7 +48,7 @@ import { autoApprovalLogEntry } from './autoApproval';
 import { DebugSession, type BreakpointKey } from './debugController';
 import { FileChatStore, previewFor } from './chatStore';
 import { markRunInput, markSteerInputs, reconcileChatMessages } from './chatReconcile';
-import { toLogEntries, toFlowLogEntries } from './logEntries';
+import { runSetupLogEntry, toLogEntries, toFlowLogEntries } from './logEntries';
 import { nodeStateFor } from './nodeStates';
 import type { SecretsStore } from './secretsStore';
 import type { SettingsStore } from './settingsStore';
@@ -64,6 +64,7 @@ import type {
   SteerResponse,
   ChatSessionMeta,
   ChatSessionRecord,
+  RunSetup,
   RunHistoryStep,
   ToolPin,
 } from '../shared/wireTypes';
@@ -176,6 +177,7 @@ interface RunEntry {
   source?: 'manual' | 'trigger';
   triggerId?: string;
   bypass?: boolean;
+  setup?: RunSetup;
 }
 
 export interface RunManagerOptions {
@@ -362,6 +364,9 @@ export class RunManager extends EventEmitter {
       messages: persisted?.messages ?? [],
       chatSessionId,
       chatStartedAt: persisted?.startedAt ?? now,
+      ...(persisted?.setup !== undefined && { setup: persisted.setup }),
+      ...(persisted?.source !== undefined && { source: persisted.source }),
+      ...(persisted?.triggerId !== undefined && { triggerId: persisted.triggerId }),
     };
   }
 
@@ -390,6 +395,9 @@ export class RunManager extends EventEmitter {
       messageCount: entry.messages.length,
       preview: previewFor(entry.messages),
       messages: entry.messages,
+      ...(entry.source !== undefined && { source: entry.source }),
+      ...(entry.triggerId !== undefined && { triggerId: entry.triggerId }),
+      ...(entry.kind !== 'flow' && entry.setup !== undefined && { setup: entry.setup }),
     });
   }
 
@@ -414,7 +422,15 @@ export class RunManager extends EventEmitter {
     if (existing?.status === 'paused') throw new ApprovalPendingError(`Agent '${agentId}' is paused awaiting an approval decision - resolve it before switching chats`);
     const record = this.chatStore.load(agentId, sessionId);
     if (!record) throw new ChatNotFoundError(`No chat '${sessionId}' for agent '${agentId}'`);
-    const next = this.setEntry(agentId, { messages: record.messages, chatSessionId: record.sessionId, chatStartedAt: record.startedAt, sessionId: record.sessionId });
+    const next = this.setEntry(agentId, {
+      messages: record.messages,
+      chatSessionId: record.sessionId,
+      chatStartedAt: record.startedAt,
+      sessionId: record.sessionId,
+      setup: record.setup,
+      source: record.source,
+      triggerId: record.triggerId,
+    });
     this.emitChat(agentId, next);
     return this.chatState(agentId);
   }
@@ -430,6 +446,9 @@ export class RunManager extends EventEmitter {
       messages: [],
       chatSessionId: randomUUID(),
       chatStartedAt: now,
+      setup: undefined,
+      source: undefined,
+      triggerId: undefined,
     });
     this.persistChat(agentId, next);
     return this.chatState(agentId);
@@ -768,7 +787,7 @@ export class RunManager extends EventEmitter {
     // told apart by comparing the entry's hostRunId - see onHostEvent.
     const live = { runId: undefined as string | undefined, exporter };
     const bypass = options.permissionMode === 'bypassPermissions' || resolvedSpec.permissionMode === 'bypassPermissions';
-    const { runId, modelLabel } = await this.opts.host.start({
+    const { runId, modelLabel, setup } = await this.opts.host.start({
       agentId,
       spec: options.permissionMode ? { ...resolvedSpec, permissionMode: options.permissionMode } : resolvedSpec,
       sessionId,
@@ -786,7 +805,8 @@ export class RunManager extends EventEmitter {
       onAutoApproval: (decision) => this.emit('log', agentId, autoApprovalLogEntry(agentId, decision)),
     });
     live.runId = runId;
-    this.setEntry(
+    if (setup !== undefined) this.emit('log', agentId, runSetupLogEntry(agentId, setup));
+    const launched = this.setEntry(
       agentId,
       {
         status: 'running',
@@ -812,9 +832,11 @@ export class RunManager extends EventEmitter {
         source: options.source,
         triggerId: options.triggerId,
         bypass,
+        setup,
       },
       existing
     );
+    this.persistChat(agentId, launched);
   }
 
   /** One HostEvent of a launch: forwarded to the same status/chat/log/span broadcasts the SDK used to drive directly. */
@@ -906,6 +928,17 @@ export class RunManager extends EventEmitter {
     const sessionId = agentId;
     const controller = new AbortController();
     const debugSession = this.makeDebugSession(agentId);
+    this.emit(
+      'log',
+      agentId,
+      runSetupLogEntry(agentId, {
+        accounts: [],
+        declared: (resolvedSpec.tools ?? []).flatMap((ref) => ('integration' in ref ? [ref.integration] : [])),
+        mcpServers: Object.keys(resolvedSpec.mcpServers ?? {}),
+        skipped: [],
+        note: 'Flow agents do not get connected accounts yet.',
+      })
+    );
     this.setEntry(
       agentId,
       {

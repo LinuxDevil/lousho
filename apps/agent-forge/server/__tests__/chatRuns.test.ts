@@ -45,6 +45,11 @@ const trace = (traceId: string, startTime: number, conversationId?: string, stat
 });
 
 describe('groupRunsByChat', () => {
+  it('carries the chat trigger onto its group', () => {
+    const [group] = groupRunsByChat('a', [{ sessionId: 'a', startedAt: new Date(0).toISOString(), updatedAt: new Date(1).toISOString(), messageCount: 1, preview: 'p', source: 'trigger', triggerId: 'nightly' }], []);
+    expect(group).toMatchObject({ source: 'trigger', triggerId: 'nightly' });
+  });
+
   it('puts each trace in its chat, untagged ones in the agent-id chat, newest activity first', () => {
     const groups = groupRunsByChat(
       'a',
@@ -91,5 +96,27 @@ describe('chats as runs', () => {
 
     const restarted = manager(baseDir);
     expect(restarted.chatState('chatty').sessionId).toBe('chatty');
+  });
+
+  it('persists the run setup and trigger with the chat so they survive a restart and a reopen', async () => {
+    baseDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lou-chats-')));
+    const rm = manager(baseDir);
+    await rm.run('chatty', 'go', SPEC, { source: 'trigger', triggerId: 'nightly' });
+    await done(rm, 'chatty');
+
+    const record = rm.loadChatSession('chatty', 'chatty');
+    expect(record?.setup).toMatchObject({ accounts: expect.any(Array), declared: expect.any(Array), mcpServers: expect.any(Array), skipped: expect.any(Array) });
+    expect(record).toMatchObject({ source: 'trigger', triggerId: 'nightly' });
+    expect(rm.listChats('chatty')[0]).toMatchObject({ source: 'trigger', triggerId: 'nightly' });
+
+    const restarted = manager(baseDir);
+    expect(restarted.loadChatSession('chatty', 'chatty')?.setup).toEqual(record?.setup);
+    const fresh = restarted.newChat('chatty');
+    expect(restarted.loadChatSession('chatty', fresh.sessionId)?.setup).toBeUndefined();
+    restarted.openChat('chatty', 'chatty');
+    await restarted.sendMessage('chatty', 'again', SPEC);
+    await done(restarted, 'chatty');
+    expect(restarted.loadChatSession('chatty', 'chatty')?.source).toBeUndefined();
+    expect(restarted.loadChatSession('chatty', 'chatty')?.setup).toBeDefined();
   });
 });

@@ -191,6 +191,22 @@
   .topbar-builder:not(.topbar-narrow):has(.approval-card-inline) :is(.crumb-root, .crumb-sep) {
     display: none;
   }
+  .topbar-builder:not(.topbar-narrow):has(.approval-card-inline) .crumbs {
+    min-width: 72px;
+  }
+  .topbar-builder:not(.topbar-narrow) .approval-card-inline .approval-actions .btn {
+    width: 28px;
+    padding: 0;
+    justify-content: center;
+  }
+  .topbar-builder:not(.topbar-narrow):has(.approval-card-inline) .approval-btn-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
   .topbar-builder:not(.topbar-narrow):is(:has(.run-trace-link), :has(.approval-card-inline)) .collapse-1 .btn-label,
   .topbar-builder:not(.topbar-narrow):has(.approval-card-inline) :is(.collapse-2 .btn-label, .run-trace-label, .status-pill-label) {
     position: absolute;
@@ -217,6 +233,19 @@
   }
 }
 @container builder-toolbar (max-width: 920px) {
+  .topbar-builder:not(.topbar-narrow) .approval-card-inline .deadline-line {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+  .topbar-builder:not(.topbar-narrow) .approval-card-inline .approval-text {
+    max-width: 8ch;
+  }
+  .topbar-builder:not(.topbar-narrow) .approval-card-inline .approval-icon {
+    display: none;
+  }
   .topbar-builder:not(.topbar-narrow) .run-trace-link {
     width: 24px;
     height: 24px;
@@ -237,7 +266,7 @@
     justify-content: center;
   }
   .topbar-builder:not(.topbar-narrow):has(.approval-card-inline) .crumbs {
-    min-width: 72px;
+    min-width: 56px;
   }
   .topbar-builder:not(.topbar-narrow) :is(.collapse-2 .btn-label, .run-trace-label),
   .topbar-builder:not(.topbar-narrow):has(.approval-card-inline) .approval-btn-label {

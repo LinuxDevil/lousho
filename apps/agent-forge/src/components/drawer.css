@@ -848,6 +848,19 @@
   font-size: 12px;
   color: var(--text-muted);
 }
+.chat-run-setup {
+  padding: 6px var(--space-4);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.chat-run-setup summary {
+  cursor: pointer;
+}
+.chat-run-setup p {
+  margin: var(--space-2) 0 0;
+  white-space: pre-line;
+}
 .chat-session-bar > span {
   display: flex;
   align-items: center;

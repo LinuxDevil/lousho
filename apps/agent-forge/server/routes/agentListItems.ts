@@ -8,8 +8,9 @@
  * absent there, so `lastRun` falls back to the newest persisted trace.
  */
 import type { AgentSpecV2 } from 'lousho';
-import type { AgentLastRun, AgentListItem, AgentRunStatusPayload } from '../../shared/wireTypes';
+import type { AgentLastRun, AgentListItem, AgentRecord, AgentRunStatusPayload } from '../../shared/wireTypes';
 import type { AgentRepo } from '../storage/agentRepo';
+import { withConnectedIntegrations, withMcpConnectors } from '../connectorRunTools';
 import { listAgentTraces } from '../traceStore';
 
 export interface AgentListSource {
@@ -18,6 +19,7 @@ export interface AgentListSource {
   root: string;
   /** Live run status per agent id - present only for warm workspaces (a cold one has no RunManager). */
   runStatus?: (agentId: string) => AgentRunStatusPayload;
+  secrets?: { getSecret(name: string): string | undefined };
 }
 
 /** The `counts` an `AgentListItem` carries: section sizes read off the spec as data. */
@@ -28,6 +30,17 @@ function countsOf(spec: AgentSpecV2): AgentListItem['counts'] {
     subagents: Object.keys(spec.subagents ?? {}).length,
     triggers: spec.triggers?.length ?? 0,
   };
+}
+
+export function connectedAccountsOf(spec: AgentSpecV2, secrets: AgentListSource['secrets']): NonNullable<AgentRecord['connectedAccounts']> {
+  const isFlow = (spec as { flow?: unknown }).flow !== undefined;
+  const declared = [...new Set((spec.tools ?? []).flatMap((ref) => ('integration' in ref ? [ref.integration] : [])))];
+  const attached = isFlow ? [] : withConnectedIntegrations(spec, secrets).integrations;
+  const mcp = isFlow ? [] : withMcpConnectors(spec, secrets).names.map((name) => `${name} (MCP)`);
+  return [
+    ...declared.map((integration) => ({ integration, source: 'agent' as const })),
+    ...[...attached, ...mcp].map((integration) => ({ integration, source: 'profile' as const })),
+  ];
 }
 
 /**
@@ -67,6 +80,7 @@ async function toListItem(source: AgentListSource, id: string): Promise<AgentLis
     publishedVersion: meta.publishedVersion,
     ...(lastRun !== undefined && { lastRun }),
     counts: countsOf(spec),
+    accounts: connectedAccountsOf(spec, source.secrets).map((account) => account.integration),
   };
 }
 

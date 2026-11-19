@@ -74,7 +74,7 @@ export class InProcessAgentHost implements AgentHost {
     const record: RunRecord = { input, live: { run, controller }, pausedApprovalIds: [] };
     this.runs.set(runId, record);
     this.watch(runId, record, run);
-    return { runId, modelLabel: built.modelLabel };
+    return { runId, modelLabel: built.modelLabel, setup: built.setup };
   }
 
   async steer(runId: string, message: string): Promise<HostSteerResult> {

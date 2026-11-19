@@ -54,7 +54,7 @@ import { withAgentLock } from '../storage/atomic';
 import { mergeLegacySave } from '../storage/legacySpec';
 import { TEMPLATE_ID_RE, type TemplateCatalog } from '../templates/templateCatalog';
 import { parseCanvasLayout } from './layoutValidation';
-import { buildAgentListItems } from './agentListItems';
+import { buildAgentListItems, connectedAccountsOf } from './agentListItems';
 import type { WorkspaceContext } from '../workspace/context';
 import { workspaceOf } from '../workspace/middleware';
 
@@ -274,7 +274,7 @@ export function registerAgentRoutes(app: Express, deps: AgentRouteDeps): void {
         return;
       }
       res.json(
-        await buildAgentListItems({ repo: ws.repo, root: ws.ref.root, runStatus: (id) => ws.runs.status(id) })
+        await buildAgentListItems({ repo: ws.repo, root: ws.ref.root, runStatus: (id) => ws.runs.status(id), secrets: deps.secrets })
       );
     })
   );
@@ -332,7 +332,7 @@ export function registerAgentRoutes(app: Express, deps: AgentRouteDeps): void {
       // The readiness list (AA13): built per request from this workspace's
       // root and the Studio-global secrets store - advisory, never blocks.
       const requirements = await computeRequirements(record.spec, requirementDeps(ws.ref.root, deps.secrets));
-      res.json({ ...record, requirements });
+      res.json({ ...record, requirements, connectedAccounts: connectedAccountsOf(record.spec, deps.secrets) });
     })
   );
 

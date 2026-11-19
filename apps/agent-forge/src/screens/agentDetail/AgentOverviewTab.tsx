@@ -2,7 +2,7 @@ import { ChevronRight, TriangleAlert } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import type { AgentSpecV2 } from 'lousho/spec';
 
-import type { AgentMeta, ChannelTriggerStatus, TraceSummaryPayload } from '../../../shared/wireTypes';
+import type { AgentMeta, AgentRecord, ChannelTriggerStatus, TraceSummaryPayload } from '../../../shared/wireTypes';
 import { agentTabPath, BUILT_AGENT_TABS } from '../agents/agentTabs';
 import { fmtAge, fmtDateTime, fmtDuration } from '../../observe/format';
 import { Card } from '../../ui/Card';
@@ -144,7 +144,7 @@ function MissingBanner({ missing }: { missing: ReturnType<typeof missingRequirem
 }
 
 /** The Capabilities card: the six fixed rows, each a label and its item chips (or 'None'). */
-function CapabilitiesCard({ rows }: { rows: CapabilityRow[] }): JSX.Element {
+function CapabilitiesCard({ rows, accounts = [] }: { rows: CapabilityRow[]; accounts?: NonNullable<AgentRecord['connectedAccounts']> }): JSX.Element {
   return (
     <Card title="Capabilities">
       <dl className="agent-overview-dl">
@@ -153,6 +153,10 @@ function CapabilitiesCard({ rows }: { rows: CapabilityRow[] }): JSX.Element {
             <SpecChips items={row.items} />
           </SpecRow>
         ))}
+        <SpecRow label="Connected accounts">
+          <SpecChips items={accounts.map(({ integration, source }) => (source === 'profile' ? `${integration} (from Profile)` : integration))} />
+          <a href="#/profile/connectors">Profile → Connectors</a>
+        </SpecRow>
       </dl>
     </Card>
   );
@@ -342,7 +346,7 @@ export function AgentOverviewTab() {
           </p>
         )}
       </Card>
-      <CapabilitiesCard rows={capabilityRows(spec)} />
+      <CapabilitiesCard rows={capabilityRows(spec)} accounts={record.connectedAccounts} />
       <TriggersCard agentId={record.id} triggers={spec.triggers ?? []} meta={record.meta} />
       <SafetyCard safety={safetySummary(spec)} />
       <RecentRunsCard agentId={record.id} />

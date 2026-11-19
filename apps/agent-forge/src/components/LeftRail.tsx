@@ -6,6 +6,7 @@ import { NodePalette } from '../canvas/palette/NodePalette';
 import { StatusPill, statusTone } from '../ui/StatusPill';
 import { navigate } from '../router/router';
 import { agentPath } from '../screens/agents/agentRoute';
+import { ConfirmDialog } from '../ui/Dialog';
 import { errorMessage } from './errorMessage';
 import { tabIds, tabListKeyDown } from './tabs';
 import { agentIdProblem } from '../../shared/agentId';
@@ -132,12 +133,13 @@ function RenameAgentForm({ entry, onDone }: { entry: AgentEntry; onDone: () => v
  * Rename/Delete for the open agent (`DELETE /agents/:id`), as icon buttons
  * revealed on the row's hover or keyboard focus. Not while it runs.
  */
-function AgentCardActions({ entry, busy, onRename }: { entry: AgentEntry; busy: boolean; onRename: () => void }) {
+export function AgentCardActions({ entry, busy, onRename }: { entry: AgentEntry; busy: boolean; onRename: () => void }) {
   const { deleteAgent } = useAppState();
   const [error, setError] = useState<string | undefined>(undefined);
+  const [confirming, setConfirming] = useState(false);
 
   async function handleDelete() {
-    if (!window.confirm(`Delete agent '${entry.id}'? This removes .lousho/agents/${entry.id}.yaml.`)) return;
+    setConfirming(false);
     try {
       await deleteAgent(entry.id);
     } catch (e) {
@@ -162,13 +164,21 @@ function AgentCardActions({ entry, busy, onRename }: { entry: AgentEntry; busy: 
           type="button"
           className="btn btn-ghost btn-icon btn-sm btn-danger-text"
           disabled={busy}
-          onClick={() => void handleDelete()}
+          onClick={() => setConfirming(true)}
           aria-label={`Delete ${entry.id}`}
           title="Delete"
         >
           <Trash2 size={14} strokeWidth={1.75} aria-hidden="true" />
         </button>
       </div>
+      <ConfirmDialog
+        open={confirming}
+        title={`Delete agent '${entry.id}'?`}
+        description={`This removes .lousho/agents/${entry.id}.yaml.`}
+        confirmLabel="Delete agent"
+        onCancel={() => setConfirming(false)}
+        onConfirm={() => void handleDelete()}
+      />
       {error && (
         <div className="hint field-error agent-row-error" role="alert">
           {error}
