@@ -13,7 +13,7 @@ import { Sheet } from '../../ui/Sheet';
 import { useToast } from '../../ui/Toast';
 import { CopyValue, fmtWhen, useLoad } from './profileShared';
 
-const CHECKED = new Set<string>(['github', 'atlassian', 'slack', 'figma', 'jenkins']);
+const CHECKED = new Set<string>(['github', 'atlassian', 'slack', 'figma', 'jenkins', 'email']);
 
 const googleCallback = () => `${window.location.origin}/settings/connectors/google/callback`;
 

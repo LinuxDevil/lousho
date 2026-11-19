@@ -23,6 +23,11 @@ interface ConnectorMeta {
 
 type MetaFile = Partial<Record<ConnectorId, ConnectorMeta>>;
 
+interface Verified {
+  account?: string;
+  scopes?: string[];
+}
+
 const GOOGLE_SCOPES = [
   'openid',
   'email',
@@ -81,90 +86,49 @@ const scopesHeader = (res: Response) =>
     .map((s) => s.trim())
     .filter(Boolean);
 
-const CHECK_TIMEOUT_MS = 8_000;
-
-interface CheckResult {
-  identity?: string;
-  scopes?: string[];
-  error?: string;
-}
-
-const clip = (text: string) => (text.length > 200 ? `${text.slice(0, 199)}…` : text);
-
-async function providerMessage(res: Response): Promise<string> {
-  const text = await res.text().catch(() => '');
-  try {
-    const body = JSON.parse(text) as { message?: unknown; err?: unknown; error?: unknown; errorMessages?: unknown[] };
-    const found = body.message ?? body.err ?? body.error ?? body.errorMessages?.[0];
-    if (typeof found === 'string') return found;
-  } catch {}
-  return text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
-async function probe<T>(what: string, url: string, init: RequestInit, read: (body: T, res: Response) => CheckResult): Promise<CheckResult> {
-  let res: Response;
-  try {
-    res = await fetch(url, { ...init, signal: AbortSignal.timeout(CHECK_TIMEOUT_MS) });
-  } catch {
-    return { error: `Could not reach ${what}` };
-  }
-  if (!res.ok) {
-    const message = await providerMessage(res);
-    return { error: clip(`${what} answered ${res.status}${message !== '' ? `: ${message}` : ''}`) };
-  }
-  return read((await res.json().catch(() => ({}))) as T, res);
-}
-
-const named = (what: string, identity: string | undefined, scopes?: string[]): CheckResult =>
-  identity ? { identity, ...(scopes !== undefined && scopes.length > 0 && { scopes }) } : { error: `${what} returned no account name` };
-
-function validate(id: ConnectorId, v: Record<string, string>): void {
-  if (id !== 'slack') return;
-  if (!v.botToken && !v.webhookUrl) throw new VerifyError('Add a bot token, a webhook URL, or both.');
-  if (v.webhookUrl && !/^https:\/\/hooks\.slack\.com\//.test(v.webhookUrl)) throw new VerifyError('The webhook URL must start with https://hooks.slack.com/');
-}
-
-async function check(id: ConnectorId, v: Record<string, string>): Promise<CheckResult> {
+async function verify(id: ConnectorId, v: Record<string, string>): Promise<Verified> {
   switch (id) {
-    case 'github':
-      return probe<{ login?: string }>(
-        'GitHub',
-        'https://api.github.com/user',
-        { headers: { Authorization: `Bearer ${v.token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'lousho' } },
-        (body, res) => named('GitHub', body.login, scopesHeader(res)),
-      );
-    case 'atlassian':
-      return probe<{ displayName?: string; emailAddress?: string }>(
-        'Atlassian',
-        `${v.baseUrl}/rest/api/3/myself`,
-        { headers: { Authorization: basic(v.email, v.apiToken), Accept: 'application/json' } },
-        (body) => named('Atlassian', body.displayName || body.emailAddress),
-      );
-    case 'slack':
-      if (!v.botToken) return {};
-      return probe<{ ok?: boolean; error?: string; user?: string; team?: string }>(
-        'Slack',
-        'https://slack.com/api/auth.test',
-        { method: 'POST', headers: { Authorization: `Bearer ${v.botToken}` } },
-        (body, res) =>
-          body.ok ? named('Slack', [body.user, body.team].filter(Boolean).join(' · '), scopesHeader(res)) : { error: clip(`Slack: ${body.error ?? 'unknown error'}`) },
-      );
-    case 'figma':
-      return probe<{ handle?: string; email?: string }>(
-        'Figma',
-        'https://api.figma.com/v1/me',
-        { headers: { 'X-Figma-Token': v.token } },
-        (body) => named('Figma', body.handle || body.email),
-      );
-    case 'jenkins':
-      return probe<{ name?: string }>(
-        'Jenkins',
-        `${v.baseUrl}/whoAmI/api/json`,
-        { headers: { Authorization: basic(v.username, v.apiToken), Accept: 'application/json' } },
-        (body) => named('Jenkins', body.name),
-      );
+    case 'github': {
+      const res = await call('https://api.github.com/user', { headers: { Authorization: `Bearer ${v.token}`, 'User-Agent': 'lousho-studio' } }, 'GitHub');
+      const body = (await expectOk(res, 'GitHub')) as { login?: string };
+      const scopes = scopesHeader(res);
+      return { account: body.login, ...(scopes.length > 0 && { scopes }) };
+    }
+    case 'atlassian': {
+      const res = await call(`${v.baseUrl}/rest/api/3/myself`, { headers: { Authorization: basic(v.email, v.apiToken), Accept: 'application/json' } }, 'Atlassian');
+      const body = (await expectOk(res, 'Atlassian')) as { displayName?: string; emailAddress?: string };
+      return { account: `${body.displayName ?? v.email} · ${new URL(v.baseUrl).host}` };
+    }
+    case 'slack': {
+      if (!v.botToken && !v.webhookUrl) throw new VerifyError('Add a bot token, a webhook URL, or both.');
+      if (v.webhookUrl && !/^https:\/\/hooks\.slack\.com\//.test(v.webhookUrl)) throw new VerifyError('The webhook URL must start with https://hooks.slack.com/');
+      if (!v.botToken) return { account: 'Incoming webhook' };
+      const res = await call('https://slack.com/api/auth.test', { method: 'POST', headers: { Authorization: `Bearer ${v.botToken}` } }, 'Slack');
+      const body = (await expectOk(res, 'Slack')) as { ok?: boolean; error?: string; user?: string; team?: string };
+      if (!body.ok) throw new VerifyError(`Slack rejected the bot token (${body.error ?? 'unknown error'}).`);
+      const scopes = scopesHeader(res);
+      return { account: `${body.user ?? 'bot'} · ${body.team ?? 'Slack'}`, ...(scopes.length > 0 && { scopes }) };
+    }
+    case 'jenkins': {
+      const res = await call(`${v.baseUrl}/me/api/json`, { headers: { Authorization: basic(v.username, v.apiToken) } }, 'Jenkins');
+      const body = (await expectOk(res, 'Jenkins')) as { fullName?: string; id?: string };
+      return { account: `${body.fullName ?? body.id ?? v.username} · ${new URL(v.baseUrl).host}` };
+    }
+    case 'figma': {
+      const res = await call('https://api.figma.com/v1/me', { headers: { 'X-Figma-Token': v.token } }, 'Figma');
+      const body = (await expectOk(res, 'Figma')) as { handle?: string; email?: string };
+      return { account: body.email ?? body.handle };
+    }
+    case 'email': {
+      const res = await call('https://api.resend.com/domains', { headers: { Authorization: `Bearer ${v.apiKey}` } }, 'Resend');
+      if (res.status === 401) {
+        const body = (await res.json().catch(() => ({}))) as { name?: string };
+        if (body.name === 'restricted_api_key') return { account: v.defaultFrom || 'Sending-only key' };
+      }
+      const body = (await expectOk(res, 'Resend')) as { data?: Array<{ name: string }> };
+      return { account: v.defaultFrom || body.data?.map((d) => d.name).join(', ') || 'Resend' };
+    }
     case 'google':
-    case 'email':
       return {};
   }
 }
@@ -234,7 +198,7 @@ export class ConnectorService {
       if (field.required && value === '') throw new VerifyError(`${field.label} is required.`);
       if (value !== '') values[field.key] = /url$/i.test(field.key) ? cleanUrl(value, field.label) : value;
     }
-    validate(def.id, values);
+    const verified = await verify(def.id, values);
     for (const field of def.fields) {
       const value = values[field.key];
       if (value !== undefined) this.secrets.setSecret(field.secret, value);
@@ -242,21 +206,9 @@ export class ConnectorService {
     if (def.id === 'google') {
       return { status: this.status(def), authUrl: '/settings/connectors/google/start' };
     }
-    const connectedAt = new Date().toISOString();
-    this.saveMeta(def.id, await this.checked(def, values, connectedAt));
+    const now = new Date().toISOString();
+    this.saveMeta(def.id, { ...verified, connectedAt: now, verifiedAt: now });
     return { status: this.status(def) };
-  }
-
-  private async checked(def: ConnectorDef, values: Record<string, string>, connectedAt: string): Promise<ConnectorMeta> {
-    const result = await check(def.id, values);
-    const verifiedAt = result.identity !== undefined || result.error !== undefined ? new Date().toISOString() : undefined;
-    return {
-      connectedAt,
-      ...(result.identity !== undefined && { account: result.identity }),
-      ...(result.scopes !== undefined && { scopes: result.scopes }),
-      ...(result.error !== undefined && { error: result.error }),
-      ...(verifiedAt !== undefined && { verifiedAt }),
-    };
   }
 
   async verifyNow(def: ConnectorDef): Promise<ConnectorStatus> {
@@ -267,7 +219,14 @@ export class ConnectorService {
       if (value !== undefined) values[field.key] = value;
     }
     const previous = this.meta()[def.id];
-    this.saveMeta(def.id, await this.checked(def, values, previous?.connectedAt ?? new Date().toISOString()));
+    const now = new Date().toISOString();
+    try {
+      const verified = await verify(def.id, values);
+      this.saveMeta(def.id, { ...verified, connectedAt: previous?.connectedAt ?? now, verifiedAt: now });
+    } catch (error) {
+      if (!(error instanceof VerifyError)) throw error;
+      this.saveMeta(def.id, { ...(previous?.account !== undefined && { account: previous.account }), ...(previous?.scopes !== undefined && { scopes: previous.scopes }), connectedAt: previous?.connectedAt ?? now, verifiedAt: now, error: error.message });
+    }
     return this.status(def);
   }
 

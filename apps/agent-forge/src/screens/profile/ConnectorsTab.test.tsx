@@ -64,10 +64,13 @@ describe('ConnectorsTab identity', () => {
     expect(rowOf('GitHub').querySelector('.profile-row-meta')?.textContent).toBe('octo · verified just now');
   });
 
-  it('adds nothing extra for a connector without a check', async () => {
-    await render([{ id: 'email', connected: true, filled: ['apiKey'], connectedAt: days(1) }]);
-    const row = rowOf('Email');
-    expect([...row.querySelectorAll('button')].some((b) => b.textContent === 'Verify')).toBe(false);
-    expect(row.querySelector('.profile-row-meta')?.textContent).not.toContain('verified');
+  it('offers Verify for Email and not for Google', async () => {
+    await render([
+      { id: 'email', connected: true, filled: ['apiKey'], account: 'a@example.com', verifiedAt: days(1) },
+      { id: 'google', connected: true, filled: ['clientId'], connectedAt: days(1) },
+    ]);
+    const labels = (name: string) => [...rowOf(name).querySelectorAll('button')].map((b) => b.textContent);
+    expect(labels('Email')).toContain('Verify');
+    expect(labels('Google')).not.toContain('Verify');
   });
 });

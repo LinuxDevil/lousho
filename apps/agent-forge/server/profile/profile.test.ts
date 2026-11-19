@@ -167,105 +167,88 @@ describe('connectors', () => {
   const service = () => new ConnectorService(path.join(dir, 'connectors.json'), secrets);
   const basicOf = (user: string, pass: string) => `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`;
 
-  it('checks GitHub and stores the login and scopes', async () => {
+  it('verifies GitHub before saving and stores the login, scopes and time', async () => {
     const fetchMock = stub(json({ login: 'octo' }, { headers: { 'x-oauth-scopes': 'repo, read:org' } }));
     const { status } = await service().connect(github, { values: { token: 'ghp_x' } });
     expect(status).toMatchObject({ connected: true, account: 'octo', scopes: ['repo', 'read:org'] });
     expect(status.verifiedAt).toBeDefined();
-    expect(status.error).toBeUndefined();
     expect(secrets.getSecret('GITHUB_TOKEN')).toBe('ghp_x');
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('https://api.github.com/user');
-    expect(init.headers).toEqual({ Authorization: 'Bearer ghp_x', Accept: 'application/vnd.github+json', 'User-Agent': 'lousho' });
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.github.com/user');
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer ghp_x');
   });
 
-  it('checks Atlassian with basic auth and falls back to the email', async () => {
+  it('saves nothing when the check fails at save, for a rejection or an unreachable service', async () => {
+    stub(new Response('{}', { status: 401 }));
+    const svc = service();
+    await expect(svc.connect(atlassian, { values: { baseUrl: 'https://x.atlassian.net', email: 'a@b.c', apiToken: 't' } })).rejects.toThrow(/rejected/);
+    expect(secrets.getSecret('JIRA_API_TOKEN')).toBeUndefined();
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ENOTFOUND')));
+    await expect(svc.connect(github, { values: { token: 'ghp_x' } })).rejects.toThrow(/Could not reach GitHub/);
+    expect(secrets.getSecret('GITHUB_TOKEN')).toBeUndefined();
+    expect(svc.list().every((c) => !c.connected)).toBe(true);
+  });
+
+  it('keeps saved values on reconnect and appends the host for Atlassian', async () => {
+    secrets.setSecret('JIRA_API_TOKEN', 'kept');
     const fetchMock = stub(json({ displayName: 'Ann' }));
     const svc = service();
-    const values = { baseUrl: 'https://x.atlassian.net/', email: 'a@b.c', apiToken: 'tok' };
-    expect((await svc.connect(atlassian, { values })).status.account).toBe('Ann');
+    const { status } = await svc.connect(atlassian, { values: { baseUrl: 'https://x.atlassian.net/', email: 'a@b.c', apiToken: '' } });
+    expect(status).toMatchObject({ connected: true, account: 'Ann · x.atlassian.net' });
     expect(fetchMock.mock.calls[0][0]).toBe('https://x.atlassian.net/rest/api/3/myself');
-    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe(basicOf('a@b.c', 'tok'));
-    stub(json({ emailAddress: 'a@b.c' }));
-    expect((await svc.verifyNow(atlassian)).account).toBe('a@b.c');
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe(basicOf('a@b.c', 'kept'));
+    expect(secrets.getSecret('JIRA_API_TOKEN')).toBe('kept');
   });
 
-  it('checks Slack auth.test and reads ok:false as an error', async () => {
+  it('reads Slack auth.test, including ok:false', async () => {
     const slack = def('slack');
     const fetchMock = stub(json({ ok: true, user: 'bot', team: 'Acme' }));
-    const svc = service();
-    expect((await svc.connect(slack, { values: { botToken: 'xoxb-1' } })).status.account).toBe('bot · Acme');
+    expect((await service().connect(slack, { values: { botToken: 'xoxb-1' } })).status.account).toBe('bot · Acme');
     expect(fetchMock.mock.calls[0][0]).toBe('https://slack.com/api/auth.test');
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'POST', headers: { Authorization: 'Bearer xoxb-1' } });
     stub(json({ ok: false, error: 'invalid_auth' }));
-    expect(await svc.verifyNow(slack)).toMatchObject({ connected: true, error: 'Slack: invalid_auth' });
+    await expect(service().connect(slack, { values: { botToken: 'xoxb-2' } })).rejects.toThrow(/invalid_auth/);
   });
 
-  it('skips the Slack check for a webhook-only connection', async () => {
-    const fetchMock = stub(json({}));
-    const { status } = await service().connect(def('slack'), { values: { webhookUrl: 'https://hooks.slack.com/services/T/B/x' } });
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(status).toMatchObject({ connected: true });
-    expect(status.verifiedAt).toBeUndefined();
-  });
-
-  it('checks Figma with the token header', async () => {
-    const fetchMock = stub(json({ handle: 'fig', email: 'f@x.y' }));
-    const { status } = await service().connect(def('figma'), { values: { token: 'figd_1' } });
-    expect(status.account).toBe('fig');
+  it('prefers the Figma email and reads Jenkins from /me/api/json with the host', async () => {
+    let fetchMock = stub(json({ handle: 'fig', email: 'f@x.y' }));
+    expect((await service().connect(def('figma'), { values: { token: 'figd_1' } })).status.account).toBe('f@x.y');
     expect(fetchMock.mock.calls[0][0]).toBe('https://api.figma.com/v1/me');
     expect(fetchMock.mock.calls[0][1].headers['X-Figma-Token']).toBe('figd_1');
-  });
-
-  it('checks Jenkins whoAmI with basic auth', async () => {
-    const fetchMock = stub(json({ name: 'builder' }));
+    fetchMock = stub(json({ fullName: 'Builder' }));
     const { status } = await service().connect(def('jenkins'), { values: { baseUrl: 'https://ci.example.com/', username: 'bob', apiToken: 'jt' } });
-    expect(status.account).toBe('builder');
-    expect(fetchMock.mock.calls[0][0]).toBe('https://ci.example.com/whoAmI/api/json');
+    expect(status.account).toBe('Builder · ci.example.com');
+    expect(fetchMock.mock.calls[0][0]).toBe('https://ci.example.com/me/api/json');
     expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe(basicOf('bob', 'jt'));
   });
 
-  it('does not check Email', async () => {
-    const fetchMock = stub(json({}));
-    const { status } = await service().connect(def('email'), { values: { apiKey: 're_1' } });
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(status).toMatchObject({ connected: true });
-    expect(status.verifiedAt).toBeUndefined();
+  it('verifies Email with Resend and shows the sender', async () => {
+    const fetchMock = stub(json({ data: [{ name: 'example.com' }] }));
+    const { status } = await service().connect(def('email'), { values: { apiKey: 're_1', defaultFrom: 'Lousho <a@example.com>' } });
+    expect(status.account).toBe('Lousho <a@example.com>');
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.resend.com/domains');
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer re_1');
   });
 
-  it('still saves when the check fails and reports the provider message', async () => {
+  it('records a failed Verify on a stored connector without disconnecting it', async () => {
+    const svc = service();
+    stub(json({ login: 'octo' }));
+    await svc.connect(github, { values: { token: 'ghp_x' } });
     stub(json({ message: 'Bad credentials' }, { status: 401 }));
-    const svc = service();
-    const { status } = await svc.connect(github, { values: { token: 'ghp_bad' } });
-    expect(status).toMatchObject({ connected: true, error: 'GitHub answered 401: Bad credentials' });
-    expect(status.account).toBeUndefined();
-    expect(secrets.getSecret('GITHUB_TOKEN')).toBe('ghp_bad');
-    expect(svc.list().find((c) => c.id === 'github')?.error).toBe('GitHub answered 401: Bad credentials');
-  });
-
-  it('reports an unreachable service as an error, not a crash', async () => {
+    const status = await svc.verifyNow(github);
+    expect(status).toMatchObject({ connected: true, account: 'octo', error: 'GitHub rejected these credentials (401).' });
+    expect(secrets.getSecret('GITHUB_TOKEN')).toBe('ghp_x');
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ENOTFOUND')));
-    const { status } = await service().connect(github, { values: { token: 'ghp_x' } });
-    expect(status).toMatchObject({ connected: true, error: 'Could not reach GitHub' });
+    expect((await svc.verifyNow(github)).error).toMatch(/^Could not reach GitHub/);
+    stub(json({ login: 'octo2' }));
+    const ok = await svc.verifyNow(github);
+    expect(ok).toMatchObject({ account: 'octo2' });
+    expect(ok.error).toBeUndefined();
   });
 
-  it('clips long provider messages', async () => {
-    stub(new Response('x'.repeat(500), { status: 500 }));
-    const { status } = await service().connect(github, { values: { token: 'ghp_x' } });
-    expect(status.error!.length).toBeLessThanOrEqual(200);
-  });
-
-  it('keeps saved values on reconnect, re-verifies on demand, and clears the identity on disconnect', async () => {
+  it('clears everything on disconnect and refuses to verify a disconnected connector', async () => {
     const svc = service();
-    secrets.setSecret('JIRA_API_TOKEN', 'kept');
-    const fetchMock = stub(json({ displayName: 'Ann' }));
-    await svc.connect(atlassian, { values: { baseUrl: 'https://x.atlassian.net/', email: 'a@b.c', apiToken: '' } });
-    expect(secrets.getSecret('JIRA_API_TOKEN')).toBe('kept');
-    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe(basicOf('a@b.c', 'kept'));
-
-    stub(json({ message: 'expired' }, { status: 401 }));
-    expect((await svc.verifyNow(atlassian)).error).toBe('Atlassian answered 401: expired');
-
+    stub(json({ displayName: 'Ann' }));
+    await svc.connect(atlassian, { values: { baseUrl: 'https://x.atlassian.net', email: 'a@b.c', apiToken: 't' } });
     expect(svc.disconnect(atlassian).connected).toBe(false);
     expect(secrets.getSecret('JIRA_BASE_URL')).toBeUndefined();
     expect(fs.readFileSync(path.join(dir, 'connectors.json'), 'utf8')).not.toContain('atlassian');
