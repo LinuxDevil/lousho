@@ -11,6 +11,8 @@ export interface ChatRunGroup<T extends TraceSummaryPayload = TraceSummaryPayloa
   inputTokens: number;
   outputTokens: number;
   costUsd?: number;
+  source?: 'manual' | 'trigger';
+  triggerId?: string;
   traces: T[];
 }
 
@@ -30,6 +32,8 @@ export function groupRunsByChat<T extends TraceSummaryPayload>(agentId: string, 
     g.preview = chat.preview;
     g.messageCount = chat.messageCount;
     g.lastActivity = Math.max(g.lastActivity, Date.parse(chat.updatedAt));
+    if (chat.source !== undefined) g.source = chat.source;
+    if (chat.triggerId !== undefined) g.triggerId = chat.triggerId;
   }
   for (const trace of [...traces].sort((a, b) => a.startTime - b.startTime)) {
     const g = group(trace.conversationId ?? agentId, trace.startTime);

@@ -50,8 +50,8 @@ async function workspaceRuns(ref: { id: string; name: string; root: string }, ct
         inputTokens: g.inputTokens,
         outputTokens: g.outputTokens,
         ...(g.costUsd !== undefined && { costUsd: g.costUsd }),
-        ...(on?.source !== undefined && { source: on.source }),
-        ...(on?.triggerId !== undefined && { triggerId: on.triggerId }),
+        ...((on?.source ?? g.source) !== undefined && { source: on?.source ?? g.source }),
+        ...((on?.triggerId ?? g.triggerId) !== undefined && { triggerId: on?.triggerId ?? g.triggerId }),
         ...(on?.bypass === true && { bypass: true }),
       });
     }

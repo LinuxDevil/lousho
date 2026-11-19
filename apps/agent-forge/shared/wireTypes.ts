@@ -306,6 +306,8 @@ export interface ChatMessage {
   toolName?: string;
   toolCalls?: { id: string; type: 'function'; function: { name: string; arguments: string } }[];
   timestamp: string;
+  /** The SDK's own flag on a tool result that failed; already in the persisted transcript. */
+  isError?: boolean;
   /** `'run'` marks the user turn a top-bar Run added (shown as "Run input"); `'steer'` a delivered steer message (shown as "Steered"). */
   source?: 'run' | 'steer';
 }
@@ -325,11 +327,16 @@ export interface ChatSessionMeta {
   messageCount: number;
   /** Truncated text of the first user message, for a browsable session list. */
   preview: string;
+  /** What started the chat's latest run; persisted so a finished trigger run still names its trigger. */
+  source?: 'manual' | 'trigger';
+  triggerId?: string;
 }
 
 /** A full past chat session, as returned by `GET /agents/:id/chats/:sessionId`. */
 export interface ChatSessionRecord extends ChatSessionMeta {
   messages: ChatMessage[];
+  /** What the chat's latest run was given (names only), persisted at run start so it survives a reload. */
+  setup?: RunSetup;
 }
 
 /**

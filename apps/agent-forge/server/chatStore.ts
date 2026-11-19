@@ -54,6 +54,8 @@ export class FileChatStore {
           updatedAt: record.updatedAt,
           messageCount: record.messages.length,
           preview: record.preview,
+          ...(record.source !== undefined && { source: record.source }),
+          ...(record.triggerId !== undefined && { triggerId: record.triggerId }),
         });
       } catch {
         // Skip a corrupt/partial file rather than failing the whole listing.
