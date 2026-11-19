@@ -92,6 +92,7 @@ export async function runCandidate(
       onEvent: () => {},
       exporter: tracingExporter(reporting.exporter(), capture),
       captureContent: reporting.captureContent(),
+      connectedAccounts: false,
     });
     const merged = AbortSignal.any([signal, AbortSignal.timeout(EVAL_EXAMPLE_TIMEOUT_MS)]);
     const result = await built.agent.stream(input, { signal: merged }).result;

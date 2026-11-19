@@ -95,6 +95,7 @@ export interface RunWiring {
   extraHooks?: readonly AgentHook[];
   /** One callback per auto-approval decision (R01b); RunManager turns it into the Logs-tab row. */
   onAutoApproval?: (decision: AutoApprovalDecision) => void;
+  connectedAccounts?: boolean;
 }
 
 /** What `buildRunnableAgent` returns: the built agent plus the side data RunManager/the status payload need. */
@@ -225,7 +226,9 @@ export async function buildRunnableAgent(
   deps: StudioRunDeps,
   wiring: RunWiring
 ): Promise<RunnableAgent> {
-  const connected = withConnectedIntegrations(withWorkspaceRoots(savedSpec, deps.baseDir), deps.secretsStore);
+  const attach = wiring.connectedAccounts !== false;
+  const rooted = withWorkspaceRoots(savedSpec, deps.baseDir);
+  const connected = attach ? withConnectedIntegrations(rooted, deps.secretsStore) : { spec: rooted, added: 0 };
   const spec = connected.spec;
   const approvals = scopedApprovalStore(deps.approvalStore, agentId);
   const autoApprover =
@@ -286,7 +289,9 @@ export async function buildRunnableAgent(
   const tools = config.tools as Record<string, ToolDescriptor> | undefined;
   if (tools !== undefined && typeof tools === 'object' && !Array.isArray(tools)) {
     if (connected.added > 0) guardConnectorWrites(tools, compiled.toolNamesByRef.slice(-connected.added));
-    withShellEnv(tools, spec, connectorShellEnv(deps.secretsStore));
+    if (attach && (spec.tools ?? []).some((ref) => 'integration' in ref && ref.integration === 'github')) {
+      withShellEnv(tools, spec, connectorShellEnv(deps.secretsStore));
+    }
   }
   config.onEvent = wiring.onEvent;
   if (wiring.captureContent !== undefined) config.captureContent = wiring.captureContent;

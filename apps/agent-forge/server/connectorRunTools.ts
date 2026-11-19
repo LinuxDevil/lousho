@@ -1,7 +1,7 @@
 import type { AgentSpecV2, ToolDescriptor } from 'lousho';
 import { INTEGRATION_CREDENTIALS, type IntegrationName, type ToolRef } from 'lousho/spec';
 import { createShellTool, NodeWorkspace } from 'lousho/tools';
-import { CONNECTORS, INTEGRATION_SECRETS } from '../shared/profileWire';
+import { INTEGRATION_SECRETS } from '../shared/profileWire';
 
 type SecretSource = { getSecret(name: string): string | undefined } | undefined;
 
@@ -39,15 +39,9 @@ export function guardConnectorWrites(tools: Record<string, ToolDescriptor>, name
 
 export function connectorShellEnv(secrets: SecretSource): Record<string, string> {
   const env: Record<string, string> = {};
-  if (secrets === undefined) return env;
-  for (const def of CONNECTORS) {
-    for (const field of def.fields) {
-      const value = secrets.getSecret(field.secret);
-      if (value !== undefined) env[field.secret] = value;
-    }
-  }
-  const token = env.GITHUB_TOKEN;
+  const token = secrets?.getSecret('GITHUB_TOKEN');
   if (token !== undefined) {
+    env.GITHUB_TOKEN = token;
     env.GH_TOKEN = token;
     env.GIT_TERMINAL_PROMPT = '0';
     env.GIT_CONFIG_COUNT = '1';

@@ -41,8 +41,10 @@ describe('connectorRunTools', () => {
     expect(buildTurnContext({ focus: { mode: 'create' }, openProposals: [], connectedAccounts: lines, now: new Date(0) })).toContain('Connected accounts');
   });
 
-  it('gives the shell the connector secrets and git auth for github.com', async () => {
-    const env = connectorShellEnv(store({ GITHUB_TOKEN: 'ghp_x' }));
+  it('gives the shell git auth for github.com and nothing from other connectors', async () => {
+    const env = connectorShellEnv(store({ GITHUB_TOKEN: 'ghp_x', JIRA_API_TOKEN: 'jira_x' }));
+    expect(env.JIRA_API_TOKEN).toBeUndefined();
+    expect(connectorShellEnv(store({ JIRA_API_TOKEN: 'jira_x' }))).toEqual({});
     expect(env).toMatchObject({ GITHUB_TOKEN: 'ghp_x', GH_TOKEN: 'ghp_x', GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader' });
     expect(Buffer.from(env.GIT_CONFIG_VALUE_0.split(' ').pop() ?? '', 'base64').toString()).toBe('x-access-token:ghp_x');
 

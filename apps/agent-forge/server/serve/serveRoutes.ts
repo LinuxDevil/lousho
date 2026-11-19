@@ -99,6 +99,7 @@ export const buildServeAgent: ServeAgentBuilder = async (spec, agentId, workspac
     {
       onEvent: () => {},
       exporter: fileTraceExporter({ dir: agentTraceDir(workspace.ref.root, agentId) }),
+      connectedAccounts: false,
     }
   );
   return agent;
