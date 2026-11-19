@@ -18,7 +18,8 @@ import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { CornerDownRight, Play, Plus, Sparkles, User, Wrench, type LucideIcon } from 'lucide-react';
 import { useAppState } from '../state/AppState';
-import type { ChatMessage } from '../../shared/wireTypes';
+import type { ChatMessage, LogEntry } from '../../shared/wireTypes';
+import { RUN_SETUP_PREFIX } from '../../shared/runSetup';
 import { DEFAULT_RUN_INPUT } from '../../shared/runInput';
 import { ApprovalCard } from './ApprovalCard';
 import { AuthorText } from '../author/AuthorText';
@@ -290,12 +291,24 @@ function MessageList({ messages, isRunning, pendingApproval }: MessageListProps)
   );
 }
 
+export function RunSetupLine({ logs }: { logs: LogEntry[] }) {
+  const row = [...logs].reverse().find((entry) => entry.message.startsWith(RUN_SETUP_PREFIX));
+  if (row === undefined) return null;
+  const detail = typeof row.detail === 'string' ? row.detail : undefined;
+  return (
+    <details className="chat-run-setup">
+      <summary>{row.message}</summary>
+      {detail !== undefined && <p>{detail}</p>}
+    </details>
+  );
+}
+
 /**
  * `aboveComposer` is the Test pane's middle slot (T05's steer box, T07's
  * pending question): rendered between the error notice and the composer.
  */
 export function ChatPanel({ aboveComposer }: { aboveComposer?: ReactNode }) {
-  const { chat, chatActionError, viewedChatSession, runStatus } = useAppState();
+  const { chat, chatActionError, viewedChatSession, runStatus, logs } = useAppState();
 
   const viewing = viewedChatSession !== undefined;
   const displayedMessages = viewedChatSession ? viewedChatSession.messages : chat.messages;
@@ -305,6 +318,7 @@ export function ChatPanel({ aboveComposer }: { aboveComposer?: ReactNode }) {
   return (
     <div className="chat-panel">
       <ChatSessionBar viewedChatSession={viewedChatSession} />
+      {!viewing && <RunSetupLine logs={logs} />}
       <MessageList messages={displayedMessages} isRunning={isRunning} pendingApproval={pendingApproval} />
 
       {chatActionError && (

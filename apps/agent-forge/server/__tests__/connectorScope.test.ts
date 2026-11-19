@@ -95,7 +95,8 @@ describe('connected accounts on a built agent', () => {
     expect(JSON.stringify(setup)).not.toContain('secretvalue');
     const row = runSetupLogEntry('a', setup);
     expect(row.message).toMatch(/^Setup · 1 connected account \(github\) · 1 MCP server · \d+ tools?$/);
-    expect(row.detail).toContain('Jira is missing its API token.');
+    expect(row.detail).toContain('Atlassian is missing its API token.');
+    expect((row.detail as string).match(/Atlassian is missing/g)).toHaveLength(1);
     expect(row.detail).toContain('github_create_repository');
   });
 
@@ -103,7 +104,7 @@ describe('connected accounts on a built agent', () => {
     const { setup } = await buildRunnableAgent(base, 'a', deps, { ...wiring, connectedAccounts: false });
     expect(setup.accounts).toEqual([]);
     expect(setup.skipped).toEqual(expect.arrayContaining([{ integration: 'github', reason: 'off' }]));
-    expect(runSetupLogEntry('a', setup).detail).toContain('Github is connected but switched off for this kind of run.');
+    expect(runSetupLogEntry('a', setup).detail).toContain('GitHub is connected but switched off for this kind of run.');
   });
 
   it('points at Profile when nothing is connected', async () => {

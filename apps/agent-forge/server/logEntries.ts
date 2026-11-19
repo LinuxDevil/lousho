@@ -5,6 +5,8 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentEvent, AgentEventOf, AgentEventType } from 'lousho';
 import type { FlowExecutionEvent, FlowExecutionEventOf } from 'lousho/flows';
+import { CONNECTORS, INTEGRATION_SECRETS } from '../shared/profileWire';
+import { RUN_SETUP_PREFIX } from '../shared/runSetup';
 import type { LogEntry, RunSetup, RunSetupSkipped } from '../shared/wireTypes';
 
 /** The event-specific part of a `LogEntry`; id/agentId/timestamp are added by the translators. */
@@ -152,15 +154,17 @@ export function toFlowLogEntries(agentId: string, event: FlowExecutionEvent): Lo
 
 const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? '' : 's'}`;
 const titled = (name: string): string => name.charAt(0).toUpperCase() + name.slice(1);
+const providerLabel = (integration: string): string =>
+  CONNECTORS.find((def) => def.id === INTEGRATION_SECRETS[integration]?.connector)?.label ?? titled(integration);
 
 function skippedSentence({ integration, reason, missing }: RunSetupSkipped): string {
   return reason === 'off'
-    ? `${titled(integration)} is connected but switched off for this kind of run.`
-    : `${titled(integration)} is missing its ${(missing ?? []).join(', ')}.`;
+    ? `${providerLabel(integration)} is connected but switched off for this kind of run.`
+    : `${providerLabel(integration)} is missing its ${(missing ?? []).join(', ')}.`;
 }
 
 export function runSetupLogEntry(agentId: string, setup: RunSetup): LogEntry {
-  const parts = ['Setup'];
+  const parts = [RUN_SETUP_PREFIX.slice(0, 5)];
   const names = setup.accounts.map((account) => account.integration);
   if (setup.note !== undefined) parts.push(setup.note);
   else if (names.length > 0) parts.push(`${plural(names.length, 'connected account')} (${names.join(', ')})`);
@@ -175,7 +179,7 @@ export function runSetupLogEntry(agentId: string, setup: RunSetup): LogEntry {
       (account) =>
         `${account.integration}: ${account.tools.join(', ') || 'no tools'}${account.approvals.length > 0 ? ` (ask for approval: ${account.approvals.join(', ')})` : ''}`
     ),
-    ...setup.skipped.map(skippedSentence),
+    ...new Set(setup.skipped.map(skippedSentence)),
   ];
   return toEntry(agentId, new Date(), {
     level: 'info',
