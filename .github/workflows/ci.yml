@@ -28,9 +28,10 @@ jobs:
           node-version: '22.19.0'
           cache: 'npm'
       - run: npm ci
+      - run: npm run lint
       - run: npm run build
         # The dual-entry build's DTS pass (worker + executor entries) exceeds
-        # the default heap, like the compat job's build below.
+        # the default heap.
         env:
           NODE_OPTIONS: --max-old-space-size=12288
       # API surface gate: every exports entry has a checked-in api/*.api.md
@@ -90,18 +91,26 @@ jobs:
       # that `lousho-studio` and `lousho studio` serve the UI. Never publishes.
       - run: npm run pack-smoke:studio -- --skip-build
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, node: '22.19.0' }
+          - { os: ubuntu-latest, node: '24' }
+          - { os: windows-latest, node: '22.19.0' }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.19.0'
+          node-version: ${{ matrix.node }}
           cache: 'npm'
       - run: npm ci
       - run: npm run build -- --no-dts
       # packages/create-lousho's own tests execFileSync its bin/cli.js, which needs ITS dist/index.js too.
       - run: npm run build --workspace=packages/create-lousho
-      - run: node_modules/.bin/vitest run --coverage --config vitest.coverage.config.ts
+      - run: npx vitest run --coverage --config vitest.coverage.config.ts
   # What `npm pack` produces must install and work in a fresh project: builds, packs the SDK and
   # create-lousho, `npm publish --dry-run` (never a real publish), installs the tarballs plus
   # peers in a fresh project, loads every export in ESM and CJS, a mock-model turn, the bin and tsc.
@@ -124,8 +133,6 @@ jobs:
   # --legacy-peer-deps` because ollama-ai-provider-v2 is an optional peer and the dev install's v1 conflicts
   # with zod 4).
   compat:
-    # Slow (full suite on the newest peers); manual only (Actions -> CI -> Run workflow), not on every PR push.
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -140,9 +147,9 @@ jobs:
       - run: npm install --no-save --save-prod --legacy-peer-deps ai@7 @ai-sdk/openai@4 @ai-sdk/anthropic@4 ollama-ai-provider-v2@4 zod@4 isolated-vm@6.2.0
       - run: npx tsc --noEmit
       - run: npm run test:types
-      - run: npm run build
-        env:
-          NODE_OPTIONS: --max-old-space-size=12288
+      # No declarations: the DTS worker runs out of memory on ai 7's types, and the tests do not need them
+      # (tsc and test:types above cover the types).
+      - run: npm run build -- --no-dts
       - run: npm run build --workspace=packages/create-lousho
       # Runs the real 'isolate' driver (src/sandbox/isolate.test.ts): Node >= 20 needs
       # --no-node-snapshot to load isolated-vm; LOUSHO_ISOLATE_TESTS=1 makes that file fail

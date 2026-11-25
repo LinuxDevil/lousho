@@ -122,7 +122,7 @@ Requires Node.js 22 (22.19 or newer) or 24. To start a new project, see [Try it]
 To add Lousho to an existing project:
 
 ```bash
-npm install lousho ai@^7.0.0 zod @ai-sdk/openai@^4.0.0
+npm install lousho ai@^7.0.0 zod@^4.6.6 @ai-sdk/openai@^4.0.0
 ```
 
 See [Installation](https://lousho.com/installation#provider-packages) for other providers. `npx lousho doctor` checks your setup and prints a fix for anything missing.
@@ -223,11 +223,11 @@ Source: docs/installation.md
 ## Install the package
 
 ```bash
-npm install lousho ai zod
+npm install lousho ai zod@^4.6.6
 # or
-pnpm add lousho ai zod
+pnpm add lousho ai zod@^4.6.6
 # or
-yarn add lousho ai zod
+yarn add lousho ai zod@^4.6.6
 ```
 
 `ai` (the Vercel AI SDK: `^4.3.19`, `^6.0.0` or `^7.0.0`) and `zod`
@@ -256,13 +256,13 @@ that pairs with your `ai` major. Install the pair from one row:
 For example, on the current `ai` major:
 
 ```bash
-npm install lousho ai@^7.0.0 zod @ai-sdk/openai@^4.0.0
+npm install lousho ai@^7.0.0 zod@^4.6.6 @ai-sdk/openai@^4.0.0
 ```
 
 **Ollama on `ai` 6/7 needs zod 4.** `ollama-ai-provider-v2` (the Ollama package
 for `ai` 6 and 7) declares `zod ^4` as a peer. The SDK accepts zod 4,
 so install it with zod 4, for example
-`npm install ai@^7.0.0 ollama-ai-provider-v2@^4.0.0 zod@^4.0.0`. With zod 3,
+`npm install ai@^7.0.0 ollama-ai-provider-v2@^4.0.0 zod@^4.6.6`. With zod 3,
 use `ai@^4.3.19` with `ollama-ai-provider@^1.2.0`.
 `lousho init --provider ollama` scaffolds `ai@^7.0.0` with
 `ollama-ai-provider-v2@^4.0.0` and zod 4.
@@ -426,7 +426,7 @@ npm run build
 npm pack --pack-destination /path/to/your-project
 
 # in your project (peers come from the registry)
-npm install ./lousho-<version>.tgz ai zod
+npm install ./lousho-<version>.tgz ai zod@^4.6.6
 ```
 
 To scaffold a new project the same way, from the checkout:
@@ -595,7 +595,7 @@ Prefer to add the SDK to an existing project? Install it by hand (see
 [Installation](https://github.com/LinuxDevil/lousho/blob/main/docs/installation.md)):
 
 ```bash
-npm install lousho ai@^7.0.0 zod
+npm install lousho ai@^7.0.0 zod@^4.6.6
 npm install @ai-sdk/openai@^4.0.0 @ai-sdk/anthropic@^4.0.0
 ```
 

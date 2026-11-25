@@ -29,15 +29,13 @@ function aiPackages(provider: string): Record<string, string> {
   return { ai: AI_RANGES[major], [name]: range };
 }
 
-/**
- * The SDK's zod range, narrowed to the one major the scaffolded provider packages peer on:
- * zod 3 for `ai` 4, zod 4 for Ollama's `ai` 6/7 package.
- */
+/** The oldest zod 4 without GHSA-mrhx-c7xc-m3w5 (no zod 3 release has the fix). */
+const ZOD_4_RANGE = '^4.6.6';
+
+/** zod for a new project: patched zod 4, or the SDK's zod 3 range when the provider packages are on `ai` 4. */
 function zodRange(peerRange: string | undefined, provider: string): string {
-  const range = peerRange ?? '^3.25.76';
-  const alternatives = range.split('||').map((part) => part.trim());
-  if ((SCAFFOLD_AI_MAJOR[provider] ?? 4) === 4) return alternatives[0]!;
-  return provider === 'ollama' ? (alternatives.find((part) => part.startsWith('^4')) ?? '^4.0.0') : range;
+  if ((SCAFFOLD_AI_MAJOR[provider] ?? 4) !== 4) return ZOD_4_RANGE;
+  return (peerRange ?? '^3.25.76').split('||')[0]!.trim();
 }
 
 /** The generated package.json's scripts; AGENTS.md lists exactly these. */

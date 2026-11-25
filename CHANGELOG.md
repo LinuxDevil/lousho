@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: `undici` is `^8.12.2` (earlier 8.x releases have published advisories). Install commands, and new projects use `zod@^4.6.6`, which fixes GHSA-mrhx-c7xc-m3w5, and Studio accepts it; the SDK's own peer range still accepts zod 3.
+- `lousho deploy` names the newest Studio source with forward slashes on Windows too.
+
 ## [1.0.0-alpha.135] - 2026-11-19
 
 ## [1.0.0-alpha.134] - 2026-11-19
