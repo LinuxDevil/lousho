@@ -35,7 +35,7 @@ export function assertStudioBundleFresh(studioDir: string): void {
   }
   if (newest && newest.mtimeMs > bundleTime) {
     throw new Error(
-      `the Studio bundle is older than its sources (newest: ${path.relative(studioDir, newest.file)}); run \`npm run build:studio\` in apps/agent-forge, then deploy again`
+      `the Studio bundle is older than its sources (newest: ${path.relative(studioDir, newest.file).split(path.sep).join('/')}); run \`npm run build:studio\` in apps/agent-forge, then deploy again`
     );
   }
 }
